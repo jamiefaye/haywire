@@ -1,0 +1,51 @@
+# Build directories
+build/
+cmake-build-*/
+out/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Compiled objects
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# Debug files
+*.dSYM/
+*.pdb
+
+# Backup files
+*.bak
+*.backup
+
+# Core dumps
+core
+vgcore.*
+
+# QEMU files
+*.qcow2
+*.img
+*.iso
+
+# Log files
+*.log
