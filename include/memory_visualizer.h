@@ -8,6 +8,9 @@
 #endif
 #include <memory>
 #include <chrono>
+#include <thread>
+#include <atomic>
+#include <mutex>
 
 namespace Haywire {
 
@@ -68,6 +71,14 @@ private:
     float mouseX, mouseY;
     bool isDragging;
     float dragStartX, dragStartY;
+    
+    // Async reading support
+    std::thread readThread;
+    std::atomic<bool> isReading;
+    std::atomic<bool> readComplete;
+    std::mutex memoryMutex;
+    MemoryBlock pendingMemory;
+    std::string readStatus;
 };
 
 }

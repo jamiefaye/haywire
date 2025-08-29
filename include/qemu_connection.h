@@ -1,11 +1,13 @@
 #pragma once
 
 #include "common.h"
+#include "gdb_connection.h"
 #include <string>
 #include <thread>
 #include <atomic>
 #include <mutex>
 #include <queue>
+#include <memory>
 #include <nlohmann/json.hpp>
 
 namespace Haywire {
@@ -17,6 +19,7 @@ public:
     
     bool ConnectQMP(const std::string& host = "localhost", int port = 4445);
     bool ConnectMonitor(const std::string& host = "localhost", int port = 4444);
+    bool ConnectGDB(const std::string& host = "localhost", int port = 1234);
     void Disconnect();
     
     bool IsConnected() const { return connected.load(); }
@@ -58,6 +61,11 @@ private:
     char inputHost[256];
     int inputQMPPort;
     int inputMonitorPort;
+    int inputGDBPort;
+    
+    // GDB connection for faster memory reads
+    std::unique_ptr<GDBConnection> gdbConnection;
+    bool useGDB;
 };
 
 }

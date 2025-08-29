@@ -49,3 +49,6 @@ vgcore.*
 
 # Log files
 *.log
+
+# Old project files
+haywireold/

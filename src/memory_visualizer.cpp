@@ -11,16 +11,22 @@ namespace Haywire {
 MemoryVisualizer::MemoryVisualizer() 
     : memoryTexture(0), needsUpdate(true), autoRefresh(false),
       refreshRate(10.0f), showHexOverlay(false), showNavigator(true),
-      widthInput(256), heightInput(256), strideInput(256),
+      widthInput(640), heightInput(480), strideInput(640),  // Back to reasonable video dimensions
       pixelFormatIndex(0), mouseX(0), mouseY(0), isDragging(false),
-      dragStartX(0), dragStartY(0) {
+      dragStartX(0), dragStartY(0), isReading(false), readComplete(false) {
     
-    strcpy(addressInput, "0x0");
+    strcpy(addressInput, "0x40000000");  // Start at 1GB mark - found interesting data here
     CreateTexture();
     lastRefresh = std::chrono::steady_clock::now();
 }
 
 MemoryVisualizer::~MemoryVisualizer() {
+    // Stop any ongoing read
+    if (readThread.joinable()) {
+        isReading = false;
+        readThread.join();
+    }
+    
     if (memoryTexture) {
         glDeleteTextures(1, &memoryTexture);
     }
@@ -45,16 +51,53 @@ void MemoryVisualizer::Draw(QemuConnection& qemu) {
     
     DrawControls();
     
-    if (ImGui::Button("Read Memory") && qemu.IsConnected()) {
-        size_t size = viewport.stride * viewport.height;
-        std::vector<uint8_t> buffer;
-        
-        if (qemu.ReadMemory(viewport.baseAddress, size, buffer)) {
-            currentMemory.address = viewport.baseAddress;
-            currentMemory.data = std::move(buffer);
-            currentMemory.stride = viewport.stride;
-            needsUpdate = true;
+    // Check if async read completed
+    if (readComplete.exchange(false)) {
+        std::lock_guard<std::mutex> lock(memoryMutex);
+        currentMemory = pendingMemory;
+        needsUpdate = true;
+        readStatus = "Read complete";
+    }
+    
+    // Show read button or status
+    if (isReading) {
+        ImGui::TextColored(ImVec4(1, 1, 0, 1), "Reading memory...");
+    } else {
+        if (ImGui::Button("Read Memory") && qemu.IsConnected()) {
+            // Stop any previous thread
+            if (readThread.joinable()) {
+                readThread.join();
+            }
+            
+            // Start async read
+            isReading = true;
+            readStatus = "Starting read...";
+            
+            size_t size = viewport.stride * viewport.height;
+            uint64_t addr = viewport.baseAddress;
+            int stride = viewport.stride;
+            
+            readThread = std::thread([this, &qemu, addr, size, stride]() {
+                std::vector<uint8_t> buffer;
+                
+                if (qemu.ReadMemory(addr, size, buffer)) {
+                    std::lock_guard<std::mutex> lock(memoryMutex);
+                    pendingMemory.address = addr;
+                    pendingMemory.data = std::move(buffer);
+                    pendingMemory.stride = stride;
+                    readComplete = true;
+                } else {
+                    readStatus = "Read failed";
+                }
+                
+                isReading = false;
+            });
         }
+    }
+    
+    if (!readStatus.empty()) {
+        ImGui::SameLine();
+        ImGui::Text("%s", readStatus.c_str());
     }
     
     ImGui::SameLine();
@@ -66,17 +109,32 @@ void MemoryVisualizer::Draw(QemuConnection& qemu) {
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration<float>(now - lastRefresh).count();
         
-        if (elapsed >= 1.0f / refreshRate && qemu.IsConnected()) {
-            size_t size = viewport.stride * viewport.height;
-            std::vector<uint8_t> buffer;
-            
-            if (qemu.ReadMemory(viewport.baseAddress, size, buffer)) {
-                currentMemory.address = viewport.baseAddress;
-                currentMemory.data = std::move(buffer);
-                currentMemory.stride = viewport.stride;
-                needsUpdate = true;
-                lastRefresh = now;
+        if (elapsed >= 1.0f / refreshRate && qemu.IsConnected() && !isReading) {
+            // Start async read for auto-refresh
+            if (readThread.joinable()) {
+                readThread.join();
             }
+            
+            isReading = true;
+            size_t size = viewport.stride * viewport.height;
+            uint64_t addr = viewport.baseAddress;
+            int stride = viewport.stride;
+            
+            readThread = std::thread([this, &qemu, addr, size, stride]() {
+                std::vector<uint8_t> buffer;
+                
+                if (qemu.ReadMemory(addr, size, buffer)) {
+                    std::lock_guard<std::mutex> lock(memoryMutex);
+                    pendingMemory.address = addr;
+                    pendingMemory.data = std::move(buffer);
+                    pendingMemory.stride = stride;
+                    readComplete = true;
+                }
+                
+                isReading = false;
+            });
+            
+            lastRefresh = now;
         }
     }
     

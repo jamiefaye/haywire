@@ -52,6 +52,19 @@ if(PKG_CONFIG_FOUND)
     pkg_check_modules(CAPSTONE capstone)
 endif()
 
+# Fallback for Homebrew on Apple Silicon
+if(NOT CAPSTONE_FOUND AND APPLE)
+    find_path(CAPSTONE_INCLUDE_DIR capstone/capstone.h
+        PATHS /opt/homebrew/include /usr/local/include)
+    find_library(CAPSTONE_LIBRARY capstone
+        PATHS /opt/homebrew/lib /usr/local/lib)
+    if(CAPSTONE_INCLUDE_DIR AND CAPSTONE_LIBRARY)
+        set(CAPSTONE_FOUND TRUE)
+        set(CAPSTONE_INCLUDE_DIRS ${CAPSTONE_INCLUDE_DIR})
+        set(CAPSTONE_LIBRARIES ${CAPSTONE_LIBRARY})
+    endif()
+endif()
+
 # JSON library (using nlohmann/json)
 include(FetchContent)
 FetchContent_Declare(
@@ -65,6 +78,7 @@ FetchContent_MakeAvailable(json)
 add_executable(haywire
     src/main.cpp
     src/qemu_connection.cpp
+    src/gdb_connection.cpp
     src/memory_visualizer.cpp
     src/hex_overlay.cpp
     ${IMGUI_SOURCES}
@@ -88,7 +102,12 @@ target_link_libraries(haywire PRIVATE
 if(CAPSTONE_FOUND)
     target_compile_definitions(haywire PRIVATE HAS_CAPSTONE)
     target_include_directories(haywire PRIVATE ${CAPSTONE_INCLUDE_DIRS})
-    target_link_libraries(haywire PRIVATE ${CAPSTONE_LIBRARIES})
+    if(APPLE AND CAPSTONE_LIBRARY)
+        # Use full path on macOS
+        target_link_libraries(haywire PRIVATE ${CAPSTONE_LIBRARY})
+    else()
+        target_link_libraries(haywire PRIVATE ${CAPSTONE_LIBRARIES})
+    endif()
 endif()
 
 # Compile definitions for ImGui

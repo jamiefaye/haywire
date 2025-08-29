@@ -1,0 +1,43 @@
+# Alpine Linux Setup Commands for VLC
+
+# 1. First, ensure network is up:
+ifconfig eth0 up
+udhcpc -i eth0
+
+# 2. Check if you have network:
+ping -c 2 google.com
+
+# 3. If network works, setup repositories:
+setup-apkrepos
+# Select fastest mirror (usually option 1)
+
+# 4. Update package index:
+apk update
+
+# 5. Install X11 and VLC:
+apk add xorg-server xf86-video-vesa xf86-input-evdev
+apk add vlc
+apk add mesa-dri-gallium
+apk add ttf-dejavu
+
+# 6. For easier testing, install a minimal desktop:
+apk add openbox xterm
+
+# 7. Start X with VLC:
+startx
+# Then in xterm: vlc
+
+# Alternative: If you want to install Alpine to disk first:
+setup-alpine
+# Follow prompts:
+# - Keyboard: us
+# - Hostname: alpine
+# - Network: dhcp
+# - Root password: (set one)
+# - Timezone: UTC
+# - Proxy: none
+# - Mirror: 1 (or fastest)
+# - SSH: openssh
+# - Disk: vda (or sda)
+# - Use: sys
+# - Erase: y
