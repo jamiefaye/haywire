@@ -185,14 +185,19 @@ bool QemuConnection::ReadMemory(uint64_t address, size_t size, std::vector<uint8
     size_t bytesRead = 0;
     
     while (bytesRead < size) {
-        size_t chunkSize = std::min(size - bytesRead, size_t(4096));  // Larger chunks now that async works
+        size_t chunkSize = std::min(size - bytesRead, size_t(1024));  // Medium chunks for balance
         
         std::stringstream cmd;
         cmd << "xp/" << chunkSize << "xb 0x" << std::hex << (address + bytesRead);
+        // Only log first command
+        if (bytesRead == 0) {
+            std::cerr << "Monitor: Reading from 0x" << std::hex << address << std::dec << "\n";
+        }
         
         std::string response;
         if (!SendMonitorCommand(cmd.str(), response)) {
             // On timeout or error, return what we have
+            std::cerr << "Monitor read failed at offset " << bytesRead << " of " << size << "\n";
             buffer.resize(bytesRead);
             return bytesRead > 0;
         }
@@ -227,7 +232,10 @@ bool QemuConnection::ReadMemory(uint64_t address, size_t size, std::vector<uint8
         }
         
         // If we made no progress, bail out
-        if (pos == 0) break;
+        if (pos == 0) {
+            std::cerr << "No progress parsing response, stopping at " << bytesRead << " bytes\n";
+            break;
+        }
     }
     
     UpdateReadSpeed(bytesRead);
@@ -263,6 +271,7 @@ bool QemuConnection::SendQMPCommand(const nlohmann::json& command, nlohmann::jso
 
 bool QemuConnection::SendMonitorCommand(const std::string& command, std::string& response) {
     if (monitorSocket < 0) {
+        std::cerr << "Monitor: Socket not connected\n";
         return false;
     }
     
@@ -271,11 +280,12 @@ bool QemuConnection::SendMonitorCommand(const std::string& command, std::string&
     // Send command
     std::string cmdStr = command + "\n";
     if (send(monitorSocket, cmdStr.c_str(), cmdStr.length(), 0) < 0) {
+        std::cerr << "Monitor: Failed to send command: " << command << "\n";
         return false;
     }
     
     // Read response (with multiple attempts for slow commands)
-    char buffer[8192];
+    char buffer[16384];  // Larger buffer
     response.clear();
     int totalReceived = 0;
     int attempts = 0;
@@ -302,6 +312,10 @@ bool QemuConnection::SendMonitorCommand(const std::string& command, std::string&
     if (totalReceived > 0) {
         buffer[totalReceived] = '\0';
         response = buffer;
+        // Only log if unusual size
+        if (totalReceived >= 8190) {
+            std::cerr << "Monitor: Hit buffer limit (" << totalReceived << " bytes)\n";
+        }
         
         // Remove the echoed command - look for our command in the response
         size_t cmdPos = response.find(command);
@@ -334,6 +348,7 @@ bool QemuConnection::SendMonitorCommand(const std::string& command, std::string&
         return true;
     }
     
+    std::cerr << "Monitor: No response received (timeout)\n";
     return false;
 }
 
@@ -351,6 +366,7 @@ void QemuConnection::UpdateReadSpeed(size_t bytesRead) {
 }
 
 void QemuConnection::DrawConnectionUI() {
+    ImGui::SetNextWindowSize(ImVec2(450, 0), ImGuiCond_FirstUseEver);
     ImGui::Text("QEMU Connection Settings");
     ImGui::Separator();
     
@@ -360,7 +376,10 @@ void QemuConnection::DrawConnectionUI() {
     ImGui::InputInt("GDB Port", &inputGDBPort);
     
     if (!connected) {
-        if (ImGui::Button("Connect (Monitor)")) {
+        ImGui::Spacing();
+        ImGui::Text("Connection Options:");
+        
+        if (ImGui::Button("Connect via Monitor (Slower)", ImVec2(200, 0))) {
             bool qmpSuccess = ConnectQMP(inputHost, inputQMPPort);
             bool monSuccess = ConnectMonitor(inputHost, inputMonitorPort);
             
@@ -371,22 +390,30 @@ void QemuConnection::DrawConnectionUI() {
         
         ImGui::SameLine();
         
-        if (ImGui::Button("Connect (GDB - Fast)")) {
+        if (ImGui::Button("Connect via GDB (Pauses VM)", ImVec2(200, 0))) {
             bool gdbSuccess = ConnectGDB(inputHost, inputGDBPort);
             
             if (gdbSuccess) {
                 // Also try QMP for status queries
                 ConnectQMP(inputHost, inputQMPPort);
+                ImGui::OpenPopup("GDB Warning");
             } else {
                 ImGui::OpenPopup("GDB Connection Failed");
             }
         }
+        
+        ImGui::Spacing();
+        ImGui::TextDisabled("Monitor protocol recommended for live memory viewing");
     } else {
-        ImGui::TextColored(ImVec4(0, 1, 0, 1), "Connected %s", useGDB ? "(GDB)" : "(Monitor)");
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0, 1, 0, 1), "✓ Connected via %s", useGDB ? "GDB Protocol" : "Monitor Protocol");
         if (useGDB) {
-            ImGui::TextColored(ImVec4(0, 1, 1, 1), "Using fast GDB memory access");
+            ImGui::TextColored(ImVec4(0.5, 1, 1, 1), "Memory reads using fast binary protocol");
+        } else {
+            ImGui::TextColored(ImVec4(1, 1, 0.5, 1), "Memory reads using text-based monitor");
         }
-        if (ImGui::Button("Disconnect")) {
+        ImGui::Spacing();
+        if (ImGui::Button("Disconnect", ImVec2(150, 0))) {
             Disconnect();
         }
     }
@@ -409,6 +436,21 @@ void QemuConnection::DrawConnectionUI() {
         ImGui::Text("  -gdb tcp::1234");
         ImGui::Text("");
         ImGui::Text("Use launch_ubuntu_arm64_gdb.sh for GDB support");
+        
+        if (ImGui::Button("OK")) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    
+    if (ImGui::BeginPopupModal("GDB Warning", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextColored(ImVec4(1, 1, 0, 1), "⚠ Warning: GDB pauses the VM");
+        ImGui::Text("");
+        ImGui::Text("The GDB protocol halts the VM when connected.");
+        ImGui::Text("This stops video playback and all VM activity.");
+        ImGui::Text("");
+        ImGui::Text("For live memory viewing of running processes,");
+        ImGui::Text("use Monitor protocol instead.");
         
         if (ImGui::Button("OK")) {
             ImGui::CloseCurrentPopup();

@@ -63,6 +63,8 @@ bool GDBConnection::Connect(const std::string& host, int port) {
     SendPacket("qAttached");
     ReceivePacket(response);
     
+    // Don't send continue here - we'll do stop/read/continue for each memory read
+    
     connected = true;
     return true;
 }
@@ -77,6 +79,7 @@ void GDBConnection::Disconnect() {
 
 bool GDBConnection::ReadMemory(uint64_t address, size_t size, std::vector<uint8_t>& buffer) {
     if (!connected || socket < 0) {
+        std::cerr << "GDB: Not connected\n";
         return false;
     }
     
@@ -84,6 +87,11 @@ bool GDBConnection::ReadMemory(uint64_t address, size_t size, std::vector<uint8_
     
     buffer.clear();
     buffer.reserve(size);
+    
+    std::cerr << "GDB: Reading " << size << " bytes from 0x" << std::hex << address << std::dec << "\n";
+    
+    // Note: This implementation requires the VM to be halted
+    // For now, skip the interrupt - user should use monitor protocol for live reading
     
     // GDB can read up to about 16KB at a time
     const size_t maxChunk = 16384;
@@ -106,7 +114,12 @@ bool GDBConnection::ReadMemory(uint64_t address, size_t size, std::vector<uint8_
         }
         
         // Check for error response
-        if (response.empty() || response[0] == 'E') {
+        if (response.empty()) {
+            std::cerr << "GDB: Empty response\n";
+            return false;
+        }
+        if (response[0] == 'E') {
+            std::cerr << "GDB: Error response: " << response << "\n";
             return false;
         }
         
@@ -124,6 +137,8 @@ bool GDBConnection::ReadMemory(uint64_t address, size_t size, std::vector<uint8_
             break;
         }
     }
+    
+    // Don't resume - let user control VM state
     
     return !buffer.empty();
 }

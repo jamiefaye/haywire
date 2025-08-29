@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
+#include <iostream>
 
 namespace Haywire {
 
@@ -15,7 +16,11 @@ MemoryVisualizer::MemoryVisualizer()
       pixelFormatIndex(0), mouseX(0), mouseY(0), isDragging(false),
       dragStartX(0), dragStartY(0), isReading(false), readComplete(false) {
     
-    strcpy(addressInput, "0x40000000");  // Start at 1GB mark - found interesting data here
+    strcpy(addressInput, "0x80000000");  // Try 2GB mark instead
+    viewport.baseAddress = 0x80000000;  // Initialize the actual address!
+    viewport.width = widthInput;
+    viewport.height = heightInput;
+    viewport.stride = strideInput;
     CreateTexture();
     lastRefresh = std::chrono::steady_clock::now();
 }
@@ -54,7 +59,7 @@ void MemoryVisualizer::Draw(QemuConnection& qemu) {
     // Check if async read completed
     if (readComplete.exchange(false)) {
         std::lock_guard<std::mutex> lock(memoryMutex);
-        currentMemory = pendingMemory;
+        currentMemory = std::move(pendingMemory);  // Just replace atomically
         needsUpdate = true;
         readStatus = "Read complete";
     }
@@ -79,8 +84,16 @@ void MemoryVisualizer::Draw(QemuConnection& qemu) {
             
             readThread = std::thread([this, &qemu, addr, size, stride]() {
                 std::vector<uint8_t> buffer;
+                std::cerr << "Reading from address: 0x" << std::hex << addr << " size: " << std::dec << size << "\n";
                 
                 if (qemu.ReadMemory(addr, size, buffer)) {
+                    // Log first 16 bytes to see if content is consistent
+                    std::cerr << "First 16 bytes: ";
+                    for (size_t i = 0; i < std::min(size_t(16), buffer.size()); i++) {
+                        std::cerr << std::hex << std::setw(2) << std::setfill('0') << (int)buffer[i] << " ";
+                    }
+                    std::cerr << std::dec << "\n";
+                    
                     std::lock_guard<std::mutex> lock(memoryMutex);
                     pendingMemory.address = addr;
                     pendingMemory.data = std::move(buffer);
@@ -115,6 +128,7 @@ void MemoryVisualizer::Draw(QemuConnection& qemu) {
                 readThread.join();
             }
             
+            // Don't clear during auto-refresh to avoid flicker
             isReading = true;
             size_t size = viewport.stride * viewport.height;
             uint64_t addr = viewport.baseAddress;
@@ -122,8 +136,16 @@ void MemoryVisualizer::Draw(QemuConnection& qemu) {
             
             readThread = std::thread([this, &qemu, addr, size, stride]() {
                 std::vector<uint8_t> buffer;
+                std::cerr << "Reading from address: 0x" << std::hex << addr << " size: " << std::dec << size << "\n";
                 
                 if (qemu.ReadMemory(addr, size, buffer)) {
+                    // Log first 16 bytes to see if content is consistent
+                    std::cerr << "First 16 bytes: ";
+                    for (size_t i = 0; i < std::min(size_t(16), buffer.size()); i++) {
+                        std::cerr << std::hex << std::setw(2) << std::setfill('0') << (int)buffer[i] << " ";
+                    }
+                    std::cerr << std::dec << "\n";
+                    
                     std::lock_guard<std::mutex> lock(memoryMutex);
                     pendingMemory.address = addr;
                     pendingMemory.data = std::move(buffer);
@@ -144,6 +166,7 @@ void MemoryVisualizer::Draw(QemuConnection& qemu) {
     
     ImGui::Columns(1);
     
+    // Only update texture once when we have complete data
     if (needsUpdate) {
         UpdateTexture();
         needsUpdate = false;
@@ -159,6 +182,7 @@ void MemoryVisualizer::DrawControls() {
         std::stringstream ss;
         ss << std::hex << addressInput;
         ss >> viewport.baseAddress;
+        std::cerr << "Address updated to: 0x" << std::hex << viewport.baseAddress << std::dec << "\n";
     }
     
     ImGui::InputInt("Width", &widthInput);
