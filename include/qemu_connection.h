@@ -2,6 +2,8 @@
 
 #include "common.h"
 #include "gdb_connection.h"
+#include "mmap_reader.h"
+#include "memory_backend.h"
 #include <string>
 #include <thread>
 #include <atomic>
@@ -25,16 +27,19 @@ public:
     bool IsConnected() const { return connected.load(); }
     
     bool ReadMemory(uint64_t address, size_t size, std::vector<uint8_t>& buffer);
+    bool ReadMemoryMMap(uint64_t address, size_t size, std::vector<uint8_t>& buffer);
     
     bool QueryStatus(nlohmann::json& status);
     bool QueryMemoryRegions(std::vector<std::pair<uint64_t, uint64_t>>& regions);
+    
+    // Public for MMapReader
+    bool SendQMPCommand(const nlohmann::json& command, nlohmann::json& response);
     
     void DrawConnectionUI();
     
     float GetReadSpeed() const { return readSpeed.load(); }
     
 private:
-    bool SendQMPCommand(const nlohmann::json& command, nlohmann::json& response);
     bool SendMonitorCommand(const std::string& command, std::string& response);
     
     void QMPReceiveThread();
@@ -66,6 +71,14 @@ private:
     // GDB connection for faster memory reads
     std::unique_ptr<GDBConnection> gdbConnection;
     bool useGDB;
+    
+    // MMap reader for fastest memory access
+    std::unique_ptr<MMapReader> mmapReader;
+    bool useMMap;
+    
+    // Direct memory backend for zero-copy access
+    std::unique_ptr<MemoryBackend> memoryBackend;
+    bool useMemoryBackend;
 };
 
 }

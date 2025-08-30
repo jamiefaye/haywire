@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "autocorrelator.h"
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
 #else
@@ -65,6 +66,7 @@ private:
     
     bool showHexOverlay;
     bool showNavigator;
+    bool showCorrelation;
     
     char addressInput[32];
     int widthInput;
@@ -83,6 +85,10 @@ private:
     std::mutex memoryMutex;
     MemoryBlock pendingMemory;
     std::string readStatus;
+    
+    // Autocorrelation
+    Autocorrelator correlator;
+    void DrawCorrelationStripe();
 };
 
 }

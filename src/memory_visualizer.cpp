@@ -11,7 +11,7 @@ namespace Haywire {
 
 MemoryVisualizer::MemoryVisualizer() 
     : memoryTexture(0), needsUpdate(true), autoRefresh(false),
-      refreshRate(10.0f), showHexOverlay(false), showNavigator(true),
+      refreshRate(10.0f), showHexOverlay(false), showNavigator(true), showCorrelation(false),
       widthInput(640), heightInput(480), strideInput(640),  // Back to reasonable video dimensions
       pixelFormatIndex(0), mouseX(0), mouseY(0), isDragging(false),
       dragStartX(0), dragStartY(0), isReading(false), readComplete(false) {
@@ -258,6 +258,12 @@ void MemoryVisualizer::DrawControls() {
     ImGui::Checkbox("Hex", &showHexOverlay);
     
     ImGui::SameLine();
+    ImGui::Checkbox("Corr", &showCorrelation);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Show autocorrelation for width detection");
+    }
+    
+    ImGui::SameLine();
     ImGui::Text("Refresh:");
     ImGui::SameLine();
     int refreshInt = (int)refreshRate;
@@ -348,8 +354,12 @@ void MemoryVisualizer::DrawMemoryView() {
     // Create a scrollable child region
     ImVec2 availSize = ImGui::GetContentRegionAvail();
     
-    // Add vertical scrollbar on the right
-    ImGui::BeginChild("MemoryScrollRegion", availSize, false, 
+    // Reserve space for correlation stripe if enabled
+    float correlationHeight = showCorrelation ? 100.0f : 0.0f;
+    float memoryHeight = availSize.y - correlationHeight;
+    
+    // Add vertical scrollbar on the right - use memoryHeight not availSize.y!
+    ImGui::BeginChild("MemoryScrollRegion", ImVec2(availSize.x, memoryHeight), false, 
                       ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_AlwaysVerticalScrollbar);
     
     // The actual canvas size should be larger than viewport for scrolling
@@ -402,6 +412,80 @@ void MemoryVisualizer::DrawMemoryView() {
     }
     
     ImGui::EndChild();
+    
+    // Draw correlation stripe at bottom if enabled
+    if (showCorrelation && !currentMemory.data.empty()) {
+        DrawCorrelationStripe();
+    }
+}
+
+void MemoryVisualizer::DrawCorrelationStripe() {
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImVec2 size(ImGui::GetContentRegionAvail().x, 100);
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    
+    // Background
+    drawList->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
+                            IM_COL32(20, 20, 20, 255));
+    
+    // Compute correlation if we have memory
+    if (!currentMemory.data.empty()) {
+        auto correlation = correlator.Correlate(currentMemory.data.data(), 
+                                               currentMemory.data.size(), 
+                                               pixelFormatIndex);
+        
+        if (!correlation.empty()) {
+            // Draw correlation graph
+            float xScale = size.x / std::min((size_t)2048, correlation.size());
+            float yScale = size.y * 0.8f;  // Use 80% of height
+            float baseline = pos.y + size.y - 10;
+            
+            // Draw grid lines
+            for (int x = 64; x < 2048; x += 64) {
+                float xPos = pos.x + x * xScale;
+                drawList->AddLine(ImVec2(xPos, pos.y), 
+                                 ImVec2(xPos, pos.y + size.y),
+                                 IM_COL32(40, 40, 40, 255));
+                
+                // Label major widths
+                if (x % 256 == 0) {
+                    char label[32];
+                    snprintf(label, sizeof(label), "%d", x);
+                    drawList->AddText(ImVec2(xPos - 10, pos.y + size.y - 8),
+                                     IM_COL32(128, 128, 128, 255), label);
+                }
+            }
+            
+            // Draw correlation curve
+            ImVec2 prevPoint(pos.x, baseline);
+            for (size_t i = 0; i < std::min((size_t)2048, correlation.size()); i++) {
+                float x = pos.x + i * xScale;
+                float y = baseline - correlation[i] * yScale;
+                
+                ImVec2 curPoint(x, y);
+                drawList->AddLine(prevPoint, curPoint, IM_COL32(0, 255, 128, 255), 1.5f);
+                prevPoint = curPoint;
+            }
+            
+            // Find and mark peaks
+            auto peaks = correlator.FindPeaks(correlation, 0.3);
+            for (int peak : peaks) {
+                float x = pos.x + peak * xScale;
+                drawList->AddLine(ImVec2(x, pos.y), ImVec2(x, pos.y + size.y),
+                                 IM_COL32(255, 255, 0, 128), 2.0f);
+                
+                // Label the peak
+                char label[32];
+                snprintf(label, sizeof(label), "%d", peak);
+                drawList->AddText(ImVec2(x + 2, pos.y + 2),
+                                 IM_COL32(255, 255, 0, 255), label);
+            }
+        }
+    }
+    
+    // Label
+    drawList->AddText(ImVec2(pos.x + 5, pos.y + 5),
+                     IM_COL32(200, 200, 200, 255), "Autocorrelation (Width Detection)");
 }
 
 void MemoryVisualizer::HandleInput() {

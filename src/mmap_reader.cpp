@@ -13,11 +13,16 @@ MMapReader::MMapReader() : mappedData(nullptr), mappedSize(0), fd(-1) {
 
 MMapReader::~MMapReader() {
     Unmap();
+    // Clean up any leftover dump files
+    unlink("/tmp/haywire_mem.dump");
 }
 
 bool MMapReader::DumpAndMap(QemuConnection& qemu, uint64_t address, size_t size) {
-    // Use QMP to dump memory to a file
+    // Use QMP to dump memory to a file with restrictive permissions
     std::string dumpPath = "/tmp/haywire_mem.dump";
+    
+    // Delete any existing dump file first (with secure overwrite if possible)
+    unlink(dumpPath.c_str());
     
     nlohmann::json cmd = {
         {"execute", "pmemsave"},
@@ -43,8 +48,16 @@ bool MMapReader::DumpAndMap(QemuConnection& qemu, uint64_t address, size_t size)
     // Wait a bit for dump to complete
     usleep(100000); // 100ms
     
+    // Set restrictive permissions on the dump file (owner read-only)
+    chmod(dumpPath.c_str(), 0400);
+    
     // Now mmap the dump file
-    return MapFile(dumpPath, size);
+    bool result = MapFile(dumpPath, size);
+    
+    // Optionally delete the dump file after mapping (file remains accessible via mmap)
+    // unlink(dumpPath.c_str());
+    
+    return result;
 }
 
 bool MMapReader::MapFile(const std::string& path, size_t size) {
