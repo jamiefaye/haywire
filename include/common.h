@@ -19,8 +19,12 @@ struct MemoryBlock {
 
 struct PixelFormat {
     enum Type {
-        RGB888,
-        RGBA8888,
+        RGB888,     // R G B order
+        RGBA8888,   // R G B A order
+        BGR888,     // B G R order (Windows BMP)
+        BGRA8888,   // B G R A order (Windows native)
+        ARGB8888,   // A R G B order (Mac native)
+        ABGR8888,   // A B G R order
         RGB565,
         GRAYSCALE,
         BINARY,
@@ -34,6 +38,10 @@ struct PixelFormat {
         switch(t) {
             case RGB888: bytesPerPixel = 3; break;
             case RGBA8888: bytesPerPixel = 4; break;
+            case BGR888: bytesPerPixel = 3; break;
+            case BGRA8888: bytesPerPixel = 4; break;
+            case ARGB8888: bytesPerPixel = 4; break;
+            case ABGR8888: bytesPerPixel = 4; break;
             case RGB565: bytesPerPixel = 2; break;
             case GRAYSCALE: bytesPerPixel = 1; break;
             case BINARY: bytesPerPixel = 1; break;

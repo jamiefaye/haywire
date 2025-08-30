@@ -101,6 +101,56 @@ bool QemuConnection::ConnectGDB(const std::string& host, int port) {
     return false;
 }
 
+bool QemuConnection::AutoConnect() {
+    std::cerr << "Haywire: Auto-connecting to QEMU...\n";
+    
+    // Step 1: Try to detect memory backend first (fastest)
+    // NOTE: On macOS, using MAP_SHARED with aggressive cache invalidation
+    if (memoryBackend && memoryBackend->AutoDetect()) {
+        useMemoryBackend = true;
+        std::cerr << "✓ Memory backend detected at " 
+                  << memoryBackend->GetBackendPath() << "\n";
+        
+        // Still need QMP for control commands
+        if (ConnectQMP("localhost", 4445)) {
+            std::cerr << "✓ QMP connected for control\n";
+            connected = true;
+            return true;
+        }
+        
+        // Memory backend works even without QMP for read-only access
+        connected = true;
+        std::cerr << "⚠ QMP not available, read-only mode\n";
+        return true;
+    }
+    
+    // Step 2: Try QMP connection
+    if (ConnectQMP("localhost", 4445)) {
+        std::cerr << "✓ Connected via QMP\n";
+        
+        // Try to enable mmap mode for better performance
+        if (ConnectMonitor("localhost", 4444)) {
+            useMMap = true;
+            std::cerr << "✓ Monitor connected, using mmap mode\n";
+        }
+        
+        connected = true;
+        return true;
+    }
+    
+    // Step 3: Try monitor-only connection
+    if (ConnectMonitor("localhost", 4444)) {
+        std::cerr << "✓ Connected via Monitor (slower)\n";
+        connected = true;
+        return true;
+    }
+    
+    // Step 4: No connection available
+    std::cerr << "⚠ No QEMU connection available\n";
+    std::cerr << "  Please start QEMU with scripts/launch_qemu_membackend.sh\n";
+    return false;
+}
+
 bool QemuConnection::ConnectMonitor(const std::string& host, int port) {
     if (monitorSocket >= 0) {
         close(monitorSocket);
@@ -414,6 +464,21 @@ void QemuConnection::DrawConnectionUI() {
     ImGui::InputInt("GDB Port", &inputGDBPort);
     
     if (!connected) {
+        // Show launch helper prominently if no VM detected
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));
+        ImGui::Text("⚠ No QEMU VM detected");
+        ImGui::PopStyleColor();
+        
+        ImGui::TextWrapped("Start QEMU with memory backend for best performance:");
+        
+        if (ImGui::Button("Show Launch Command", ImVec2(-1, 30))) {
+            ImGui::OpenPopup("Launch QEMU");
+        }
+        
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
         // Check if memory backend is available
         if (memoryBackend && !memoryBackend->IsAvailable()) {
             // Try to auto-detect again
@@ -594,6 +659,35 @@ void QemuConnection::DrawConnectionUI() {
         ImGui::Text("GDB protocol pauses the VM and is not suitable");
         ImGui::Text("for live memory viewing. Use Monitor protocol.");
         if (ImGui::Button("OK")) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    
+    if (ImGui::BeginPopupModal("Launch QEMU", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Run this command to start QEMU with memory backend:");
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5, 1, 0.5, 1));
+        ImGui::Text("cd /Users/jamie/haywire");
+        ImGui::Text("./scripts/launch_qemu_membackend.sh");
+        ImGui::PopStyleColor();
+        
+        ImGui::Spacing();
+        ImGui::Text("Or manually add these to your QEMU command:");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7, 0.7, 1, 1));
+        ImGui::TextWrapped("-m 4G -object memory-backend-file,id=mem,size=4G,mem-path=/tmp/haywire-vm-mem,share=on -numa node,memdev=mem");
+        ImGui::PopStyleColor();
+        
+        ImGui::Spacing();
+        if (ImGui::Button("Retry Connection", ImVec2(150, 0))) {
+            if (AutoConnect()) {
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Close", ImVec2(100, 0))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();

@@ -101,18 +101,30 @@ bool MemoryBackend::TryMapPath(const std::string& path) {
 bool MemoryBackend::MapMemoryBackend(const std::string& path, size_t size) {
     Unmap();
     
-    fd = open(path.c_str(), O_RDONLY);
+    // Try O_RDWR first for better sharing, fall back to O_RDONLY
+    fd = open(path.c_str(), O_RDWR);
     if (fd < 0) {
-        return false;
+        fd = open(path.c_str(), O_RDONLY);
+        if (fd < 0) {
+            return false;
+        }
     }
     
-    // Try to map the entire guest memory
-    mappedData = (uint8_t*)mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+    // Use MAP_SHARED to see live changes from QEMU
+    int prot = (fd >= 0 && fcntl(fd, F_GETFL) & O_RDWR) ? (PROT_READ | PROT_WRITE) : PROT_READ;
+    mappedData = (uint8_t*)mmap(nullptr, size, prot, MAP_SHARED, fd, 0);
     if (mappedData == MAP_FAILED) {
-        close(fd);
-        fd = -1;
-        mappedData = nullptr;
-        return false;
+        // Fallback to MAP_PRIVATE if MAP_SHARED fails
+        mappedData = (uint8_t*)mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (mappedData == MAP_FAILED) {
+            close(fd);
+            fd = -1;
+            mappedData = nullptr;
+            return false;
+        }
+        std::cerr << "Warning: Using MAP_PRIVATE, changes may not be visible\n";
+    } else {
+        std::cerr << "Successfully mapped with MAP_SHARED - live updates enabled\n";
     }
     
     mappedSize = size;
@@ -131,6 +143,16 @@ bool MemoryBackend::Read(uint64_t gpa, size_t size, std::vector<uint8_t>& buffer
     
     size_t available = mappedSize - gpa;
     size_t toRead = std::min(size, available);
+    
+    #ifdef __APPLE__
+    // On macOS, try to force cache invalidation before reading
+    // MS_INVALIDATE should discard any cached pages
+    msync(mappedData + gpa, toRead, MS_INVALIDATE | MS_SYNC);
+    
+    // Also try madvise to tell kernel we're about to read this
+    madvise(mappedData + gpa, toRead, MADV_DONTNEED);
+    madvise(mappedData + gpa, toRead, MADV_WILLNEED);
+    #endif
     
     buffer.resize(toRead);
     memcpy(buffer.data(), mappedData + gpa, toRead);

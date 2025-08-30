@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "autocorrelator.h"
+#include <imgui.h>
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
 #else
@@ -12,6 +13,7 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <deque>
 
 namespace Haywire {
 
@@ -61,12 +63,15 @@ private:
     
     bool needsUpdate;
     bool autoRefresh;
+    bool autoRefreshInitialized;
     float refreshRate;
     std::chrono::steady_clock::time_point lastRefresh;
     
     bool showHexOverlay;
     bool showNavigator;
     bool showCorrelation;
+    bool showChangeHighlight;
+    bool showMagnifier;
     
     char addressInput[32];
     int widthInput;
@@ -89,6 +94,31 @@ private:
     // Autocorrelation
     Autocorrelator correlator;
     void DrawCorrelationStripe();
+    
+    // Magnifier
+    void DrawMagnifier();
+    int magnifierZoom;  // Magnification level (2, 4, 8, etc.)
+    bool magnifierLocked;  // Lock position vs follow mouse
+    int magnifierSize;  // Size of area to magnify (in source pixels)
+    ImVec2 magnifierLockPos;  // Locked position if not following mouse
+    ImVec2 memoryViewPos;  // Position of memory view canvas for magnifier
+    ImVec2 memoryViewSize;  // Size of memory view canvas
+    
+    // Change tracking
+    struct ChangeRegion {
+        int x, y;
+        int width, height;
+        std::chrono::steady_clock::time_point detectedTime;
+    };
+    std::vector<ChangeRegion> changedRegions;
+    
+    // Ring buffer for accumulating changes
+    static constexpr size_t CHANGE_HISTORY_SIZE = 10;
+    std::deque<std::vector<ChangeRegion>> changeHistory;
+    std::chrono::steady_clock::time_point lastChangeTime;
+    
+    std::chrono::steady_clock::time_point changeDetectedTime;
+    float marchingAntsPhase;  // For animating the marching ants pattern
 };
 
 }
