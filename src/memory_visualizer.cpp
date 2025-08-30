@@ -165,7 +165,26 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
 }
 
 void MemoryVisualizer::DrawMemoryBitmap() {
+    // Update visible height based on window size
+    ImVec2 availSize = ImGui::GetContentRegionAvail();
+    heightInput = (int)(availSize.y / viewport.zoom);  // Visible rows
+    viewport.height = std::max(1, heightInput);
+    
+    // Layout: Vertical slider on left, memory view on right
+    float sliderWidth = 200;
+    float memoryWidth = availSize.x - sliderWidth - 10;  // -10 for spacing
+    
+    // Vertical address slider on the left
+    ImGui::BeginChild("AddressSlider", ImVec2(sliderWidth, availSize.y), true);
+    DrawVerticalAddressSlider();
+    ImGui::EndChild();
+    
+    ImGui::SameLine();
+    
+    // Memory view on the right
+    ImGui::BeginChild("BitmapView", ImVec2(memoryWidth, availSize.y), false);
     DrawMemoryView();
+    ImGui::EndChild();
     
     // Only update texture once when we have complete data
     if (needsUpdate) {
@@ -219,12 +238,12 @@ void MemoryVisualizer::DrawControls() {
     ImGui::SameLine();
     ImGui::Text("H:");
     ImGui::SameLine();
-    ImGui::PushItemWidth(80);  // Bigger height field
-    if (ImGui::InputInt("##Height", &heightInput)) {
-        viewport.height = std::max(1, heightInput);
-        needsUpdate = true;  // Immediate update
-    }
+    ImGui::PushItemWidth(80);  // Shows visible window height
+    ImGui::Text("%d", heightInput);  // Display only, not editable
     ImGui::PopItemWidth();
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Visible window height in pixels");
+    }
     
     ImGui::SameLine();
     const char* formats[] = { "RGB888", "RGBA8888", "RGB565", "Grayscale", "Binary" };
@@ -250,48 +269,7 @@ void MemoryVisualizer::DrawControls() {
     ImGui::SameLine();
     ImGui::Text("Hz");
     
-    // Third row (own line): Address slider with +/- buttons  
-    const uint64_t sliderUnit = 65536;  // 64K units
-    uint64_t sliderValue = viewport.baseAddress / sliderUnit;
-    uint64_t minSliderValue = 0;
-    const uint64_t maxAddress = 0x100000000ULL;
-    uint64_t maxSliderValue = maxAddress / sliderUnit;
-    
-    if (ImGui::Button("-")) {
-        if (viewport.baseAddress >= sliderUnit) {
-            viewport.baseAddress -= sliderUnit;
-            std::stringstream ss;
-            ss << "0x" << std::hex << viewport.baseAddress;
-            strcpy(addressInput, ss.str().c_str());
-            needsUpdate = true;
-        }
-    }
-    
-    ImGui::SameLine();
-    ImGui::PushItemWidth(600);  // Extra wide slider since it has its own row
-    if (ImGui::SliderScalar("##AddressSlider", ImGuiDataType_U64, &sliderValue, 
-                            &minSliderValue, &maxSliderValue, "0x%llx")) {
-        viewport.baseAddress = sliderValue * sliderUnit;
-        std::stringstream ss;
-        ss << "0x" << std::hex << viewport.baseAddress;
-        strcpy(addressInput, ss.str().c_str());
-        needsUpdate = true;
-    }
-    ImGui::PopItemWidth();
-    
-    ImGui::SameLine();
-    if (ImGui::Button("+")) {
-        if (viewport.baseAddress + sliderUnit <= maxAddress) {
-            viewport.baseAddress += sliderUnit;
-            std::stringstream ss;
-            ss << "0x" << std::hex << viewport.baseAddress;
-            strcpy(addressInput, ss.str().c_str());
-            needsUpdate = true;
-        }
-    }
-    
-    ImGui::SameLine();
-    ImGui::Text("(64K steps)");
+    // Address slider removed from here - moved to side of bitmap window
     
     if (ImGui::IsMouseHoveringRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax())) {
         ImVec2 mousePos = ImGui::GetMousePos();
@@ -304,6 +282,66 @@ void MemoryVisualizer::DrawControls() {
             ImGui::SetTooltip("Address: 0x%llx", addr);
         }
     }
+}
+
+void MemoryVisualizer::DrawVerticalAddressSlider() {
+    ImGui::Text("Memory Navigation");
+    ImGui::Separator();
+    
+    const uint64_t sliderUnit = 65536;  // 64K units
+    const uint64_t maxAddress = 0x100000000ULL;  // 4GB range
+    
+    // Vertical slider
+    ImVec2 availSize = ImGui::GetContentRegionAvail();
+    float sliderHeight = availSize.y - 100;  // Leave room for buttons
+    
+    // Convert address to vertical slider position (inverted - top is 0)
+    uint64_t sliderValue = viewport.baseAddress / sliderUnit;
+    uint64_t maxSliderValue = maxAddress / sliderUnit;
+    
+    ImGui::PushItemWidth(-1);  // Full width
+    
+    // - button
+    if (ImGui::Button("-64K", ImVec2(-1, 30))) {
+        if (viewport.baseAddress >= sliderUnit) {
+            viewport.baseAddress -= sliderUnit;
+            std::stringstream ss;
+            ss << "0x" << std::hex << viewport.baseAddress;
+            strcpy(addressInput, ss.str().c_str());
+            needsUpdate = true;
+        }
+    }
+    
+    // Vertical slider
+    uint64_t minSliderValue = 0;
+    if (ImGui::VSliderScalar("##VAddr", ImVec2(180, sliderHeight), 
+                            ImGuiDataType_U64, &sliderValue,
+                            &maxSliderValue, &minSliderValue,  // Max at top, 0 at bottom
+                            "0x%llx")) {
+        viewport.baseAddress = sliderValue * sliderUnit;
+        std::stringstream ss;
+        ss << "0x" << std::hex << viewport.baseAddress;
+        strcpy(addressInput, ss.str().c_str());
+        needsUpdate = true;
+    }
+    
+    // + button  
+    if (ImGui::Button("+64K", ImVec2(-1, 30))) {
+        if (viewport.baseAddress + sliderUnit <= maxAddress) {
+            viewport.baseAddress += sliderUnit;
+            std::stringstream ss;
+            ss << "0x" << std::hex << viewport.baseAddress;
+            strcpy(addressInput, ss.str().c_str());
+            needsUpdate = true;
+        }
+    }
+    
+    ImGui::PopItemWidth();
+    
+    // Current address display
+    ImGui::Separator();
+    ImGui::Text("Current:");
+    ImGui::Text("0x%llx", viewport.baseAddress);
 }
 
 void MemoryVisualizer::DrawMemoryView() {
@@ -395,7 +433,7 @@ void MemoryVisualizer::HandleInput() {
             needsUpdate = true;
         }
         
-        // Drag to scroll through memory - "mouse sticks to paper"
+        // Drag to scroll through memory - "mouse sticks to paper" in both X and Y
         if (ImGui::IsMouseDragging(0)) {
             ImVec2 delta = ImGui::GetMouseDragDelta(0);
             
@@ -407,15 +445,18 @@ void MemoryVisualizer::HandleInput() {
             }
             
             // Calculate memory offset from drag
-            // Positive drag (down) = show earlier memory (decrease address) - natural scrolling
-            // Negative drag (up) = show later memory (increase address)
+            float dragDeltaX = delta.x - dragStartX;
             float dragDeltaY = delta.y - dragStartY;
             
-            // Each pixel of drag = one row of memory (direct 1:1 mapping)
-            int64_t memoryDelta = (int64_t)dragDeltaY * viewport.stride;
+            // Vertical: Each pixel of drag = one row of memory
+            // Horizontal: Each pixel of drag = one byte (or pixel format size)
+            int64_t verticalDelta = (int64_t)dragDeltaY * viewport.stride;
+            int64_t horizontalDelta = (int64_t)dragDeltaX * viewport.format.bytesPerPixel;
             
-            if (memoryDelta != 0) {
-                int64_t newAddress = (int64_t)viewport.baseAddress - memoryDelta;  // Reversed back to -
+            int64_t totalDelta = verticalDelta + horizontalDelta;
+            
+            if (totalDelta != 0) {
+                int64_t newAddress = (int64_t)viewport.baseAddress - totalDelta;
                 if (newAddress < 0) newAddress = 0;
                 if (newAddress > 0xFFFFFFFFULL) newAddress = 0xFFFFFFFFULL;
                 
@@ -426,7 +467,8 @@ void MemoryVisualizer::HandleInput() {
                 ss << "0x" << std::hex << viewport.baseAddress;
                 strcpy(addressInput, ss.str().c_str());
                 
-                dragStartY = delta.y;  // Reset drag start for continuous scrolling
+                dragStartX = delta.x;  // Reset drag start for continuous scrolling
+                dragStartY = delta.y;
                 needsUpdate = true;
             }
         } else {

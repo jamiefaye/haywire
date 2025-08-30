@@ -45,6 +45,7 @@ private:
     void DrawControls();
     void DrawMemoryView();
     void DrawNavigator();
+    void DrawVerticalAddressSlider();
     void HandleInput();
     
     void CreateTexture();
