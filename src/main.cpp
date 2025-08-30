@@ -7,6 +7,7 @@
 #include "imgui_impl_opengl3.h"
 #include "qemu_connection.h"
 #include "memory_visualizer.h"
+#include "memory_overview.h"
 #include "hex_overlay.h"
 
 using namespace Haywire;
@@ -55,11 +56,13 @@ int main(int argc, char** argv) {
     
     QemuConnection qemu;
     MemoryVisualizer visualizer;
+    MemoryOverview overview;
     HexOverlay hexOverlay;
     
     bool show_demo_window = false;
-    bool show_metrics = true;
+    bool show_metrics = false;  // Hidden by default
     bool show_memory_view = true;
+    bool show_overview = false;
     bool show_connection_window = true;
     
     float fps = 0.0f;
@@ -96,7 +99,10 @@ int main(int argc, char** argv) {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("View")) {
+                ImGui::MenuItem("QEMU Connection", nullptr, &show_connection_window);
+                ImGui::Separator();
                 ImGui::MenuItem("Memory Visualizer", nullptr, &show_memory_view);
+                ImGui::MenuItem("Memory Overview", nullptr, &show_overview);
                 ImGui::MenuItem("Metrics", nullptr, &show_metrics);
                 ImGui::MenuItem("Demo Window", nullptr, &show_demo_window);
                 ImGui::EndMenu();
@@ -107,19 +113,71 @@ int main(int argc, char** argv) {
             ImGui::EndMainMenuBar();
         }
         
+        // Main Haywire window with classic layout (draw first so connection appears on top)
+        if (show_memory_view) {
+            ImGui::SetNextWindowSize(ImVec2(1200, 700), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Haywire Memory Visualizer", &show_memory_view, ImGuiWindowFlags_NoCollapse);
+            
+            // Top bar with controls (full width, compact)
+            ImGui::BeginChild("ControlBar", ImVec2(0, 60), true);
+            visualizer.DrawControlBar(qemu);
+            ImGui::EndChild();
+            
+            // Bottom section with two panes
+            float availableHeight = ImGui::GetContentRegionAvail().y;
+            
+            if (show_overview) {
+                // Left pane: Overview
+                ImGui::BeginChild("OverviewPane", ImVec2(300, availableHeight), true);
+                overview.DrawCompact();
+                ImGui::EndChild();
+                
+                ImGui::SameLine();
+                
+                // Right pane: Memory dump
+                ImGui::BeginChild("MemoryPane", ImVec2(0, availableHeight), true);
+                visualizer.DrawMemoryBitmap();
+                ImGui::EndChild();
+            } else {
+                // Full width memory dump when overview is hidden
+                ImGui::BeginChild("MemoryPane", ImVec2(0, availableHeight), true);
+                visualizer.DrawMemoryBitmap();
+                ImGui::EndChild();
+            }
+            
+            // Update overview with any memory the visualizer just read
+            if (show_overview && visualizer.HasMemory()) {
+                auto& mem = visualizer.GetCurrentMemory();
+                if (!mem.data.empty()) {
+                    overview.UpdateRegion(mem.address, mem.data.size(), mem.data.data());
+                }
+            }
+            
+            if (visualizer.IsHexOverlayEnabled()) {
+                hexOverlay.Draw(visualizer);
+            }
+            
+            ImGui::End();
+        }
+        
+        // QEMU Connection window (draw after main window so it appears on top)
         if (show_connection_window) {
-            ImGui::Begin("QEMU Connection", &show_connection_window);
+            ImGui::SetNextWindowPos(ImVec2(400, 200), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(400, 150), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowFocus();  // Bring to front
+            ImGui::Begin("QEMU Connection", &show_connection_window, 
+                        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
             qemu.DrawConnectionUI();
             ImGui::End();
         }
         
-        if (show_memory_view) {
-            ImGui::Begin("Memory Visualizer", &show_memory_view);
-            visualizer.Draw(qemu);
-            if (visualizer.IsHexOverlayEnabled()) {
-                hexOverlay.Draw(visualizer);
+        // Handle overview scanning when connected
+        if (show_overview && qemu.IsConnected()) {
+            static bool layoutScanned = false;
+            if (!layoutScanned) {
+                overview.ScanMemoryLayout(qemu);
+                layoutScanned = true;
             }
-            ImGui::End();
         }
         
         if (show_metrics) {

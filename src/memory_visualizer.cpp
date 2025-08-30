@@ -16,8 +16,8 @@ MemoryVisualizer::MemoryVisualizer()
       pixelFormatIndex(0), mouseX(0), mouseY(0), isDragging(false),
       dragStartX(0), dragStartY(0), isReading(false), readComplete(false) {
     
-    strcpy(addressInput, "0x80000000");  // Try 2GB mark instead
-    viewport.baseAddress = 0x80000000;  // Initialize the actual address!
+    strcpy(addressInput, "0x0");  // Start at 0 where boot ROM lives
+    viewport.baseAddress = 0x0;  // Initialize the actual address!
     viewport.width = widthInput;
     viewport.height = heightInput;
     viewport.stride = strideInput;
@@ -50,11 +50,13 @@ void MemoryVisualizer::CreateTexture() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
-void MemoryVisualizer::Draw(QemuConnection& qemu) {
-    ImGui::Columns(2, "VisualizerColumns", true);
-    ImGui::SetColumnWidth(0, 300);
-    
+void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
+    // Horizontal layout for controls
     DrawControls();
+    
+    ImGui::SameLine();
+    ImGui::Separator();
+    ImGui::SameLine();
     
     // Check if async read completed
     if (readComplete.exchange(false)) {
@@ -84,15 +86,15 @@ void MemoryVisualizer::Draw(QemuConnection& qemu) {
             
             readThread = std::thread([this, &qemu, addr, size, stride]() {
                 std::vector<uint8_t> buffer;
-                std::cerr << "Reading from address: 0x" << std::hex << addr << " size: " << std::dec << size << "\n";
+                // std::cerr << "Reading from address: 0x" << std::hex << addr << " size: " << std::dec << size << "\n";
                 
                 if (qemu.ReadMemory(addr, size, buffer)) {
                     // Log first 16 bytes to see if content is consistent
-                    std::cerr << "First 16 bytes: ";
-                    for (size_t i = 0; i < std::min(size_t(16), buffer.size()); i++) {
-                        std::cerr << std::hex << std::setw(2) << std::setfill('0') << (int)buffer[i] << " ";
-                    }
-                    std::cerr << std::dec << "\n";
+                    // std::cerr << "First 16 bytes: ";
+                    // for (size_t i = 0; i < std::min(size_t(16), buffer.size()); i++) {
+                    //     std::cerr << std::hex << std::setw(2) << std::setfill('0') << (int)buffer[i] << " ";
+                    // }
+                    // std::cerr << std::dec << "\n";
                     
                     std::lock_guard<std::mutex> lock(memoryMutex);
                     pendingMemory.address = addr;
@@ -136,15 +138,15 @@ void MemoryVisualizer::Draw(QemuConnection& qemu) {
             
             readThread = std::thread([this, &qemu, addr, size, stride]() {
                 std::vector<uint8_t> buffer;
-                std::cerr << "Reading from address: 0x" << std::hex << addr << " size: " << std::dec << size << "\n";
+                // std::cerr << "Reading from address: 0x" << std::hex << addr << " size: " << std::dec << size << "\n";
                 
                 if (qemu.ReadMemory(addr, size, buffer)) {
                     // Log first 16 bytes to see if content is consistent
-                    std::cerr << "First 16 bytes: ";
-                    for (size_t i = 0; i < std::min(size_t(16), buffer.size()); i++) {
-                        std::cerr << std::hex << std::setw(2) << std::setfill('0') << (int)buffer[i] << " ";
-                    }
-                    std::cerr << std::dec << "\n";
+                    // std::cerr << "First 16 bytes: ";
+                    // for (size_t i = 0; i < std::min(size_t(16), buffer.size()); i++) {
+                    //     std::cerr << std::hex << std::setw(2) << std::setfill('0') << (int)buffer[i] << " ";
+                    // }
+                    // std::cerr << std::dec << "\n";
                     
                     std::lock_guard<std::mutex> lock(memoryMutex);
                     pendingMemory.address = addr;
@@ -160,11 +162,10 @@ void MemoryVisualizer::Draw(QemuConnection& qemu) {
         }
     }
     
-    ImGui::NextColumn();
-    
+}
+
+void MemoryVisualizer::DrawMemoryBitmap() {
     DrawMemoryView();
-    
-    ImGui::Columns(1);
     
     // Only update texture once when we have complete data
     if (needsUpdate) {
@@ -173,50 +174,124 @@ void MemoryVisualizer::Draw(QemuConnection& qemu) {
     }
 }
 
-void MemoryVisualizer::DrawControls() {
-    ImGui::Text("Memory Settings");
-    ImGui::Separator();
+void MemoryVisualizer::Draw(QemuConnection& qemu) {
+    // Legacy method for compatibility - combines both
+    ImGui::Columns(2, "VisualizerColumns", true);
+    ImGui::SetColumnWidth(0, 300);
     
-    ImGui::InputText("Address", addressInput, sizeof(addressInput));
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
+    DrawControlBar(qemu);
+    
+    ImGui::NextColumn();
+    
+    DrawMemoryBitmap();
+    
+    ImGui::Columns(1);
+}
+
+void MemoryVisualizer::DrawControls() {
+    // First row: Address, Width, Height, Format, Refresh
+    ImGui::Text("Addr:");
+    ImGui::SameLine();
+    ImGui::PushItemWidth(120);
+    if (ImGui::InputText("##Address", addressInput, sizeof(addressInput),
+                        ImGuiInputTextFlags_EnterReturnsTrue)) {
         std::stringstream ss;
         ss << std::hex << addressInput;
         ss >> viewport.baseAddress;
-        std::cerr << "Address updated to: 0x" << std::hex << viewport.baseAddress << std::dec << "\n";
+        // Round to 64K boundary
+        viewport.baseAddress = (viewport.baseAddress / 65536) * 65536;
+        needsUpdate = true;
     }
+    ImGui::PopItemWidth();
     
-    ImGui::InputInt("Width", &widthInput);
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
+    ImGui::SameLine();
+    ImGui::Text("W:");
+    ImGui::SameLine();
+    ImGui::PushItemWidth(80);  // Bigger width field
+    if (ImGui::InputInt("##Width", &widthInput)) {
         viewport.width = std::max(1, widthInput);
+        viewport.stride = viewport.width;
+        strideInput = viewport.stride;
+        needsUpdate = true;  // Immediate update
     }
+    ImGui::PopItemWidth();
     
-    ImGui::InputInt("Height", &heightInput);
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
+    ImGui::SameLine();
+    ImGui::Text("H:");
+    ImGui::SameLine();
+    ImGui::PushItemWidth(80);  // Bigger height field
+    if (ImGui::InputInt("##Height", &heightInput)) {
         viewport.height = std::max(1, heightInput);
+        needsUpdate = true;  // Immediate update
     }
+    ImGui::PopItemWidth();
     
-    ImGui::InputInt("Stride", &strideInput);
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-        viewport.stride = std::max(1, strideInput);
-    }
-    
+    ImGui::SameLine();
     const char* formats[] = { "RGB888", "RGBA8888", "RGB565", "Grayscale", "Binary" };
-    if (ImGui::Combo("Pixel Format", &pixelFormatIndex, formats, IM_ARRAYSIZE(formats))) {
+    ImGui::PushItemWidth(100);
+    if (ImGui::Combo("##Format", &pixelFormatIndex, formats, IM_ARRAYSIZE(formats))) {
         viewport.format = PixelFormat(static_cast<PixelFormat::Type>(pixelFormatIndex));
+        needsUpdate = true;  // Immediate update
+    }
+    ImGui::PopItemWidth();
+    
+    ImGui::SameLine();
+    ImGui::Checkbox("Hex", &showHexOverlay);
+    
+    ImGui::SameLine();
+    ImGui::Text("Refresh:");
+    ImGui::SameLine();
+    int refreshInt = (int)refreshRate;
+    ImGui::PushItemWidth(50);
+    if (ImGui::InputInt("##RefreshRate", &refreshInt)) {
+        refreshRate = (float)std::max(1, std::min(60, refreshInt));
+    }
+    ImGui::PopItemWidth();
+    ImGui::SameLine();
+    ImGui::Text("Hz");
+    
+    // Third row (own line): Address slider with +/- buttons  
+    const uint64_t sliderUnit = 65536;  // 64K units
+    uint64_t sliderValue = viewport.baseAddress / sliderUnit;
+    uint64_t minSliderValue = 0;
+    const uint64_t maxAddress = 0x100000000ULL;
+    uint64_t maxSliderValue = maxAddress / sliderUnit;
+    
+    if (ImGui::Button("-")) {
+        if (viewport.baseAddress >= sliderUnit) {
+            viewport.baseAddress -= sliderUnit;
+            std::stringstream ss;
+            ss << "0x" << std::hex << viewport.baseAddress;
+            strcpy(addressInput, ss.str().c_str());
+            needsUpdate = true;
+        }
     }
     
-    ImGui::SliderFloat("Zoom", &viewport.zoom, 0.1f, 10.0f, "%.2fx");
+    ImGui::SameLine();
+    ImGui::PushItemWidth(600);  // Extra wide slider since it has its own row
+    if (ImGui::SliderScalar("##AddressSlider", ImGuiDataType_U64, &sliderValue, 
+                            &minSliderValue, &maxSliderValue, "0x%llx")) {
+        viewport.baseAddress = sliderValue * sliderUnit;
+        std::stringstream ss;
+        ss << "0x" << std::hex << viewport.baseAddress;
+        strcpy(addressInput, ss.str().c_str());
+        needsUpdate = true;
+    }
+    ImGui::PopItemWidth();
     
-    if (ImGui::Button("Reset View")) {
-        viewport.zoom = 1.0f;
-        viewport.panX = 0;
-        viewport.panY = 0;
+    ImGui::SameLine();
+    if (ImGui::Button("+")) {
+        if (viewport.baseAddress + sliderUnit <= maxAddress) {
+            viewport.baseAddress += sliderUnit;
+            std::stringstream ss;
+            ss << "0x" << std::hex << viewport.baseAddress;
+            strcpy(addressInput, ss.str().c_str());
+            needsUpdate = true;
+        }
     }
     
-    ImGui::Separator();
-    ImGui::Text("Display Options");
-    ImGui::Checkbox("Hex Overlay", &showHexOverlay);
-    ImGui::Checkbox("Navigator", &showNavigator);
+    ImGui::SameLine();
+    ImGui::Text("(64K steps)");
     
     if (ImGui::IsMouseHoveringRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax())) {
         ImVec2 mousePos = ImGui::GetMousePos();
@@ -232,24 +307,34 @@ void MemoryVisualizer::DrawControls() {
 }
 
 void MemoryVisualizer::DrawMemoryView() {
-    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
-    ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+    // Create a scrollable child region
+    ImVec2 availSize = ImGui::GetContentRegionAvail();
     
+    // Add vertical scrollbar on the right
+    ImGui::BeginChild("MemoryScrollRegion", availSize, false, 
+                      ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    
+    // The actual canvas size should be larger than viewport for scrolling
+    float canvasHeight = std::max(availSize.y, (float)(viewport.height * viewport.zoom));
+    float canvasWidth = std::max(availSize.x - 20, (float)(viewport.width * viewport.zoom)); // -20 for scrollbar
+    
+    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     
+    // Background
     drawList->AddRectFilled(canvasPos, 
-                            ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y),
+                            ImVec2(canvasPos.x + canvasWidth, canvasPos.y + canvasHeight),
                             IM_COL32(50, 50, 50, 255));
     
     if (memoryTexture && !pixelBuffer.empty()) {
         float texW = viewport.width * viewport.zoom;
         float texH = viewport.height * viewport.zoom;
         
-        ImVec2 imgPos(canvasPos.x + viewport.panX, canvasPos.y + viewport.panY);
+        ImVec2 imgPos(canvasPos.x, canvasPos.y);
         ImVec2 imgSize(imgPos.x + texW, imgPos.y + texH);
         
         drawList->PushClipRect(canvasPos, 
-                              ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y),
+                              ImVec2(canvasPos.x + canvasWidth, canvasPos.y + canvasHeight),
                               true);
         
         drawList->AddImage((ImTextureID)(intptr_t)memoryTexture,
@@ -260,26 +345,92 @@ void MemoryVisualizer::DrawMemoryView() {
         drawList->PopClipRect();
     }
     
+    // Make the invisible button the size of the content for scrolling
+    ImGui::InvisibleButton("canvas", ImVec2(canvasWidth, canvasHeight));
+    
     HandleInput();
     
-    ImGui::InvisibleButton("canvas", canvasSize);
+    // Handle vertical scrollbar
+    float scrollY = ImGui::GetScrollY();
+    float maxScrollY = ImGui::GetScrollMaxY();
+    if (maxScrollY > 0) {
+        // Map scroll position to memory address
+        float scrollRatio = scrollY / maxScrollY;
+        int64_t addressRange = 0x100000; // 1MB view range for now
+        int64_t scrollOffset = (int64_t)(scrollRatio * addressRange);
+        
+        // This will be used to offset the memory view
+        // For now just track it, actual implementation would update base address
+    }
+    
+    ImGui::EndChild();
 }
 
 void MemoryVisualizer::HandleInput() {
     ImGuiIO& io = ImGui::GetIO();
     
     if (ImGui::IsItemHovered()) {
+        // Mouse wheel scrolls through memory addresses
         if (io.MouseWheel != 0) {
-            float oldZoom = viewport.zoom;
-            viewport.zoom *= (io.MouseWheel > 0) ? 1.1f : 0.9f;
-            viewport.zoom = std::max(0.1f, std::min(10.0f, viewport.zoom));
+            // Scroll by rows worth of memory
+            int64_t scrollDelta = io.MouseWheel * viewport.stride * 16;  // 16 rows at a time
             
-            float zoomRatio = viewport.zoom / oldZoom;
-            ImVec2 mousePos = ImGui::GetMousePos();
-            ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+            // Shift for faster scrolling (64K chunks)
+            if (io.KeyShift) {
+                scrollDelta = io.MouseWheel * 65536;
+            }
             
-            viewport.panX = mousePos.x - canvasPos.x - (mousePos.x - canvasPos.x - viewport.panX) * zoomRatio;
-            viewport.panY = mousePos.y - canvasPos.y - (mousePos.y - canvasPos.y - viewport.panY) * zoomRatio;
+            // Update address - natural scrolling: wheel up = go up (earlier/lower addresses)
+            int64_t newAddress = (int64_t)viewport.baseAddress - scrollDelta;  // Natural scrolling
+            if (newAddress < 0) newAddress = 0;
+            if (newAddress > 0xFFFFFFFFULL) newAddress = 0xFFFFFFFFULL;  // Cap at 4GB for now
+            
+            viewport.baseAddress = (uint64_t)newAddress;
+            
+            // Update the address input field
+            std::stringstream ss;
+            ss << "0x" << std::hex << viewport.baseAddress;
+            strcpy(addressInput, ss.str().c_str());
+            
+            needsUpdate = true;
+        }
+        
+        // Drag to scroll through memory - "mouse sticks to paper"
+        if (ImGui::IsMouseDragging(0)) {
+            ImVec2 delta = ImGui::GetMouseDragDelta(0);
+            
+            if (!isDragging) {
+                // Start of drag
+                isDragging = true;
+                dragStartX = 0;
+                dragStartY = 0;
+            }
+            
+            // Calculate memory offset from drag
+            // Positive drag (down) = show earlier memory (decrease address) - natural scrolling
+            // Negative drag (up) = show later memory (increase address)
+            float dragDeltaY = delta.y - dragStartY;
+            
+            // Each pixel of drag = one row of memory (direct 1:1 mapping)
+            int64_t memoryDelta = (int64_t)dragDeltaY * viewport.stride;
+            
+            if (memoryDelta != 0) {
+                int64_t newAddress = (int64_t)viewport.baseAddress - memoryDelta;  // Reversed back to -
+                if (newAddress < 0) newAddress = 0;
+                if (newAddress > 0xFFFFFFFFULL) newAddress = 0xFFFFFFFFULL;
+                
+                viewport.baseAddress = (uint64_t)newAddress;
+                
+                // Update the address input field
+                std::stringstream ss;
+                ss << "0x" << std::hex << viewport.baseAddress;
+                strcpy(addressInput, ss.str().c_str());
+                
+                dragStartY = delta.y;  // Reset drag start for continuous scrolling
+                needsUpdate = true;
+            }
+        } else {
+            isDragging = false;
         }
         
         if (ImGui::IsMouseClicked(0)) {

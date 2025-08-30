@@ -22,6 +22,8 @@ public:
     ~MemoryVisualizer();
     
     void Draw(QemuConnection& qemu);
+    void DrawControlBar(QemuConnection& qemu);
+    void DrawMemoryBitmap();
     
     void SetViewport(const ViewportSettings& settings);
     ViewportSettings GetViewport() const { return viewport; }
@@ -37,6 +39,7 @@ public:
     void NavigateToAddress(uint64_t address);
     
     const MemoryBlock& GetCurrentMemory() const { return currentMemory; }
+    bool HasMemory() const { return !currentMemory.data.empty(); }
     
 private:
     void DrawControls();
