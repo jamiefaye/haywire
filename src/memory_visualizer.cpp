@@ -376,10 +376,10 @@ void MemoryVisualizer::DrawControls() {
                         ImGuiInputTextFlags_EnterReturnsTrue)) {
         std::stringstream ss;
         ss << std::hex << addressInput;
-        ss >> viewport.baseAddress;
-        // Round to 64K boundary
-        viewport.baseAddress = (viewport.baseAddress / 65536) * 65536;
-        needsUpdate = true;
+        uint64_t inputAddress;
+        ss >> inputAddress;
+        // Use NavigateToAddress to handle VA translation if needed
+        NavigateToAddress(inputAddress);
     }
     ImGui::PopItemWidth();
     
@@ -473,6 +473,11 @@ void MemoryVisualizer::DrawControls() {
                 LoadMemoryMap(regions);
                 std::cerr << "Loaded memory map for PID " << targetPid 
                          << " (" << regions.size() << " regions)" << std::endl;
+                
+                // Notify any listeners that we've loaded a process map
+                if (onProcessMapLoaded) {
+                    onProcessMapLoaded(targetPid, regions);
+                }
             } else {
                 std::cerr << "Failed to load memory map for PID " << targetPid << std::endl;
             }
@@ -509,26 +514,53 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     ImGui::Text("Memory Navigation");
     ImGui::Separator();
     
-    const uint64_t sliderUnit = 65536;  // 64K units
-    const uint64_t maxAddress = 0x200000000ULL;  // 8GB range to cover extended memory
+    uint64_t sliderUnit;
+    uint64_t maxAddress;
+    uint64_t currentPos;
+    
+    if (useVirtualAddresses && addressFlattener) {
+        // Crunched mode - slider covers flattened range
+        sliderUnit = 4096;  // Page size for alignment
+        maxAddress = addressFlattener->GetFlatSize();
+        currentPos = viewport.baseAddress;  // This is flat position in VA mode
+        
+        // Show current VA
+        uint64_t currentVA = addressFlattener->FlatToVirtual(currentPos);
+        ImGui::Text("VA: 0x%llx", currentVA);
+        ImGui::Text("Flat: %llu MB", currentPos / (1024*1024));
+    } else {
+        // Physical mode - original behavior
+        sliderUnit = 65536;  // 64K units
+        maxAddress = 0x200000000ULL;  // 8GB physical range
+        currentPos = viewport.baseAddress;
+    }
     
     // Vertical slider
     ImVec2 availSize = ImGui::GetContentRegionAvail();
     float sliderHeight = availSize.y - 100;  // Leave room for buttons
     
     // Convert address to vertical slider position (inverted - top is 0)
-    uint64_t sliderValue = viewport.baseAddress / sliderUnit;
+    uint64_t sliderValue = currentPos / sliderUnit;
     uint64_t maxSliderValue = maxAddress / sliderUnit;
     
     ImGui::PushItemWidth(-1);  // Full width
     
     // - button
-    if (ImGui::Button("-64K", ImVec2(-1, 30))) {
+    const char* buttonLabel = useVirtualAddresses ? "-Page" : "-64K";
+    if (ImGui::Button(buttonLabel, ImVec2(-1, 30))) {
         if (viewport.baseAddress >= sliderUnit) {
             viewport.baseAddress -= sliderUnit;
-            std::stringstream ss;
-            ss << "0x" << std::hex << viewport.baseAddress;
-            strcpy(addressInput, ss.str().c_str());
+            
+            if (useVirtualAddresses && addressFlattener) {
+                uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
+                std::stringstream ss;
+                ss << "0x" << std::hex << virtualAddr;
+                strcpy(addressInput, ss.str().c_str());
+            } else {
+                std::stringstream ss;
+                ss << "0x" << std::hex << viewport.baseAddress;
+                strcpy(addressInput, ss.str().c_str());
+            }
             needsUpdate = true;
         }
     }
@@ -540,19 +572,40 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
                             &maxSliderValue, &minSliderValue,  // Max at top, 0 at bottom
                             "0x%llx")) {
         viewport.baseAddress = sliderValue * sliderUnit;
-        std::stringstream ss;
-        ss << "0x" << std::hex << viewport.baseAddress;
-        strcpy(addressInput, ss.str().c_str());
+        
+        // Update address field
+        if (useVirtualAddresses && addressFlattener) {
+            // Show the VA that corresponds to this flat position
+            uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
+            std::stringstream ss;
+            ss << "0x" << std::hex << virtualAddr;
+            strcpy(addressInput, ss.str().c_str());
+        } else {
+            // Physical mode - show physical address
+            std::stringstream ss;
+            ss << "0x" << std::hex << viewport.baseAddress;
+            strcpy(addressInput, ss.str().c_str());
+        }
+        
         needsUpdate = true;
     }
     
     // + button  
-    if (ImGui::Button("+64K", ImVec2(-1, 30))) {
+    const char* plusLabel = useVirtualAddresses ? "+Page" : "+64K";
+    if (ImGui::Button(plusLabel, ImVec2(-1, 30))) {
         if (viewport.baseAddress + sliderUnit <= maxAddress) {
             viewport.baseAddress += sliderUnit;
-            std::stringstream ss;
-            ss << "0x" << std::hex << viewport.baseAddress;
-            strcpy(addressInput, ss.str().c_str());
+            
+            if (useVirtualAddresses && addressFlattener) {
+                uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
+                std::stringstream ss;
+                ss << "0x" << std::hex << virtualAddr;
+                strcpy(addressInput, ss.str().c_str());
+            } else {
+                std::stringstream ss;
+                ss << "0x" << std::hex << viewport.baseAddress;
+                strcpy(addressInput, ss.str().c_str());
+            }
             needsUpdate = true;
         }
     }
@@ -1219,31 +1272,37 @@ uint64_t MemoryVisualizer::GetAddressAt(int x, int y) const {
 }
 
 void MemoryVisualizer::NavigateToAddress(uint64_t address) {
-    // If using virtual addresses and we have a translator, translate to physical
-    uint64_t targetAddress = address;
-    if (useVirtualAddresses && viewportTranslator && targetPid > 0) {
-        uint64_t physAddr = viewportTranslator->TranslateAddress(targetPid, address);
-        if (physAddr != 0) {
-            targetAddress = physAddr;
-            std::cerr << "Translated VA 0x" << std::hex << address 
-                     << " to PA 0x" << physAddr << std::dec << std::endl;
-        } else {
-            std::cerr << "Failed to translate VA 0x" << std::hex << address 
-                     << " (page not present?)" << std::dec << std::endl;
+    // If using virtual addresses with crunched view
+    if (useVirtualAddresses && addressFlattener && targetPid > 0) {
+        // Convert VA to position in flattened space
+        uint64_t flatPos = addressFlattener->VirtualToFlat(address);
+        
+        // Store the flat position as our "base address" for the viewport
+        viewport.baseAddress = flatPos;
+        
+        // Display the actual VA in the address field
+        std::stringstream ss;
+        ss << "0x" << std::hex << address;
+        strcpy(addressInput, ss.str().c_str());
+        
+        std::cerr << "VA 0x" << std::hex << address 
+                  << " -> Flat position 0x" << flatPos << std::dec 
+                  << " (" << (flatPos / (1024*1024)) << " MB into crunched space)" << std::endl;
+        
+        // Prefetch translations for this area
+        if (viewportTranslator) {
+            size_t viewSize = viewport.width * viewport.height * 4;
+            viewportTranslator->SetViewport(targetPid, address, viewSize);
         }
+    } else {
+        // Original physical address mode
+        viewport.baseAddress = address;
+        std::stringstream ss;
+        ss << "0x" << std::hex << address;
+        strcpy(addressInput, ss.str().c_str());
     }
     
-    viewport.baseAddress = targetAddress;
-    std::stringstream ss;
-    ss << "0x" << std::hex << address;  // Keep showing the original address
-    strcpy(addressInput, ss.str().c_str());
     needsUpdate = true;
-    
-    // Update translator viewport for prefetching
-    if (viewportTranslator && targetPid > 0) {
-        size_t viewSize = viewport.width * viewport.height * 4;  // Assuming 32-bit pixels
-        viewportTranslator->SetViewport(targetPid, address, viewSize);
-    }
 }
 
 void MemoryVisualizer::SetViewport(const ViewportSettings& settings) {

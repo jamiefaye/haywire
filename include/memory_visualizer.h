@@ -59,6 +59,13 @@ public:
     // Load memory map for navigation
     void LoadMemoryMap(const std::vector<GuestMemoryRegion>& regions);
     
+    // Callback when process map is loaded
+    std::function<void(int, const std::vector<GuestMemoryRegion>&)> onProcessMapLoaded;
+    
+    // Temporary public access for wiring (should refactor later)
+    std::unique_ptr<AddressSpaceFlattener>& GetFlattener() { return addressFlattener; }
+    GuestAgent* GetGuestAgent() { return guestAgent; }
+    
 private:
     void DrawControls();
     void DrawMemoryView();

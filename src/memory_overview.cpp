@@ -1,9 +1,11 @@
 #include "memory_overview.h"
 #include "qemu_connection.h"
+#include "guest_agent.h"
 #include <iostream>
 #include <sstream>
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
 #else
@@ -21,7 +23,10 @@ MemoryOverview::MemoryOverview()
       bytesPerPixel(65536),      // Each pixel = 64KB
       scanning(false),
       scanProgress(0.0f),
-      textureID(0) {
+      textureID(0),
+      processMode(false),
+      targetPid(-1),
+      flattener(nullptr) {
     
     // Calculate how many pages/chunks we need to track
     uint64_t range = endAddress - startAddress;
@@ -337,18 +342,23 @@ void MemoryOverview::DrawCompact() {
 void MemoryOverview::Draw() {
     ImGui::Begin("Memory Overview");
     
-    // Show detected regions
-    if (!regions.empty()) {
-        ImGui::Text("Populated Memory Regions:");
-        for (const auto& region : regions) {
-            ImGui::Text("  0x%llx - 0x%llx (%s, %.1f MB)", 
-                       region.base, 
-                       region.base + region.size - 1,
-                       region.name.c_str(),
-                       region.size / (1024.0 * 1024.0));
+    // Switch between physical and process mode
+    if (processMode) {
+        DrawProcessMap();
+    } else {
+        // Original physical memory view
+        // Show detected regions
+        if (!regions.empty()) {
+            ImGui::Text("Populated Memory Regions:");
+            for (const auto& region : regions) {
+                ImGui::Text("  0x%llx - 0x%llx (%s, %.1f MB)", 
+                           region.base, 
+                           region.base + region.size - 1,
+                           region.name.c_str(),
+                           region.size / (1024.0 * 1024.0));
+            }
+            ImGui::Separator();
         }
-        ImGui::Separator();
-    }
     
     // Status
     if (scanning) {
@@ -475,6 +485,7 @@ void MemoryOverview::Draw() {
             }
         }
     }
+    }  // End of else block (physical mode)
     
     ImGui::End();
 }
@@ -526,6 +537,124 @@ uint64_t MemoryOverview::GetAddressAt(int x, int y) const {
         return startAddress + (index * chunkSize);
     }
     return 0;
+}
+
+void MemoryOverview::SetProcessMode(bool enabled, int pid) {
+    processMode = enabled;
+    targetPid = pid;
+}
+
+void MemoryOverview::LoadProcessMap(GuestAgent* agent) {
+    if (agent && targetPid > 0) {
+        processMap.LoadProcess(targetPid, agent);
+    }
+}
+
+void MemoryOverview::DrawProcessMap() {
+    if (targetPid <= 0) {
+        ImGui::Text("No process selected");
+        ImGui::Text("Enable VA Mode and load a process memory map");
+        return;
+    }
+    
+    ImGui::Text("Process %d Memory Map (Crunched View)", targetPid);
+    ImGui::Separator();
+    
+    if (!flattener) {
+        ImGui::Text("No address space flattener available");
+        return;
+    }
+    
+    // Show stats
+    uint64_t totalMapped = flattener->GetMappedSize();
+    float compression = 1.0f / flattener->GetCompressionRatio();
+    ImGui::Text("Total Mapped: %.2f MB", totalMapped / (1024.0 * 1024.0));
+    ImGui::Text("Compression: %.1f:1", compression);
+    ImGui::Separator();
+    
+    // Draw the crunched memory map
+    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+    ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+    
+    if (canvasSize.x < 100) canvasSize.x = 250;  // Min width
+    if (canvasSize.y < 200) canvasSize.y = 400;  // Min height
+    
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    
+    // Background
+    drawList->AddRectFilled(canvasPos, 
+                           ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y),
+                           IM_COL32(20, 20, 20, 255));
+    
+    // Draw regions as horizontal bars
+    const auto& regions = flattener->GetRegions();
+    uint64_t totalFlat = flattener->GetFlatSize();
+    
+    if (totalFlat > 0) {
+        for (const auto& region : regions) {
+            // Calculate position in canvas
+            float y1 = canvasPos.y + (region.flatStart / (float)totalFlat) * canvasSize.y;
+            float y2 = canvasPos.y + (region.flatEnd / (float)totalFlat) * canvasSize.y;
+            
+            // Minimum height for visibility
+            if (y2 - y1 < 1.0f) y2 = y1 + 1.0f;
+            
+            // Color based on region name
+            uint32_t color = IM_COL32(100, 100, 100, 255);  // Default gray
+            if (region.name.find("stack") != std::string::npos) {
+                color = IM_COL32(255, 100, 255, 255);  // Magenta for stack
+            } else if (region.name.find("heap") != std::string::npos) {
+                color = IM_COL32(255, 255, 100, 255);  // Yellow for heap
+            } else if (region.name.find(".so") != std::string::npos) {
+                color = IM_COL32(100, 255, 255, 255);  // Cyan for libraries
+            } else if (region.name[0] == '/' && region.name.find("bin") != std::string::npos) {
+                color = IM_COL32(100, 100, 255, 255);  // Blue for executables
+            } else if (region.name.empty() || region.name[0] == '[') {
+                color = IM_COL32(150, 150, 150, 255);  // Light gray for anonymous
+            }
+            
+            // Draw the region bar
+            drawList->AddRectFilled(ImVec2(canvasPos.x + 10, y1),
+                                   ImVec2(canvasPos.x + canvasSize.x - 10, y2),
+                                   color);
+            
+            // Hover detection
+            if (ImGui::IsMouseHoveringRect(ImVec2(canvasPos.x, y1), 
+                                         ImVec2(canvasPos.x + canvasSize.x, y2))) {
+                // Highlight
+                drawList->AddRect(ImVec2(canvasPos.x + 10, y1),
+                                ImVec2(canvasPos.x + canvasSize.x - 10, y2),
+                                IM_COL32(255, 255, 255, 255), 0, 0, 2);
+                
+                // Tooltip
+                ImGui::BeginTooltip();
+                ImGui::Text("VA: 0x%llx - 0x%llx", region.virtualStart, region.virtualEnd);
+                ImGui::Text("Size: %.2f MB", region.Size() / (1024.0 * 1024.0));
+                if (!region.name.empty()) {
+                    ImGui::Text("Name: %s", region.name.c_str());
+                }
+                ImGui::Text("Position in flat space: %llu MB", 
+                           region.flatStart / (1024 * 1024));
+                ImGui::EndTooltip();
+                
+                // Click to navigate
+                if (ImGui::IsMouseClicked(0) && navCallback) {
+                    navCallback(region.virtualStart);
+                }
+            }
+        }
+    }
+    
+    // Make the canvas interactive
+    ImGui::InvisibleButton("ProcessMapCanvas", canvasSize);
+    
+    // Legend
+    ImGui::Separator();
+    ImGui::Text("Legend:");
+    ImGui::SameLine(); ImGui::TextColored(ImVec4(0.4f, 0.4f, 1.0f, 1), "Executable");
+    ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1), "Heap");
+    ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.4f, 1.0f, 1), "Stack");
+    ImGui::SameLine(); ImGui::TextColored(ImVec4(0.4f, 1.0f, 1.0f, 1), "Libraries");
 }
 
 }

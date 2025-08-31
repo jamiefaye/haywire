@@ -74,6 +74,18 @@ int main(int argc, char** argv) {
         std::cerr << "Viewport translator initialized with guest agent" << std::endl;
     }
     
+    // Connect visualizer to overview for process map display
+    visualizer.onProcessMapLoaded = [&overview, &visualizer](int pid, const std::vector<GuestMemoryRegion>& regions) {
+        overview.SetProcessMode(true, pid);
+        overview.SetFlattener(visualizer.GetFlattener().get());
+        overview.LoadProcessMap(visualizer.GetGuestAgent());
+        
+        // Set navigation callback to update visualizer when clicking in overview
+        overview.SetNavigationCallback([&visualizer](uint64_t va) {
+            visualizer.NavigateToAddress(va);
+        });
+    };
+    
     bool show_demo_window = false;
     bool show_metrics = false;  // Hidden by default
     bool show_memory_view = true;

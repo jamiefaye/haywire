@@ -6,10 +6,13 @@
 #include <chrono>
 #include "imgui.h"
 #include "mmap_reader.h"
+#include "process_memory_map.h"
+#include "address_space_flattener.h"
 
 namespace Haywire {
 
 class QemuConnection;
+class GuestAgent;
 
 enum class PageState : uint8_t {
     Unknown = 0,
@@ -48,12 +51,21 @@ public:
     void Draw();
     void DrawCompact();  // Compact view for side panel
     
+    // Process memory map mode
+    void SetProcessMode(bool enabled, int pid = -1);
+    void LoadProcessMap(GuestAgent* agent);
+    void SetFlattener(AddressSpaceFlattener* flattener) { this->flattener = flattener; }
+    
     // Get address from pixel position
     uint64_t GetAddressAt(int x, int y) const;
     
     // Configuration
     void SetAddressRange(uint64_t start, uint64_t end);
     void SetGranularity(size_t pageSize, size_t chunkSize);
+    
+    // Navigation callback
+    using NavigationCallback = std::function<void(uint64_t)>;
+    void SetNavigationCallback(NavigationCallback cb) { navCallback = cb; }
     
 private:
     // Memory layout from QEMU
@@ -84,11 +96,21 @@ private:
     // Fast memory reading
     MMapReader mmapReader;
     
+    // Process memory map mode
+    bool processMode;
+    int targetPid;
+    ProcessMemoryMap processMap;
+    AddressSpaceFlattener* flattener;
+    NavigationCallback navCallback;
+    
     // Convert page state to color
     uint32_t StateToColor(PageState state) const;
     
     // Probe a single page/chunk
     PageState ProbeMemory(QemuConnection& qemu, uint64_t address);
+    
+    // Draw process memory map
+    void DrawProcessMap();
 };
 
 }
