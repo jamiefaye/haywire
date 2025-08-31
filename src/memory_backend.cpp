@@ -43,8 +43,7 @@ bool MemoryBackend::AutoDetect() {
                 // Try to map it
                 if (TryMapPath(fullPath)) {
                     closedir(dir);
-                    std::cerr << "Auto-detected memory backend: " << fullPath 
-                              << " (" << mappedSize / (1024*1024) << " MB)\n";
+                    // Auto-detected memory backend
                     return true;
                 }
             }
@@ -67,8 +66,7 @@ bool MemoryBackend::AutoDetect() {
                 
                 if (TryMapPath(memPath)) {
                     pclose(ps);
-                    std::cerr << "Found memory backend from QEMU cmdline: " << memPath 
-                              << " (" << mappedSize / (1024*1024) << " MB)\n";
+                    // Found memory backend from QEMU cmdline
                     return true;
                 }
             }
@@ -122,9 +120,9 @@ bool MemoryBackend::MapMemoryBackend(const std::string& path, size_t size) {
             mappedData = nullptr;
             return false;
         }
-        std::cerr << "Warning: Using MAP_PRIVATE, changes may not be visible\n";
+        // Warning: Using MAP_PRIVATE, changes may not be visible
     } else {
-        std::cerr << "Successfully mapped with MAP_SHARED - live updates enabled\n";
+        // Successfully mapped with MAP_SHARED - live updates enabled
     }
     
     mappedSize = size;

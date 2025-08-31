@@ -89,8 +89,8 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
         refreshRate = qemu.IsUsingMemoryBackend() ? 30.0f : 5.0f;
         autoRefreshInitialized = true;
         
-        std::cerr << "Auto-refresh enabled at " << refreshRate << " Hz"
-                  << (qemu.IsUsingMemoryBackend() ? " (memory backend)" : " (QMP/GDB)") << "\n";
+        // std::cerr << "Auto-refresh enabled at " << refreshRate << " Hz"
+        //           << (qemu.IsUsingMemoryBackend() ? " (memory backend)" : " (QMP/GDB)") << "\n";
     }
     
     // Simple synchronous refresh for testing
@@ -105,6 +105,10 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
             
             std::vector<uint8_t> buffer;
             if (qemu.ReadMemory(addr, size, buffer)) {
+                // Performance monitoring for problematic addresses
+                static int volatileCount = 0;
+                static uint64_t lastVolatileAddr = 0;
+                
                 // Just show the actual memory - we know it's changing
                 static std::vector<uint8_t> lastBuffer;
                 static uint64_t lastAddr = 0;
@@ -136,7 +140,13 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                                 }
                             }
                             if (!foundAdjacentRegion) {
-                                currentChanges.push_back({x, y, 1, 1, std::chrono::steady_clock::now()});
+                                // Limit number of regions to prevent performance issues
+                                if (currentChanges.size() < 100) {
+                                    currentChanges.push_back({x, y, 1, 1, std::chrono::steady_clock::now()});
+                                } else if (currentChanges.size() == 100) {
+                                    // Too many changes - likely hit volatile memory
+                                    // std::cerr << "Warning: >100 change regions at 0x" << std::hex << addr << " - limiting\n" << std::dec;
+                                }
                             }
                             
                             if (firstChangeOffset == -1) {
@@ -146,6 +156,23 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                     }
                     
                     if (changedBytes > 0) {
+                        // Detect highly volatile memory regions
+                        float changeRatio = (float)changedBytes / buffer.size();
+                        if (changeRatio > 0.5f) {  // More than 50% changed
+                            volatileCount++;
+                            if (volatileCount == 10 && addr != lastVolatileAddr) {
+                                std::cerr << "Warning: Highly volatile memory at 0x" << std::hex << addr 
+                                         << " (" << std::dec << (int)(changeRatio * 100) << "% changing)\n"
+                                         << "Consider reducing refresh rate or skipping this region\n";
+                                lastVolatileAddr = addr;
+                                
+                                // Reduce refresh rate for this region
+                                refreshRate = std::min(refreshRate, 5.0f);
+                            }
+                        } else {
+                            volatileCount = 0;
+                        }
+                        
                         // Add to ring buffer
                         changeHistory.push_back(currentChanges);
                         if (changeHistory.size() > CHANGE_HISTORY_SIZE) {
@@ -154,15 +181,15 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                         lastChangeTime = std::chrono::steady_clock::now();
                         
                         // Reduced logging - only report significant changes
-                        if (changedBytes > 100) {
-                            std::cerr << changedBytes << " bytes changed in " 
-                                     << currentChanges.size() << " regions\n";
-                        }
+                        // if (changedBytes > 100) {
+                        //     std::cerr << changedBytes << " bytes changed in " 
+                        //              << currentChanges.size() << " regions\n";
+                        // }
                     }
                 } else if (lastAddr != addr) {
                     changeHistory.clear();  // Clear history when address changes
-                    std::cerr << "Address changed to 0x" << std::hex << addr 
-                             << " - starting fresh comparison\n" << std::dec;
+                    // std::cerr << "Address changed to 0x" << std::hex << addr 
+                    //          << " - starting fresh comparison\n" << std::dec;
                 }
                 
                 lastBuffer = buffer;
@@ -172,7 +199,15 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                 currentMemory.data = std::move(buffer);
                 currentMemory.stride = viewport.stride;
                 
-                UpdateTexture();  // Update immediately
+                // Skip texture updates if memory is thrashing
+                if (volatileCount < 20) {  // Only update if not excessively volatile
+                    UpdateTexture();  // Update immediately
+                } else {
+                    static int skipCount = 0;
+                    if (++skipCount % 10 == 0) {  // Update every 10th frame when volatile
+                        UpdateTexture();
+                    }
+                }
                 lastRefresh = now;
                 
                 // std::cerr << "Direct read and texture update at " << std::hex << addr << std::dec << "\n";

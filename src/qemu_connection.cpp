@@ -102,36 +102,28 @@ bool QemuConnection::ConnectGDB(const std::string& host, int port) {
 }
 
 bool QemuConnection::AutoConnect() {
-    std::cerr << "Haywire: Auto-connecting to QEMU...\n";
+    // Auto-connecting to QEMU...
     
     // Step 1: Try to detect memory backend first (fastest)
     // NOTE: On macOS, using MAP_SHARED with aggressive cache invalidation
     if (memoryBackend && memoryBackend->AutoDetect()) {
         useMemoryBackend = true;
-        std::cerr << "✓ Memory backend detected at " 
-                  << memoryBackend->GetBackendPath() << "\n";
-        
-        // Still need QMP for control commands
+        // Memory backend detected, try QMP for control
         if (ConnectQMP("localhost", 4445)) {
-            std::cerr << "✓ QMP connected for control\n";
             connected = true;
             return true;
         }
         
         // Memory backend works even without QMP for read-only access
         connected = true;
-        std::cerr << "⚠ QMP not available, read-only mode\n";
         return true;
     }
     
     // Step 2: Try QMP connection
     if (ConnectQMP("localhost", 4445)) {
-        std::cerr << "✓ Connected via QMP\n";
-        
         // Try to enable mmap mode for better performance
         if (ConnectMonitor("localhost", 4444)) {
             useMMap = true;
-            std::cerr << "✓ Monitor connected, using mmap mode\n";
         }
         
         connected = true;
