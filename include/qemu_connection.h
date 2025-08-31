@@ -4,6 +4,7 @@
 #include "gdb_connection.h"
 #include "mmap_reader.h"
 #include "memory_backend.h"
+#include "guest_agent.h"
 #include <string>
 #include <thread>
 #include <atomic>
@@ -29,9 +30,13 @@ public:
     
     bool IsConnected() const { return connected.load(); }
     bool IsUsingMemoryBackend() const { return useMemoryBackend; }
+    bool IsGuestAgentConnected() const { return guestAgent && guestAgent->IsConnected(); }
     
     bool ReadMemory(uint64_t address, size_t size, std::vector<uint8_t>& buffer);
     bool ReadMemoryMMap(uint64_t address, size_t size, std::vector<uint8_t>& buffer);
+    
+    // Guest agent access
+    GuestAgent* GetGuestAgent() { return guestAgent.get(); }
     
     bool QueryStatus(nlohmann::json& status);
     bool QueryMemoryRegions(std::vector<std::pair<uint64_t, uint64_t>>& regions);
@@ -83,6 +88,9 @@ private:
     // Direct memory backend for zero-copy access
     std::unique_ptr<MemoryBackend> memoryBackend;
     bool useMemoryBackend;
+    
+    // Guest agent for introspection
+    std::unique_ptr<GuestAgent> guestAgent;
 };
 
 }

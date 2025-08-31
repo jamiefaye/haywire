@@ -22,6 +22,7 @@ QemuConnection::QemuConnection()
     gdbConnection = std::make_unique<GDBConnection>();
     mmapReader = std::make_unique<MMapReader>();
     memoryBackend = std::make_unique<MemoryBackend>();
+    guestAgent = std::make_unique<GuestAgent>();
     
     // Try to auto-detect memory backend on startup
     if (memoryBackend->AutoDetect()) {
@@ -111,11 +112,19 @@ bool QemuConnection::AutoConnect() {
         // Memory backend detected, try QMP for control
         if (ConnectQMP("localhost", 4445)) {
             connected = true;
+            // Also try to connect guest agent
+            if (guestAgent && guestAgent->Connect()) {
+                std::cerr << "✓ Guest agent connected\n";
+            }
             return true;
         }
         
         // Memory backend works even without QMP for read-only access
         connected = true;
+        // Try guest agent even without QMP
+        if (guestAgent && guestAgent->Connect()) {
+            std::cerr << "✓ Guest agent connected\n";
+        }
         return true;
     }
     
@@ -127,6 +136,10 @@ bool QemuConnection::AutoConnect() {
         }
         
         connected = true;
+        // Try guest agent
+        if (guestAgent && guestAgent->Connect()) {
+            std::cerr << "✓ Guest agent connected\n";
+        }
         return true;
     }
     
@@ -591,6 +604,52 @@ void QemuConnection::DrawConnectionUI() {
         } else {
             ImGui::TextColored(ImVec4(1, 1, 0.5, 1), "Memory reads using text-based monitor");
         }
+        ImGui::Spacing();
+        
+        // Guest agent UI
+        if (guestAgent && guestAgent->IsConnected()) {
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0, 1, 0, 1), "✓ Guest Agent Connected");
+            
+            if (ImGui::Button("List Processes", ImVec2(120, 0))) {
+                std::vector<ProcessInfo> processes;
+                if (guestAgent->GetProcessList(processes)) {
+                    std::cout << "\n=== Guest Processes (" << processes.size() << " total) ===\n";
+                    for (const auto& proc : processes) {
+                        std::cout << "PID " << proc.pid << ": " << proc.name 
+                                 << " (" << proc.user << ") CPU:" << proc.cpu 
+                                 << "% MEM:" << proc.mem << "%\n";
+                    }
+                }
+            }
+            
+            ImGui::SameLine();
+            static int pidForMaps = 1;
+            ImGui::InputInt("PID", &pidForMaps);
+            
+            if (ImGui::Button("Get Memory Map", ImVec2(120, 0))) {
+                std::vector<GuestMemoryRegion> regions;
+                if (guestAgent->GetMemoryMap(pidForMaps, regions)) {
+                    std::cout << "\n=== Memory Map for PID " << pidForMaps << " ===\n";
+                    for (const auto& region : regions) {
+                        std::cout << std::hex << region.start << "-" << region.end 
+                                 << " " << region.permissions << " " << region.name << "\n";
+                    }
+                    std::cout << std::dec;
+                }
+            }
+        } else if (guestAgent) {
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(1, 1, 0, 1), "Guest Agent Not Connected");
+            if (ImGui::Button("Connect Guest Agent", ImVec2(150, 0))) {
+                if (guestAgent->Connect()) {
+                    std::cerr << "✓ Guest agent connected\n";
+                } else {
+                    std::cerr << "Failed to connect guest agent\n";
+                }
+            }
+        }
+        
         ImGui::Spacing();
         if (ImGui::Button("Disconnect", ImVec2(150, 0))) {
             Disconnect();
