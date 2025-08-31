@@ -37,6 +37,7 @@ public:
     
     // Guest agent access
     GuestAgent* GetGuestAgent() { return guestAgent.get(); }
+    std::shared_ptr<GuestAgent> GetGuestAgentPtr() { return guestAgent; }
     
     bool QueryStatus(nlohmann::json& status);
     bool QueryMemoryRegions(std::vector<std::pair<uint64_t, uint64_t>>& regions);
@@ -90,7 +91,7 @@ private:
     bool useMemoryBackend;
     
     // Guest agent for introspection
-    std::unique_ptr<GuestAgent> guestAgent;
+    std::shared_ptr<GuestAgent> guestAgent;
 };
 
 }

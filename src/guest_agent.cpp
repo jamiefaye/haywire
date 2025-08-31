@@ -89,9 +89,12 @@ bool GuestAgent::Ping() {
 bool GuestAgent::GetProcessList(std::vector<ProcessInfo>& processes) {
     processes.clear();
     
-    // Execute ps command
+    // Execute ps command with better options:
+    // -e: all processes
+    // -o: custom format with memory info
+    // --sort=-rss: sort by memory usage (largest first)
     std::string response;
-    std::string psCmd = "{\"execute\":\"guest-exec\",\"arguments\":{\"path\":\"/bin/ps\",\"arg\":[\"aux\"],\"capture-output\":true}}\n";
+    std::string psCmd = "{\"execute\":\"guest-exec\",\"arguments\":{\"path\":\"/bin/ps\",\"arg\":[\"aux\",\"--sort=-rss\"],\"capture-output\":true}}\n";
     
     if (!SendCommand(psCmd, response)) {
         return false;
@@ -319,6 +322,9 @@ bool GuestAgent::ParseProcessList(const std::string& psOutput, std::vector<Proce
             proc.name = proc.name.substr(firstChar);
         }
         
+        // Categorize the process
+        proc.Categorize();
+        
         processes.push_back(proc);
     }
     
@@ -373,6 +379,110 @@ bool GuestAgent::ParseMemoryMap(const std::string& mapsOutput, std::vector<Guest
     }
     
     return !regions.empty();
+}
+
+bool GuestAgent::TranslateAddress(int pid, uint64_t virtualAddr, PagemapEntry& entry) {
+    // Calculate offset into /proc/[pid]/pagemap
+    const uint64_t PAGE_SIZE = 4096;
+    uint64_t pageNum = virtualAddr / PAGE_SIZE;
+    uint64_t offset = pageNum * 8;  // 8 bytes per entry
+    
+    // Use dd to read 8 bytes at the specific offset
+    std::stringstream cmdStr;
+    cmdStr << "dd if=/proc/" << pid << "/pagemap bs=8 skip=" << pageNum 
+           << " count=1 2>/dev/null | base64";
+    
+    std::string output;
+    if (!ExecuteCommand(cmdStr.str(), output)) {
+        return false;
+    }
+    
+    // Decode the base64 result
+    std::string decoded = DecodeBase64(output);
+    if (decoded.size() < 8) {
+        return false;
+    }
+    
+    // Parse the 64-bit pagemap entry
+    uint64_t pagemapEntry = 0;
+    memcpy(&pagemapEntry, decoded.data(), 8);
+    
+    // Extract fields from pagemap entry
+    entry.present = (pagemapEntry >> 63) & 1;
+    entry.swapped = (pagemapEntry >> 62) & 1;
+    entry.pfn = pagemapEntry & ((1ULL << 55) - 1);
+    
+    // Calculate physical address if page is present
+    if (entry.present) {
+        uint64_t pageOffset = virtualAddr & (PAGE_SIZE - 1);
+        entry.physAddr = (entry.pfn * PAGE_SIZE) + pageOffset;
+    } else {
+        entry.physAddr = 0;
+    }
+    
+    return true;
+}
+
+bool GuestAgent::TranslateRange(int pid, uint64_t startVA, size_t length, 
+                                std::vector<PagemapEntry>& entries) {
+    entries.clear();
+    
+    const uint64_t PAGE_SIZE = 4096;
+    
+    // Align to page boundaries
+    uint64_t alignedStart = startVA & ~(PAGE_SIZE - 1);
+    uint64_t endVA = startVA + length;
+    uint64_t alignedEnd = (endVA + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    
+    size_t numPages = (alignedEnd - alignedStart) / PAGE_SIZE;
+    uint64_t firstPage = alignedStart / PAGE_SIZE;
+    
+    // Read multiple pages at once for efficiency
+    // Limit to 128 pages (512KB) per read to avoid command line limits
+    const size_t MAX_PAGES_PER_READ = 128;
+    
+    for (size_t offset = 0; offset < numPages; offset += MAX_PAGES_PER_READ) {
+        size_t pagesToRead = std::min(MAX_PAGES_PER_READ, numPages - offset);
+        uint64_t pageNum = firstPage + offset;
+        
+        std::stringstream cmdStr;
+        cmdStr << "dd if=/proc/" << pid << "/pagemap bs=8 skip=" << pageNum 
+               << " count=" << pagesToRead << " 2>/dev/null | base64";
+        
+        std::string output;
+        if (!ExecuteCommand(cmdStr.str(), output)) {
+            return false;
+        }
+        
+        std::string decoded = DecodeBase64(output);
+        if (decoded.size() < pagesToRead * 8) {
+            return false;
+        }
+        
+        // Parse each 8-byte entry
+        for (size_t i = 0; i < pagesToRead; i++) {
+            uint64_t pagemapEntry = 0;
+            memcpy(&pagemapEntry, decoded.data() + (i * 8), 8);
+            
+            PagemapEntry entry;
+            entry.present = (pagemapEntry >> 63) & 1;
+            entry.swapped = (pagemapEntry >> 62) & 1;
+            entry.pfn = pagemapEntry & ((1ULL << 55) - 1);
+            
+            uint64_t currentVA = alignedStart + ((offset + i) * PAGE_SIZE);
+            uint64_t pageOffset = currentVA & (PAGE_SIZE - 1);
+            
+            if (entry.present) {
+                entry.physAddr = (entry.pfn * PAGE_SIZE) + pageOffset;
+            } else {
+                entry.physAddr = 0;
+            }
+            
+            entries.push_back(entry);
+        }
+    }
+    
+    return !entries.empty();
 }
 
 }

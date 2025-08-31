@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "autocorrelator.h"
+#include "guest_agent.h"  // For GuestMemoryRegion
 #include <imgui.h>
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
@@ -18,6 +19,10 @@
 namespace Haywire {
 
 class QemuConnection;
+class ViewportTranslator;
+class AddressSpaceFlattener;
+class CrunchedRangeNavigator;
+class GuestAgent;
 
 class MemoryVisualizer {
 public:
@@ -43,6 +48,16 @@ public:
     
     const MemoryBlock& GetCurrentMemory() const { return currentMemory; }
     bool HasMemory() const { return !currentMemory.data.empty(); }
+    
+    // VA to PA translation
+    void SetTranslator(std::shared_ptr<ViewportTranslator> translator) { 
+        viewportTranslator = translator; 
+    }
+    void SetProcessPid(int pid) { targetPid = pid; }
+    void SetGuestAgent(GuestAgent* agent) { guestAgent = agent; }
+    
+    // Load memory map for navigation
+    void LoadMemoryMap(const std::vector<GuestMemoryRegion>& regions);
     
 private:
     void DrawControls();
@@ -116,6 +131,18 @@ private:
     static constexpr size_t CHANGE_HISTORY_SIZE = 10;
     std::deque<std::vector<ChangeRegion>> changeHistory;
     std::chrono::steady_clock::time_point lastChangeTime;
+    
+    // VA to PA translation
+    std::shared_ptr<ViewportTranslator> viewportTranslator;
+    int targetPid;
+    bool useVirtualAddresses;  // Toggle between VA and PA
+    
+    // Address space flattening for navigation
+    std::unique_ptr<AddressSpaceFlattener> addressFlattener;
+    std::unique_ptr<CrunchedRangeNavigator> crunchedNavigator;
+    
+    // Guest agent for loading memory maps
+    GuestAgent* guestAgent;
     
     std::chrono::steady_clock::time_point changeDetectedTime;
     float marchingAntsPhase;  // For animating the marching ants pattern

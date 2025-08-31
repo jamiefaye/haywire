@@ -9,6 +9,7 @@
 #include "memory_visualizer.h"
 #include "memory_overview.h"
 #include "hex_overlay.h"
+#include "viewport_translator.h"
 
 using namespace Haywire;
 
@@ -59,8 +60,19 @@ int main(int argc, char** argv) {
     MemoryOverview overview;
     HexOverlay hexOverlay;
     
+    // Create viewport translator using guest agent
+    std::shared_ptr<ViewportTranslator> translator;
+    
     // Auto-connect on startup
     bool autoConnected = qemu.AutoConnect();
+    
+    // If connected and guest agent available, create translator
+    if (autoConnected && qemu.IsGuestAgentConnected()) {
+        translator = std::make_shared<ViewportTranslator>(qemu.GetGuestAgentPtr());
+        visualizer.SetTranslator(translator);
+        visualizer.SetGuestAgent(qemu.GetGuestAgent());
+        std::cerr << "Viewport translator initialized with guest agent" << std::endl;
+    }
     
     bool show_demo_window = false;
     bool show_metrics = false;  // Hidden by default
@@ -172,6 +184,14 @@ int main(int argc, char** argv) {
                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
             qemu.DrawConnectionUI();
             ImGui::End();
+            
+            // Create translator when newly connected
+            if (qemu.IsConnected() && qemu.IsGuestAgentConnected() && !translator) {
+                translator = std::make_shared<ViewportTranslator>(qemu.GetGuestAgentPtr());
+                visualizer.SetTranslator(translator);
+                visualizer.SetGuestAgent(qemu.GetGuestAgent());
+                std::cerr << "Viewport translator initialized with guest agent" << std::endl;
+            }
         }
         
         // Handle overview scanning when connected

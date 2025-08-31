@@ -1,6 +1,7 @@
 #include "qemu_connection.h"
 #include "imgui.h"
 #include <iostream>
+#include <iomanip>
 #include <sstream>
 #include <cstring>
 #include <cstdlib>
@@ -22,7 +23,7 @@ QemuConnection::QemuConnection()
     gdbConnection = std::make_unique<GDBConnection>();
     mmapReader = std::make_unique<MMapReader>();
     memoryBackend = std::make_unique<MemoryBackend>();
-    guestAgent = std::make_unique<GuestAgent>();
+    guestAgent = std::make_shared<GuestAgent>();
     
     // Try to auto-detect memory backend on startup
     if (memoryBackend->AutoDetect()) {
@@ -614,12 +615,34 @@ void QemuConnection::DrawConnectionUI() {
             if (ImGui::Button("List Processes", ImVec2(120, 0))) {
                 std::vector<ProcessInfo> processes;
                 if (guestAgent->GetProcessList(processes)) {
-                    std::cout << "\n=== Guest Processes (" << processes.size() << " total) ===\n";
+                    std::cout << "\n=== Guest Processes (sorted by memory) ===\n";
+                    
+                    // Show user apps first
+                    std::cout << "\n--- User Applications ---\n";
+                    int userAppCount = 0;
                     for (const auto& proc : processes) {
-                        std::cout << "PID " << proc.pid << ": " << proc.name 
-                                 << " (" << proc.user << ") CPU:" << proc.cpu 
-                                 << "% MEM:" << proc.mem << "%\n";
+                        if (proc.category == ProcessInfo::USER_APP) {
+                            std::cout << "PID " << std::setw(5) << proc.pid 
+                                     << " | MEM: " << std::setw(5) << std::fixed 
+                                     << std::setprecision(1) << proc.mem << "%"
+                                     << " | " << proc.name << "\n";
+                            userAppCount++;
+                        }
                     }
+                    
+                    // Show high-memory services
+                    std::cout << "\n--- Services (>0.5% memory) ---\n";
+                    for (const auto& proc : processes) {
+                        if (proc.category == ProcessInfo::SERVICE && proc.mem > 0.5) {
+                            std::cout << "PID " << std::setw(5) << proc.pid 
+                                     << " | MEM: " << std::setw(5) << std::fixed 
+                                     << std::setprecision(1) << proc.mem << "%"
+                                     << " | " << proc.name << "\n";
+                        }
+                    }
+                    
+                    std::cout << "\nTotal: " << processes.size() << " processes"
+                             << " (" << userAppCount << " user apps)\n";
                 }
             }
             

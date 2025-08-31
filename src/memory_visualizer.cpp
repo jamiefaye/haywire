@@ -1,5 +1,8 @@
 #include "memory_visualizer.h"
 #include "qemu_connection.h"
+#include "viewport_translator.h"
+#include "address_space_flattener.h"
+#include "guest_agent.h"
 #include "imgui.h"
 #include <cstring>
 #include <algorithm>
@@ -17,7 +20,17 @@ MemoryVisualizer::MemoryVisualizer()
       pixelFormatIndex(0), mouseX(0), mouseY(0), isDragging(false),
       dragStartX(0), dragStartY(0), isReading(false), readComplete(false),
       marchingAntsPhase(0.0f), magnifierZoom(8), magnifierLocked(false),
-      magnifierSize(32), magnifierLockPos(0, 0), memoryViewPos(0, 0), memoryViewSize(0, 0) {
+      magnifierSize(32), magnifierLockPos(0, 0), memoryViewPos(0, 0), memoryViewSize(0, 0),
+      targetPid(-1), useVirtualAddresses(false), guestAgent(nullptr) {
+    
+    addressFlattener = std::make_unique<AddressSpaceFlattener>();
+    crunchedNavigator = std::make_unique<CrunchedRangeNavigator>();
+    crunchedNavigator->SetFlattener(addressFlattener.get());
+    
+    // Set navigation callback
+    crunchedNavigator->SetNavigationCallback([this](uint64_t virtualAddr) {
+        NavigateToAddress(virtualAddr);
+    });
     
     strcpy(addressInput, "0x0");  // Start at 0 where boot ROM lives
     viewport.baseAddress = 0x0;  // Initialize the actual address!
@@ -421,6 +434,59 @@ void MemoryVisualizer::DrawControls() {
     ImGui::Checkbox("Magnifier", &showMagnifier);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Show magnified view under cursor (8x zoom)");
+    }
+    
+    // VA/PA translation controls
+    ImGui::SameLine();
+    ImGui::Separator();
+    ImGui::SameLine();
+    
+    if (ImGui::Checkbox("VA Mode", &useVirtualAddresses)) {
+        if (useVirtualAddresses && viewportTranslator && targetPid > 0) {
+            // Trigger prefetch for current viewport
+            size_t viewSize = viewport.width * viewport.height * 4;
+            viewportTranslator->SetViewport(targetPid, viewport.baseAddress, viewSize);
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Enter virtual addresses (auto-translates to physical)");
+    }
+    
+    if (useVirtualAddresses) {
+        ImGui::SameLine();
+        ImGui::Text("PID:");
+        ImGui::SameLine();
+        ImGui::PushItemWidth(80);  // Increased from 60 to 80 for 5-digit PIDs
+        int oldPid = targetPid;
+        if (ImGui::InputInt("##PID", &targetPid, 0, 0)) {  // Added 0,0 to disable +/- buttons
+            if (viewportTranslator && targetPid > 0) {
+                viewportTranslator->ClearCache(targetPid);
+            }
+        }
+        ImGui::PopItemWidth();
+        
+        // Load memory map button
+        ImGui::SameLine();
+        if (ImGui::Button("Load Map") && targetPid > 0 && guestAgent) {
+            std::vector<GuestMemoryRegion> regions;
+            if (guestAgent->GetMemoryMap(targetPid, regions)) {
+                LoadMemoryMap(regions);
+                std::cerr << "Loaded memory map for PID " << targetPid 
+                         << " (" << regions.size() << " regions)" << std::endl;
+            } else {
+                std::cerr << "Failed to load memory map for PID " << targetPid << std::endl;
+            }
+        }
+        
+        // Show cache stats if available
+        if (viewportTranslator) {
+            auto stats = viewportTranslator->GetStats();
+            if (stats.totalEntries > 0) {
+                ImGui::SameLine();
+                ImGui::Text("Cache: %.1f%% (%zu entries)", 
+                           stats.hitRate * 100.0f, stats.totalEntries);
+            }
+        }
     }
     
     // Refresh rate is now automatic based on connection type
@@ -1153,11 +1219,31 @@ uint64_t MemoryVisualizer::GetAddressAt(int x, int y) const {
 }
 
 void MemoryVisualizer::NavigateToAddress(uint64_t address) {
-    viewport.baseAddress = address;
+    // If using virtual addresses and we have a translator, translate to physical
+    uint64_t targetAddress = address;
+    if (useVirtualAddresses && viewportTranslator && targetPid > 0) {
+        uint64_t physAddr = viewportTranslator->TranslateAddress(targetPid, address);
+        if (physAddr != 0) {
+            targetAddress = physAddr;
+            std::cerr << "Translated VA 0x" << std::hex << address 
+                     << " to PA 0x" << physAddr << std::dec << std::endl;
+        } else {
+            std::cerr << "Failed to translate VA 0x" << std::hex << address 
+                     << " (page not present?)" << std::dec << std::endl;
+        }
+    }
+    
+    viewport.baseAddress = targetAddress;
     std::stringstream ss;
-    ss << "0x" << std::hex << address;
+    ss << "0x" << std::hex << address;  // Keep showing the original address
     strcpy(addressInput, ss.str().c_str());
     needsUpdate = true;
+    
+    // Update translator viewport for prefetching
+    if (viewportTranslator && targetPid > 0) {
+        size_t viewSize = viewport.width * viewport.height * 4;  // Assuming 32-bit pixels
+        viewportTranslator->SetViewport(targetPid, address, viewSize);
+    }
 }
 
 void MemoryVisualizer::SetViewport(const ViewportSettings& settings) {
@@ -1169,7 +1255,22 @@ void MemoryVisualizer::SetViewport(const ViewportSettings& settings) {
     needsUpdate = true;
 }
 
+void MemoryVisualizer::LoadMemoryMap(const std::vector<GuestMemoryRegion>& regions) {
+    if (addressFlattener) {
+        addressFlattener->BuildFromRegions(regions);
+        std::cerr << "Loaded memory map with " << regions.size() << " regions\n";
+    }
+}
+
 void MemoryVisualizer::DrawNavigator() {
+    if (useVirtualAddresses && crunchedNavigator) {
+        // Use compressed navigator for virtual addresses
+        crunchedNavigator->DrawNavigator();
+    } else {
+        // Original physical address navigator would go here
+        ImGui::Text("Physical Address Navigator");
+        ImGui::Text("(Enable VA Mode for compressed navigation)");
+    }
 }
 
 }
