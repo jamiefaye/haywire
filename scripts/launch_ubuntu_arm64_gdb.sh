@@ -72,6 +72,9 @@ qemu-system-aarch64 \
     -qmp tcp:localhost:$QMP_PORT,server,nowait \
     -monitor telnet:localhost:$MONITOR_PORT,server,nowait \
     -gdb tcp::$GDB_PORT \
+    -chardev socket,path=/tmp/qga.sock,server,nowait,id=qga0 \
+    -device virtio-serial \
+    -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0 \
     -netdev user,id=net0,hostfwd=tcp::2222-:22 \
     -device virtio-net-pci,netdev=net0 \
     -serial stdio \

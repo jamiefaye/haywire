@@ -59,11 +59,14 @@ int main(int argc, char** argv) {
     MemoryOverview overview;
     HexOverlay hexOverlay;
     
+    // Auto-connect on startup
+    bool autoConnected = qemu.AutoConnect();
+    
     bool show_demo_window = false;
     bool show_metrics = false;  // Hidden by default
     bool show_memory_view = true;
     bool show_overview = false;
-    bool show_connection_window = true;
+    bool show_connection_window = !autoConnected;  // Only show if auto-connect failed
     
     float fps = 0.0f;
     auto lastTime = std::chrono::high_resolution_clock::now();

@@ -24,7 +24,11 @@ public:
     bool ConnectGDB(const std::string& host = "localhost", int port = 1234);
     void Disconnect();
     
+    // Auto-connect with smart fallback
+    bool AutoConnect();
+    
     bool IsConnected() const { return connected.load(); }
+    bool IsUsingMemoryBackend() const { return useMemoryBackend; }
     
     bool ReadMemory(uint64_t address, size_t size, std::vector<uint8_t>& buffer);
     bool ReadMemoryMMap(uint64_t address, size_t size, std::vector<uint8_t>& buffer);

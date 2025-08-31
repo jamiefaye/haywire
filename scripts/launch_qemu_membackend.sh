@@ -26,7 +26,7 @@ qemu-system-aarch64 \
     -accel hvf \
     -cpu host \
     -m $MEMSIZE \
-    -object memory-backend-file,id=mem,size=$MEMSIZE,mem-path=$MEMFILE,share=on \
+    -object memory-backend-file,id=mem,size=$MEMSIZE,mem-path=$MEMFILE,share=on,prealloc=on \
     -numa node,memdev=mem \
     -smp 4 \
     -bios /opt/homebrew/share/qemu/edk2-aarch64-code.fd \
@@ -43,6 +43,9 @@ qemu-system-aarch64 \
     -qmp tcp:localhost:4445,server,nowait \
     -monitor telnet:localhost:4444,server,nowait \
     -gdb tcp::1234 \
+    -chardev socket,path=/tmp/qga.sock,server,nowait,id=qga0 \
+    -device virtio-serial \
+    -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0 \
     -netdev user,id=net0,hostfwd=tcp::2222-:22 \
     -device virtio-net-pci,netdev=net0 \
     -serial stdio \
