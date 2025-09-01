@@ -821,6 +821,35 @@ bool QemuConnection::QueryMemoryRegions(std::vector<std::pair<uint64_t, uint64_t
     return false;
 }
 
+bool QemuConnection::TranslateVA2PA(int cpuIndex, uint64_t virtualAddr, uint64_t& physicalAddr) {
+    if (!connected || qmpSocket < 0) {
+        return false;
+    }
+    
+    nlohmann::json cmd = {
+        {"execute", "query-va2pa"},
+        {"arguments", {
+            {"cpu-index", cpuIndex},
+            {"addr", virtualAddr}
+        }}
+    };
+    
+    nlohmann::json response;
+    if (!SendQMPCommand(cmd, response)) {
+        return false;
+    }
+    
+    if (response.contains("return")) {
+        auto ret = response["return"];
+        if (ret.contains("valid") && ret["valid"].get<bool>()) {
+            physicalAddr = ret["phys"].get<uint64_t>();
+            return true;
+        }
+    }
+    
+    return false;
+}
+
 void QemuConnection::QMPReceiveThread() {
 }
 

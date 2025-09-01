@@ -39,6 +39,9 @@ public:
     GuestAgent* GetGuestAgent() { return guestAgent.get(); }
     std::shared_ptr<GuestAgent> GetGuestAgentPtr() { return guestAgent; }
     
+    // VA->PA translation via QMP (fast path)
+    bool TranslateVA2PA(int cpuIndex, uint64_t virtualAddr, uint64_t& physicalAddr);
+    
     bool QueryStatus(nlohmann::json& status);
     bool QueryMemoryRegions(std::vector<std::pair<uint64_t, uint64_t>>& regions);
     

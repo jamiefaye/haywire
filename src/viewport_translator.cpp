@@ -1,4 +1,5 @@
 #include "viewport_translator.h"
+#include "qemu_connection.h"
 #include <iostream>
 #include <algorithm>
 #include <chrono>
@@ -68,10 +69,52 @@ bool ViewportTranslator::GetTranslation(int pid, uint64_t virtualAddr, PagemapEn
         }
     }
     
-    // Cache miss - fetch from guest agent (slow path)
+    // Cache miss
     stats.missCount++;
     stats.hitRate = (float)stats.hitCount / (stats.hitCount + stats.missCount);
     
+    // Try QMP translation for kernel addresses (fast path - sub-ms)
+    // Kernel addresses are mapped the same for all processes
+    bool isKernelAddr = (virtualAddr >= 0xffff000000000000ULL);
+    
+    if (qemuConnection && isKernelAddr) {
+        uint64_t physAddr;
+        auto start = std::chrono::high_resolution_clock::now();
+        
+        // Use CPU 0 - kernel mappings are the same on all CPUs
+        if (qemuConnection->TranslateVA2PA(0, virtualAddr, physAddr)) {
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+            
+            // Fill in the entry
+            entry.present = true;
+            entry.pfn = physAddr / PAGE_SIZE;
+            entry.physAddr = physAddr;
+            
+            // Cache it
+            cache[pid][pageAddr] = entry;
+            stats.totalEntries++;
+            
+            // Log timing occasionally
+            static int qmpCounter = 0;
+            if (++qmpCounter % 100 == 0) {
+                std::cerr << "QMP VA->PA translation (kernel) took " << duration << " µs" << std::endl;
+            }
+            
+            return true;
+        }
+    }
+    
+    // For user-space addresses, we need to use guest agent to ensure
+    // we get the correct process's mappings
+    //
+    // TODO: Future optimization:
+    // 1. Use QMP to translate kernel addresses and find init_task
+    // 2. Walk kernel process list to extract TTBR values for each PID
+    // 3. Extend QMP command to accept TTBR for accurate user-space translation
+    // This would give us fast VA->PA for all addresses, not just kernel
+    
+    // Fallback to guest agent (slow path - ~300ms)
     // Log cache misses periodically
     static int missCounter = 0;
     if (++missCounter % 100 == 0) {

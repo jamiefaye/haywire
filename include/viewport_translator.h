@@ -7,6 +7,11 @@
 #include "guest_agent.h"
 #include "pagemap_cache.h"
 
+// Forward declaration
+namespace Haywire {
+    class QemuConnection;
+}
+
 namespace Haywire {
 
 // Viewport-aware virtual to physical address translator
@@ -15,6 +20,9 @@ class ViewportTranslator {
 public:
     ViewportTranslator(std::shared_ptr<GuestAgent> agent);
     ~ViewportTranslator();
+    
+    // Set QemuConnection for fast QMP-based translation
+    void SetQemuConnection(QemuConnection* conn) { qemuConnection = conn; }
     
     // Set current viewport (what user is looking at)
     void SetViewport(int pid, uint64_t centerVA, size_t viewSize);
@@ -42,6 +50,7 @@ public:
     
 private:
     std::shared_ptr<GuestAgent> guestAgent;
+    QemuConnection* qemuConnection = nullptr;  // For fast QMP-based VA->PA
     
     // Current viewport
     int currentPid;
