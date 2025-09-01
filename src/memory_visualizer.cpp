@@ -1162,14 +1162,6 @@ void MemoryVisualizer::DrawMagnifier() {
     
     // Handle WASD keys for manual navigation when magnifier is locked
     if (magnifierLocked) {
-        // Log position at start of frame
-        static int frameCount = 0;
-        frameCount++;
-        if (frameCount % 60 == 0) {  // Log every 60 frames
-            std::cerr << "FRAME " << frameCount << " magnifierLockPos: (" 
-                     << magnifierLockPos.x << ", " << magnifierLockPos.y << ")" << std::endl;
-        }
-        
         ImGuiIO& io = ImGui::GetIO();
         bool shiftPressed = io.KeyShift;
         int stepSize = shiftPressed ? 10 : 1;  // Shift for faster scrolling
@@ -1188,27 +1180,22 @@ void MemoryVisualizer::DrawMagnifier() {
         if (leftKey) {
             magnifierLockPos.x -= stepSize;
             moved = true;
-            std::cerr << "LEFT: " << oldX << " -> " << magnifierLockPos.x << std::endl;
         }
         if (rightKey) {
             magnifierLockPos.x += stepSize;
             moved = true;
-            std::cerr << "RIGHT: " << oldX << " -> " << magnifierLockPos.x << std::endl;
         }
         if (upKey) {
             magnifierLockPos.y -= stepSize;
             moved = true;
-            std::cerr << "UP: " << oldY << " -> " << magnifierLockPos.y << std::endl;
         }
         if (downKey) {
             magnifierLockPos.y += stepSize;
             moved = true;
-            std::cerr << "DOWN: " << oldY << " -> " << magnifierLockPos.y << std::endl;
         }
         
         if (moved) {
             userNavigated = true;  // Mark that user has manually navigated
-            std::cerr << "Final position: (" << magnifierLockPos.x << ", " << magnifierLockPos.y << ")" << std::endl;
         }
         
         // Don't clamp - allow navigation anywhere
