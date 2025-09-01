@@ -980,11 +980,8 @@ void MemoryVisualizer::DrawMemoryView() {
 
 void MemoryVisualizer::DrawMagnifier() {
     // Create a floating window for the magnifier - resizable
-    // Add NoNavInputs when locked to prevent arrow keys from moving focus
-    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse;
-    if (magnifierLocked) {
-        windowFlags |= ImGuiWindowFlags_NoNavInputs;
-    }
+    // Always use NoNavInputs to prevent arrow key focus issues
+    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoNavInputs;
     
     static bool bringToFront = false;
     
@@ -1007,7 +1004,7 @@ void MemoryVisualizer::DrawMagnifier() {
         bringToFront = false;
     }
     
-    if (!ImGui::Begin("Magnifier & Search (Press 'M' to bring to front)", &showMagnifier, windowFlags)) {
+    if (!ImGui::Begin("Magnifier", &showMagnifier, windowFlags)) {
         ImGui::End();
         return;
     }
@@ -1090,8 +1087,13 @@ void MemoryVisualizer::DrawMagnifier() {
     }
     
     // Check if clicking outside window to unlock from search result
-    if (magnifierLocked && !ImGui::IsWindowFocused() && ImGui::IsMouseClicked(0)) {
-        magnifierLocked = false;
+    // Only unlock if we're actively clicking outside, not just unfocused
+    if (magnifierLocked && !ImGui::IsWindowFocused() && !ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0)) {
+        // Make sure we're not clicking on any ImGui window
+        if (!ImGui::IsAnyItemHovered() && !ImGui::IsAnyItemActive()) {
+            std::cerr << "UNLOCKING magnifier due to outside click" << std::endl;
+            magnifierLocked = false;
+        }
     }
     
     ImGui::Separator();
@@ -1141,11 +1143,14 @@ void MemoryVisualizer::DrawMagnifier() {
         if (magnifierLocked) {
             // When locking, save current position
             ImVec2 mousePos = ImGui::GetMousePos();
+            std::cerr << "Mouse: (" << mousePos.x << ", " << mousePos.y << "), MemView: (" 
+                     << memoryViewPos.x << ", " << memoryViewPos.y << "), Zoom: " << viewport.zoom << std::endl;
             magnifierLockPos.x = (mousePos.x - memoryViewPos.x) / viewport.zoom;
             magnifierLockPos.y = (mousePos.y - memoryViewPos.y) / viewport.zoom;
-            // Clamp to valid range
-            magnifierLockPos.x = std::max(0.0f, std::min(magnifierLockPos.x, (float)(viewport.width - 1)));
-            magnifierLockPos.y = std::max(0.0f, std::min(magnifierLockPos.y, (float)(viewport.height - 1)));
+            std::cerr << "LOCKING at position: (" << magnifierLockPos.x << ", " << magnifierLockPos.y << ")" << std::endl;
+            // No clamping - allow any position
+        } else {
+            std::cerr << "UNLOCKING via checkbox" << std::endl;
         }
     }
     if (ImGui::IsItemHovered()) {
@@ -1157,6 +1162,14 @@ void MemoryVisualizer::DrawMagnifier() {
     
     // Handle WASD keys for manual navigation when magnifier is locked
     if (magnifierLocked) {
+        // Log position at start of frame
+        static int frameCount = 0;
+        frameCount++;
+        if (frameCount % 60 == 0) {  // Log every 60 frames
+            std::cerr << "FRAME " << frameCount << " magnifierLockPos: (" 
+                     << magnifierLockPos.x << ", " << magnifierLockPos.y << ")" << std::endl;
+        }
+        
         ImGuiIO& io = ImGui::GetIO();
         bool shiftPressed = io.KeyShift;
         int stepSize = shiftPressed ? 10 : 1;  // Shift for faster scrolling
@@ -1169,30 +1182,37 @@ void MemoryVisualizer::DrawMagnifier() {
         bool upKey = ImGui::IsKeyPressed(ImGuiKey_W, true) || ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
         bool downKey = ImGui::IsKeyPressed(ImGuiKey_S, true) || ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
         
+        float oldX = magnifierLockPos.x;
+        float oldY = magnifierLockPos.y;
+        
         if (leftKey) {
             magnifierLockPos.x -= stepSize;
             moved = true;
+            std::cerr << "LEFT: " << oldX << " -> " << magnifierLockPos.x << std::endl;
         }
         if (rightKey) {
             magnifierLockPos.x += stepSize;
             moved = true;
+            std::cerr << "RIGHT: " << oldX << " -> " << magnifierLockPos.x << std::endl;
         }
         if (upKey) {
             magnifierLockPos.y -= stepSize;
             moved = true;
+            std::cerr << "UP: " << oldY << " -> " << magnifierLockPos.y << std::endl;
         }
         if (downKey) {
             magnifierLockPos.y += stepSize;
             moved = true;
+            std::cerr << "DOWN: " << oldY << " -> " << magnifierLockPos.y << std::endl;
         }
         
         if (moved) {
             userNavigated = true;  // Mark that user has manually navigated
+            std::cerr << "Final position: (" << magnifierLockPos.x << ", " << magnifierLockPos.y << ")" << std::endl;
         }
         
-        // Clamp to valid range
-        magnifierLockPos.x = std::max(0.0f, std::min(magnifierLockPos.x, (float)(viewport.width - 1)));
-        magnifierLockPos.y = std::max(0.0f, std::min(magnifierLockPos.y, (float)(viewport.height - 1)));
+        // Don't clamp - allow navigation anywhere
+        // We'll draw black for out-of-bounds pixels instead
     }
     
     // Determine what to magnify - search result or mouse position
@@ -1220,6 +1240,11 @@ void MemoryVisualizer::DrawMagnifier() {
             srcX = byteX / viewport.format.bytesPerPixel;
             srcY = byteY;
             
+            // Also update magnifierLockPos to match the search result position
+            // This ensures arrow keys start from the correct position
+            magnifierLockPos.x = srcX;
+            magnifierLockPos.y = srcY;
+            
             // Add indicator that we're showing search result
             ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Showing search result %zu of %zu", 
                               currentSearchResult + 1, searchResults.size());
@@ -1241,7 +1266,11 @@ void MemoryVisualizer::DrawMagnifier() {
         // Use locked position (can be adjusted with WASD keys)
         srcX = magnifierLockPos.x;
         srcY = magnifierLockPos.y;
-        ImGui::Text("Locked - use WASD or Arrows to navigate");
+        if (srcX != (int)magnifierLockPos.x || srcY != (int)magnifierLockPos.y) {
+            std::cerr << "POSITION CONVERSION: float(" << magnifierLockPos.x << ", " << magnifierLockPos.y 
+                     << ") -> int(" << srcX << ", " << srcY << ")" << std::endl;
+        }
+        ImGui::Text("Locked at (%d, %d) - use WASD or Arrows", srcX, srcY);
         ImGui::TextDisabled("Hold Shift for 10x speed");
     } else {
         // Follow mouse position
@@ -1284,25 +1313,44 @@ void MemoryVisualizer::DrawMagnifier() {
         patternEndX = (patternSize + viewport.format.bytesPerPixel - 1) / viewport.format.bytesPerPixel;
     }
     
+    // Log if we're drawing from negative position
+    static int lastLoggedSrcX = 999999;
+    static int lastLoggedSrcY = 999999;
+    if (srcX != lastLoggedSrcX || srcY != lastLoggedSrcY) {
+        if (srcX < 0 || srcY < 0) {
+            std::cerr << "DRAWING from negative src: (" << srcX << ", " << srcY << ")" << std::endl;
+        }
+        lastLoggedSrcX = srcX;
+        lastLoggedSrcY = srcY;
+    }
+    
     // Draw each pixel magnified
     for (int dy = -halfSizeY; dy < halfSizeY; dy++) {
         for (int dx = -halfSizeX; dx < halfSizeX; dx++) {
             int px = srcX + dx;
             int py = srcY + dy;
             
-            if (px >= 0 && px < viewport.width && py >= 0 && py < viewport.height) {
-                uint32_t pixel = GetPixelAt(px, py);
-                
-                // Draw magnified pixel - scale to fit the available area
-                float pixelSizeX = magnifiedAreaWidth / (halfSizeX * 2);
-                float pixelSizeY = magnifiedAreaHeight / (halfSizeY * 2);
-                float x1 = drawPos.x + (dx + halfSizeX) * pixelSizeX;
-                float y1 = drawPos.y + (dy + halfSizeY) * pixelSizeY;
-                float x2 = x1 + pixelSizeX;
-                float y2 = y1 + pixelSizeY;
-                
-                drawList->AddRectFilled(ImVec2(x1, y1), ImVec2(x2, y2), pixel);
-                
+            // Calculate draw position for this pixel
+            float pixelSizeX = magnifiedAreaWidth / (halfSizeX * 2);
+            float pixelSizeY = magnifiedAreaHeight / (halfSizeY * 2);
+            float x1 = drawPos.x + (dx + halfSizeX) * pixelSizeX;
+            float y1 = drawPos.y + (dy + halfSizeY) * pixelSizeY;
+            float x2 = x1 + pixelSizeX;
+            float y2 = y1 + pixelSizeY;
+            
+            // Get pixel color - black if out of bounds
+            uint32_t pixel = IM_COL32(0, 0, 0, 255);  // Default to black
+            bool inBounds = (px >= 0 && px < viewport.width && py >= 0 && py < viewport.height);
+            
+            if (inBounds) {
+                pixel = GetPixelAt(px, py);
+            }
+            
+            // Draw the pixel
+            drawList->AddRectFilled(ImVec2(x1, y1), ImVec2(x2, y2), pixel);
+            
+            // Only highlight pattern and draw grid for in-bounds pixels
+            if (inBounds) {
                 // Highlight the found pattern
                 bool isPartOfPattern = magnifierLocked && dy == 0 && dx >= 0 && dx < patternEndX;
                 if (isPartOfPattern) {
@@ -1318,6 +1366,12 @@ void MemoryVisualizer::DrawMagnifier() {
                         IM_COL32(200, 100, 100, 150) :  // Reddish grid for pattern
                         IM_COL32(100, 100, 100, 100);   // Normal grid
                     drawList->AddRect(ImVec2(x1, y1), ImVec2(x2, y2), gridColor, 0.0f, 0, 1.0f);
+                }
+            } else {
+                // Draw subtle grid for out-of-bounds areas
+                if (magnifierZoom >= 4) {
+                    drawList->AddRect(ImVec2(x1, y1), ImVec2(x2, y2), 
+                                     IM_COL32(40, 40, 40, 100), 0.0f, 0, 1.0f);
                 }
             }
         }
@@ -1350,12 +1404,12 @@ void MemoryVisualizer::DrawMagnifier() {
         
         // Calculate the actual byte position we're looking at
         int centerByteX;
-        if (magnifierLocked && searchActive && !searchResults.empty() && currentSearchResult < searchResults.size()) {
-            // For search results, use the exact byte position
+        if (magnifierLocked && searchActive && !searchResults.empty() && currentSearchResult < searchResults.size() && !userNavigated) {
+            // For search results (when not manually navigated), use the exact byte position
             size_t resultOffset = searchResults[currentSearchResult];
             centerByteX = resultOffset % viewport.stride;
         } else {
-            // For mouse position, use pixel-based calculation
+            // For mouse position or manual navigation, use pixel-based calculation
             centerByteX = srcX * viewport.format.bytesPerPixel;
         }
         
@@ -1375,10 +1429,10 @@ void MemoryVisualizer::DrawMagnifier() {
                 for (int b = 0; b < bytesToShow; b++) {
                     size_t byteOffset = lineStart + b;
                     if (byteOffset < currentMemory.data.size()) {
-                        // Highlight the pattern bytes for search results
+                        // Highlight the pattern bytes for search results or center position
                         bool isCenter = false;
-                        if (magnifierLocked && searchActive && !searchResults.empty() && lineOffset == 0) {
-                            // For search results, highlight the actual pattern
+                        if (magnifierLocked && searchActive && !searchResults.empty() && lineOffset == 0 && !userNavigated) {
+                            // For search results (when not manually navigated), highlight the actual pattern
                             uint64_t resultAddr = searchResults[currentSearchResult];
                             size_t patternLen = (searchType == SEARCH_ASCII) ? 
                                 strlen(searchPattern) : 
@@ -1388,8 +1442,8 @@ void MemoryVisualizer::DrawMagnifier() {
                             // byteOffset is relative to current viewport, need to convert to absolute
                             uint64_t absoluteByteAddr = viewport.baseAddress + byteOffset;
                             isCenter = (absoluteByteAddr >= resultAddr && absoluteByteAddr < resultAddr + patternLen);
-                        } else if (!magnifierLocked && lineOffset == 0) {
-                            // For mouse position, highlight the pixel's bytes
+                        } else if (lineOffset == 0) {
+                            // For manual navigation or mouse position, highlight the center bytes
                             isCenter = (b >= halfBytes && b < halfBytes + viewport.format.bytesPerPixel);
                         }
                         
@@ -1613,9 +1667,7 @@ void MemoryVisualizer::HandleInput() {
             magnifierLockPos.x = (mousePos.x - memoryViewPos.x) / viewport.zoom;
             magnifierLockPos.y = (mousePos.y - memoryViewPos.y) / viewport.zoom;
             
-            // Clamp to valid range
-            magnifierLockPos.x = std::max(0.0f, std::min(magnifierLockPos.x, (float)(viewport.width - 1)));
-            magnifierLockPos.y = std::max(0.0f, std::min(magnifierLockPos.y, (float)(viewport.height - 1)));
+            // No clamping - allow any position
             
             // Enable magnifier and lock it
             showMagnifier = true;
@@ -1636,7 +1688,10 @@ void MemoryVisualizer::HandleInput() {
             
             // Update address - natural scrolling: wheel up = go up (earlier/lower addresses)
             int64_t newAddress = (int64_t)viewport.baseAddress - scrollDelta;  // Natural scrolling
-            if (newAddress < 0) newAddress = 0;
+            if (newAddress < 0) {
+                std::cerr << "VIEWPORT CLAMPED TO 0 (was trying " << newAddress << ")" << std::endl;
+                newAddress = 0;
+            }
             if (newAddress > 0x200000000ULL) newAddress = 0x200000000ULL;  // Cap at 8GB
             
             viewport.baseAddress = (uint64_t)newAddress;
@@ -1879,6 +1934,8 @@ uint64_t MemoryVisualizer::GetAddressAt(int x, int y) const {
 }
 
 void MemoryVisualizer::NavigateToAddress(uint64_t address) {
+    std::cerr << "NAVIGATE TO ADDRESS: 0x" << std::hex << address << std::dec 
+              << " (from 0x" << std::hex << viewport.baseAddress << std::dec << ")" << std::endl;
     // If using virtual addresses with crunched view
     if (useVirtualAddresses && addressFlattener && targetPid > 0) {
         // Convert VA to position in flattened space
