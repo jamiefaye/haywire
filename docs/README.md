@@ -72,3 +72,15 @@ Phase 1 Complete:
 - Implement memory reading from QEMU
 - Add memory navigation features
 - Optimize rendering pipeline
+
+## Documentation
+
+- [QEMU Memory Introspection Architecture](qemu_memory_introspection.md) - Technical details on bypassing QEMU memory isolation
+- [Building Modified QEMU](build_qemu.md) - Instructions for building QEMU with introspection features
+- [Kernel Structures](kernel_structs.md) - Linux kernel structure layouts
+- [Process Memory Chain](process_memory_chain.md) - How process memory is organized
+- [Init Task Finding](init_task_finding.md) - Locating the kernel process list root
+
+## For AI Assistants
+
+See [CLAUDE.md](../CLAUDE.md) in the project root for context and guidance when working on this codebase.
