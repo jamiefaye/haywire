@@ -905,13 +905,26 @@ void MemoryVisualizer::DrawMemoryView() {
 }
 
 void MemoryVisualizer::DrawMagnifier() {
-    // Create a floating window for the magnifier
-    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize;
+    // Create a floating window for the magnifier - resizable
+    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse;
     
-    // Start with a reasonable position, but let user move it
-    ImGui::SetNextWindowSize(ImVec2(300, 350), ImGuiCond_FirstUseEver);
+    static bool bringToFront = false;
     
-    if (!ImGui::Begin("Magnifier", &showMagnifier, windowFlags)) {
+    // Check for 'M' key to bring magnifier to front (only when not typing)
+    if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_M, false)) {
+        bringToFront = true;
+    }
+    
+    // Set initial size but allow resizing
+    ImGui::SetNextWindowSize(ImVec2(400, 450), ImGuiCond_FirstUseEver);
+    
+    // Bring to front when requested
+    if (bringToFront) {
+        ImGui::SetNextWindowFocus();
+        bringToFront = false;
+    }
+    
+    if (!ImGui::Begin("Magnifier (Press 'M' to bring to front)", &showMagnifier, windowFlags)) {
         ImGui::End();
         return;
     }
@@ -926,7 +939,8 @@ void MemoryVisualizer::DrawMagnifier() {
         if (i > 0) ImGui::SameLine();
         
         // Highlight current zoom level
-        if (magnifierZoom == zoomLevels[i]) {
+        bool isCurrentZoom = (magnifierZoom == zoomLevels[i]);
+        if (isCurrentZoom) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.8f, 1.0f));
         }
         
@@ -936,7 +950,7 @@ void MemoryVisualizer::DrawMagnifier() {
             magnifierZoom = zoomLevels[i];
         }
         
-        if (magnifierZoom == zoomLevels[i]) {
+        if (isCurrentZoom) {
             ImGui::PopStyleColor();
         }
         
@@ -955,9 +969,20 @@ void MemoryVisualizer::DrawMagnifier() {
     int srcX = (mousePos.x - memoryViewPos.x) / viewport.zoom;
     int srcY = (mousePos.y - memoryViewPos.y) / viewport.zoom;
     
-    // Size of magnified area
-    int halfSize = magnifierSize / 2;
-    ImVec2 magnifiedSize(magnifierSize * magnifierZoom, magnifierSize * magnifierZoom);
+    // Calculate magnified area size based on window size
+    ImVec2 contentRegion = ImGui::GetContentRegionAvail();
+    float availableHeight = contentRegion.y - 80; // Leave space for controls
+    float availableWidth = contentRegion.x - 10;
+    float magnifiedAreaSize = std::min(availableWidth, availableHeight);
+    
+    // Calculate how many source pixels we can show
+    int sourcePixels = magnifiedAreaSize / magnifierZoom;
+    int halfSize = sourcePixels / 2;
+    
+    // Show info about magnified area
+    ImGui::Separator();
+    ImGui::Text("Viewing: %dx%d pixels", halfSize * 2, halfSize * 2);
+    ImGui::Text("Window: %.0fx%.0f", magnifiedAreaSize, magnifiedAreaSize);
     
     // Draw the magnified view
     ImVec2 drawPos = ImGui::GetCursorScreenPos();
@@ -965,7 +990,7 @@ void MemoryVisualizer::DrawMagnifier() {
     
     // Background
     drawList->AddRectFilled(drawPos, 
-                            ImVec2(drawPos.x + magnifiedSize.x, drawPos.y + magnifiedSize.y),
+                            ImVec2(drawPos.x + magnifiedAreaSize, drawPos.y + magnifiedAreaSize),
                             IM_COL32(30, 30, 30, 255));
     
     // Draw each pixel magnified
@@ -977,16 +1002,17 @@ void MemoryVisualizer::DrawMagnifier() {
             if (px >= 0 && px < viewport.width && py >= 0 && py < viewport.height) {
                 uint32_t pixel = GetPixelAt(px, py);
                 
-                // Draw magnified pixel - just show exactly what's in the pixel buffer
-                float x1 = drawPos.x + (dx + halfSize) * magnifierZoom;
-                float y1 = drawPos.y + (dy + halfSize) * magnifierZoom;
-                float x2 = x1 + magnifierZoom;
-                float y2 = y1 + magnifierZoom;
+                // Draw magnified pixel - scale to fit the available area
+                float pixelSize = magnifiedAreaSize / (halfSize * 2);
+                float x1 = drawPos.x + (dx + halfSize) * pixelSize;
+                float y1 = drawPos.y + (dy + halfSize) * pixelSize;
+                float x2 = x1 + pixelSize;
+                float y2 = y1 + pixelSize;
                 
                 drawList->AddRectFilled(ImVec2(x1, y1), ImVec2(x2, y2), pixel);
                 
-                // Draw grid lines for zoom >= 4x
-                if (magnifierZoom >= 4) {
+                // Draw grid lines for zoom >= 4x or when pixels are large enough
+                if (magnifierZoom >= 4 || pixelSize >= 4) {
                     uint32_t gridColor = IM_COL32(100, 100, 100, 100);
                     drawList->AddRect(ImVec2(x1, y1), ImVec2(x2, y2), gridColor, 0.0f, 0, 1.0f);
                 }
@@ -996,13 +1022,13 @@ void MemoryVisualizer::DrawMagnifier() {
     
     // Draw center crosshair
     uint32_t crosshairColor = IM_COL32(255, 255, 0, 200);
-    float centerX = drawPos.x + magnifiedSize.x / 2;
-    float centerY = drawPos.y + magnifiedSize.y / 2;
+    float centerX = drawPos.x + magnifiedAreaSize / 2;
+    float centerY = drawPos.y + magnifiedAreaSize / 2;
     drawList->AddLine(ImVec2(centerX - 10, centerY), ImVec2(centerX + 10, centerY), crosshairColor);
     drawList->AddLine(ImVec2(centerX, centerY - 10), ImVec2(centerX, centerY + 10), crosshairColor);
     
     // Make space for the drawn content
-    ImGui::Dummy(magnifiedSize);
+    ImGui::Dummy(ImVec2(magnifiedAreaSize, magnifiedAreaSize));
     
     // Show info about center pixel
     uint64_t addr = GetAddressAt(srcX, srcY);
@@ -1078,6 +1104,10 @@ void MemoryVisualizer::DrawMagnifier() {
             }
         }
     }
+    
+    // Add shortcut hint at bottom
+    ImGui::Separator();
+    ImGui::TextDisabled("Tip: Press 'M' anytime to bring this window to front");
     
     ImGui::End();
 }
@@ -1373,6 +1403,15 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToPixels(const MemoryBlock&
                         uint8_t bit = (byte >> (7 - (memIndex % 8))) & 1;
                         uint8_t value = bit ? 255 : 0;
                         pixels[pixelIndex] = PackRGBA(value, value, value);
+                    }
+                    break;
+                    
+                case PixelFormat::CUSTOM:
+                    // Custom format - just use grayscale for now
+                    // TODO: Implement custom format handler
+                    if (memIndex < memory.data.size()) {
+                        uint8_t gray = memory.data[memIndex];
+                        pixels[pixelIndex] = PackRGBA(gray, gray, gray);
                     }
                     break;
             }
