@@ -125,6 +125,29 @@ private:
     ImVec2 memoryViewPos;  // Position of memory view canvas for magnifier
     ImVec2 memoryViewSize;  // Size of memory view canvas
     
+    // Search feature (integrated into magnifier)
+    void PerformSearch();
+    void PerformFullRangeSearch();
+    void FindNext();
+    void FindPrevious();
+    void ScrollToResult(uint64_t resultAddr);
+    bool InitializeMemoryMap();
+    void CleanupMemoryMap();
+    
+    enum SearchType { SEARCH_ASCII, SEARCH_HEX };
+    SearchType searchType;
+    char searchPattern[256];
+    std::vector<uint64_t> searchResults;  // Store absolute addresses, not offsets
+    size_t currentSearchResult;
+    bool searchActive;
+    bool searchFromCurrent;  // If true, search from current position; if false, from beginning
+    bool searchFullRange;  // If true, search entire memory space
+    
+    // Memory-mapped access for full-range search
+    int memFd;
+    void* memBase;
+    size_t memSize;
+    
     // Change tracking
     struct ChangeRegion {
         int x, y;
