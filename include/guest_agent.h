@@ -94,6 +94,15 @@ public:
     bool TranslateRange(int pid, uint64_t startVA, size_t length, 
                        std::vector<PagemapEntry>& entries);
     
+    // Get page table base registers for a process (ARM64)
+    struct TTBRValues {
+        uint64_t ttbr0_el1;
+        uint64_t ttbr1_el1;
+        uint64_t tcr_el1;  // Translation Control Register
+        bool valid;
+    };
+    bool GetTTBR(int pid, TTBRValues& ttbr);
+    
     // Helper to decode base64
     static std::string DecodeBase64(const std::string& encoded);
     

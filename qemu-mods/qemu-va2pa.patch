@@ -1,0 +1,89 @@
+diff --git a/qapi/misc.json b/qapi/misc.json
+index 28c641fe2f..85e9c1c8e8 100644
+--- a/qapi/misc.json
++++ b/qapi/misc.json
+@@ -599,3 +599,33 @@
+ { 'event': 'VFU_CLIENT_HANGUP',
+   'data': { 'vfu-id': 'str', 'vfu-qom-path': 'str',
+             'dev-id': 'str', 'dev-qom-path': 'str' } }
++
++##
++# @Va2PaInfo:
++#
++# Virtual to physical address translation result
++#
++# @phys: Physical address
++# @size: Page size
++# @valid: Whether translation was successful
++#
++# Since: 9.2
++##
++{ 'struct': 'Va2PaInfo',
++  'data': { 'phys': 'uint64', 'size': 'uint64', 'valid': 'bool' } }
++
++##
++# @query-va2pa:
++#
++# Translate virtual address to physical address for a given CPU
++#
++# @cpu-index: CPU index to query
++# @addr: Virtual address to translate
++#
++# Returns: Physical address translation information
++#
++# Since: 9.2
++##
++{ 'command': 'query-va2pa',
++  'data': { 'cpu-index': 'int', 'addr': 'uint64' },
++  'returns': 'Va2PaInfo' }
+diff --git a/target/arm/arm-qmp-cmds.c b/target/arm/arm-qmp-cmds.c
+index d292c974c4..01a320a477 100644
+--- a/target/arm/arm-qmp-cmds.c
++++ b/target/arm/arm-qmp-cmds.c
+@@ -29,9 +29,12 @@
+ #include "qapi/qobject-input-visitor.h"
+ #include "qapi/qapi-commands-machine.h"
+ #include "qapi/qapi-commands-misc-arm.h"
++#include "qapi/qapi-commands-misc.h"
++#include "qapi/qapi-types-misc.h"
+ #include "qobject/qdict.h"
+ #include "qom/qom-qobject.h"
+ #include "cpu.h"
++#include "exec/cpu-common.h"
+ 
+ static GICCapability *gic_cap_new(int version)
+ {
+@@ -248,3 +251,33 @@ CpuDefinitionInfoList *qmp_query_cpu_definitions(Error **errp)
+ 
+     return cpu_list;
+ }
++
++Va2PaInfo *qmp_query_va2pa(int64_t cpu_index, uint64_t addr, Error **errp)
++{
++    Va2PaInfo *info;
++    CPUState *cs;
++    hwaddr phys_addr;
++    
++    cs = qemu_get_cpu(cpu_index);
++    if (!cs) {
++        error_setg(errp, "CPU %lld not found", (long long)cpu_index);
++        return NULL;
++    }
++    
++    info = g_new0(Va2PaInfo, 1);
++    
++    /* Use QEMU's existing debug translation function */
++    phys_addr = cpu_get_phys_page_debug(cs, addr);
++    
++    if (phys_addr != -1) {
++        info->phys = phys_addr;
++        info->size = 4096; /* ARM page size */
++        info->valid = true;
++    } else {
++        info->phys = 0;
++        info->size = 0;
++        info->valid = false;
++    }
++    
++    return info;
++}

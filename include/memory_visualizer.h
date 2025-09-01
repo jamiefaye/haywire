@@ -22,6 +22,7 @@ class QemuConnection;
 class ViewportTranslator;
 class AddressSpaceFlattener;
 class CrunchedRangeNavigator;
+class CrunchedMemoryReader;
 class GuestAgent;
 
 class MemoryVisualizer {
@@ -50,10 +51,8 @@ public:
     bool HasMemory() const { return !currentMemory.data.empty(); }
     
     // VA to PA translation
-    void SetTranslator(std::shared_ptr<ViewportTranslator> translator) { 
-        viewportTranslator = translator; 
-    }
-    void SetProcessPid(int pid) { targetPid = pid; }
+    void SetTranslator(std::shared_ptr<ViewportTranslator> translator);
+    void SetProcessPid(int pid);
     void SetGuestAgent(GuestAgent* agent) { guestAgent = agent; }
     
     // Load memory map for navigation
@@ -147,6 +146,7 @@ private:
     // Address space flattening for navigation
     std::unique_ptr<AddressSpaceFlattener> addressFlattener;
     std::unique_ptr<CrunchedRangeNavigator> crunchedNavigator;
+    std::unique_ptr<CrunchedMemoryReader> crunchedReader;
     
     // Guest agent for loading memory maps
     GuestAgent* guestAgent;

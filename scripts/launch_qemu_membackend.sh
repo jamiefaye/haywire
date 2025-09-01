@@ -20,8 +20,20 @@ fi
 # Clean up any existing memory file
 rm -f "$MEMFILE"
 
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
 # Launch QEMU with memory backend
-qemu-system-aarch64 \
+# Use our custom build if it exists, otherwise use system QEMU
+QEMU_BIN="$SCRIPT_DIR/../qemu-mods/qemu-system-aarch64-unsigned"
+if [ ! -f "$QEMU_BIN" ]; then
+    QEMU_BIN="qemu-system-aarch64"
+    echo "Using system QEMU (custom build not found)"
+else
+    echo "Using custom QEMU build with VA->PA translation support"
+fi
+
+$QEMU_BIN \
     -M virt,highmem=on \
     -accel hvf \
     -cpu host \
@@ -37,17 +49,16 @@ qemu-system-aarch64 \
     -device usb-tablet \
     -device intel-hda \
     -device hda-duplex \
-    -drive if=virtio,format=qcow2,file=ubuntu_arm64.qcow2 \
-    -cdrom /Users/jamie/haywire/ubuntu-25.04-desktop-arm64.iso \
-    -boot d \
-    -qmp tcp:localhost:4445,server,nowait \
-    -monitor telnet:localhost:4444,server,nowait \
+    -drive if=virtio,format=qcow2,file="$SCRIPT_DIR/../vms/ubuntu_arm64.qcow2" \
+    -boot c \
+    -qmp tcp:localhost:4445,server=on,wait=off \
+    -monitor telnet:localhost:4444,server=on,wait=off \
     -gdb tcp::1234 \
-    -chardev socket,path=/tmp/qga.sock,server,nowait,id=qga0 \
+    -chardev socket,path=/tmp/qga.sock,server=on,wait=off,id=qga0 \
     -device virtio-serial \
     -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0 \
     -netdev user,id=net0,hostfwd=tcp::2222-:22 \
-    -device virtio-net-pci,netdev=net0 \
+    -device virtio-net-pci,netdev=net0,romfile= \
     -serial stdio \
     -name "Ubuntu-ARM64-MemBackend"
 

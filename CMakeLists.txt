@@ -85,6 +85,8 @@ add_executable(haywire
     src/viewport_translator.cpp
     src/process_memory_map.cpp
     src/address_space_flattener.cpp
+    src/pagemap_cache.cpp
+    src/crunched_memory_reader.cpp
     src/memory_visualizer.cpp
     src/memory_overview.cpp
     src/hex_overlay.cpp
@@ -128,3 +130,5 @@ endif()
 
 # Copy assets to build directory
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+
+# Test executables moved to test_attempts/ directory

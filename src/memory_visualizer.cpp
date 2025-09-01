@@ -2,6 +2,7 @@
 #include "qemu_connection.h"
 #include "viewport_translator.h"
 #include "address_space_flattener.h"
+#include "crunched_memory_reader.h"
 #include "guest_agent.h"
 #include "imgui.h"
 #include <cstring>
@@ -26,6 +27,8 @@ MemoryVisualizer::MemoryVisualizer()
     addressFlattener = std::make_unique<AddressSpaceFlattener>();
     crunchedNavigator = std::make_unique<CrunchedRangeNavigator>();
     crunchedNavigator->SetFlattener(addressFlattener.get());
+    crunchedReader = std::make_unique<CrunchedMemoryReader>();
+    crunchedReader->SetFlattener(addressFlattener.get());
     
     // Set navigation callback
     crunchedNavigator->SetNavigationCallback([this](uint64_t virtualAddr) {
@@ -37,6 +40,16 @@ MemoryVisualizer::MemoryVisualizer()
     viewport.width = widthInput;
     viewport.height = heightInput;
     viewport.stride = strideInput;
+    
+    // Start with smaller viewport in VA mode to reduce translation overhead
+    if (useVirtualAddresses) {
+        viewport.width = 256;
+        viewport.height = 256;
+        viewport.stride = 256;
+        widthInput = 256;
+        heightInput = 256;
+        strideInput = 256;
+    }
     CreateTexture();
     lastRefresh = std::chrono::steady_clock::now();
 }
@@ -50,6 +63,20 @@ MemoryVisualizer::~MemoryVisualizer() {
     
     if (memoryTexture) {
         glDeleteTextures(1, &memoryTexture);
+    }
+}
+
+void MemoryVisualizer::SetTranslator(std::shared_ptr<ViewportTranslator> translator) {
+    viewportTranslator = translator;
+    if (crunchedReader) {
+        crunchedReader->SetTranslator(translator);
+    }
+}
+
+void MemoryVisualizer::SetProcessPid(int pid) {
+    targetPid = pid;
+    if (crunchedReader) {
+        crunchedReader->SetPID(pid);
     }
 }
 
@@ -67,6 +94,11 @@ void MemoryVisualizer::CreateTexture() {
 }
 
 void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
+    // Ensure crunched reader has the connection
+    if (crunchedReader && !crunchedReader->GetConnection()) {
+        crunchedReader->SetConnection(&qemu);
+    }
+    
     // Horizontal layout for controls
     DrawControls();
     
@@ -117,7 +149,26 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
             uint64_t addr = viewport.baseAddress;
             
             std::vector<uint8_t> buffer;
-            if (qemu.ReadMemory(addr, size, buffer)) {
+            bool readSuccess = false;
+            
+            // Use crunched reader if in VA mode with a process
+            if (useVirtualAddresses && crunchedReader && targetPid > 0) {
+                size_t bytesRead = crunchedReader->ReadCrunchedMemory(addr, size, buffer);
+                readSuccess = (bytesRead > 0);
+                if (!readSuccess) {
+                    static int failCount = 0;
+                    if (++failCount % 10 == 0) {
+                        std::cerr << "CrunchedMemoryReader failed at flat addr 0x" 
+                                  << std::hex << addr << std::dec 
+                                  << " (fail #" << failCount << ")" << std::endl;
+                    }
+                }
+            } else {
+                // Direct physical memory read
+                readSuccess = qemu.ReadMemory(addr, size, buffer);
+            }
+            
+            if (readSuccess) {
                 // Performance monitoring for problematic addresses
                 static int volatileCount = 0;
                 static uint64_t lastVolatileAddr = 0;
@@ -328,24 +379,34 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
 }
 
 void MemoryVisualizer::DrawMemoryBitmap() {
-    // Update visible height based on window size
+    // Get available size (already constrained by parent)
     ImVec2 availSize = ImGui::GetContentRegionAvail();
-    heightInput = (int)(availSize.y / viewport.zoom);  // Visible rows
+    
+    // Use full available height
+    float maxHeight = std::max(50.0f, availSize.y);
+    
+    // Ensure we have enough space
+    if (maxHeight < 50) {
+        ImGui::Text("Window too small - please resize");
+        return;
+    }
+    
+    heightInput = (int)(maxHeight / viewport.zoom);  // Visible rows
     viewport.height = std::max(1, heightInput);
     
     // Layout: Vertical slider on left, memory view on right
     float sliderWidth = 200;
-    float memoryWidth = availSize.x - sliderWidth - 10;  // -10 for spacing
+    float memoryWidth = std::max(100.0f, availSize.x - sliderWidth - 10);  // -10 for spacing
     
-    // Vertical address slider on the left
-    ImGui::BeginChild("AddressSlider", ImVec2(sliderWidth, availSize.y), true);
+    // Vertical address slider on the left - use constrained height
+    ImGui::BeginChild("AddressSlider", ImVec2(sliderWidth, maxHeight), true);
     DrawVerticalAddressSlider();
     ImGui::EndChild();
     
     ImGui::SameLine();
     
-    // Memory view on the right
-    ImGui::BeginChild("BitmapView", ImVec2(memoryWidth, availSize.y), false);
+    // Memory view on the right - use constrained height
+    ImGui::BeginChild("BitmapView", ImVec2(memoryWidth, maxHeight), false);
     DrawMemoryView();
     ImGui::EndChild();
     
@@ -442,10 +503,43 @@ void MemoryVisualizer::DrawControls() {
     ImGui::SameLine();
     
     if (ImGui::Checkbox("VA Mode", &useVirtualAddresses)) {
-        if (useVirtualAddresses && viewportTranslator && targetPid > 0) {
-            // Trigger prefetch for current viewport
-            size_t viewSize = viewport.width * viewport.height * 4;
-            viewportTranslator->SetViewport(targetPid, viewport.baseAddress, viewSize);
+        if (useVirtualAddresses) {
+            // Switching to VA mode
+            if (addressFlattener && addressFlattener->GetFlatSize() > 0) {
+                // Get the first valid region's flat start
+                const auto* firstRegion = addressFlattener->GetRegionForFlat(0);
+                if (!firstRegion) {
+                    // Try to find the first region
+                    for (uint64_t testFlat = 0; testFlat < addressFlattener->GetFlatSize(); testFlat += 4096) {
+                        firstRegion = addressFlattener->GetRegionForFlat(testFlat);
+                        if (firstRegion) {
+                            viewport.baseAddress = firstRegion->flatStart;
+                            break;
+                        }
+                    }
+                } else {
+                    viewport.baseAddress = 0;
+                }
+                needsUpdate = true;
+                
+                // Update address display to show first VA
+                uint64_t firstVA = addressFlattener->FlatToVirtual(viewport.baseAddress);
+                std::stringstream ss;
+                ss << "0x" << std::hex << firstVA;
+                strcpy(addressInput, ss.str().c_str());
+                
+                std::cerr << "Switched to VA mode, flat size: " 
+                          << addressFlattener->GetFlatSize() / (1024*1024) << " MB"
+                          << ", starting at flat 0x" << std::hex << viewport.baseAddress << std::dec << std::endl;
+            } else {
+                std::cerr << "VA mode enabled but no memory map loaded" << std::endl;
+            }
+        } else {
+            // Switching back to physical mode
+            viewport.baseAddress = 0;
+            strcpy(addressInput, "0x0");
+            needsUpdate = true;
+            std::cerr << "Switched to physical mode" << std::endl;
         }
     }
     if (ImGui::IsItemHovered()) {
@@ -459,8 +553,15 @@ void MemoryVisualizer::DrawControls() {
         ImGui::PushItemWidth(80);  // Increased from 60 to 80 for 5-digit PIDs
         int oldPid = targetPid;
         if (ImGui::InputInt("##PID", &targetPid, 0, 0)) {  // Added 0,0 to disable +/- buttons
-            if (viewportTranslator && targetPid > 0) {
-                viewportTranslator->ClearCache(targetPid);
+            if (targetPid > 0) {
+                // Update the crunched reader with new PID
+                SetProcessPid(targetPid);
+                
+                if (viewportTranslator) {
+                    viewportTranslator->ClearCache(targetPid);
+                }
+                
+                std::cerr << "Set PID to " << targetPid << std::endl;
             }
         }
         ImGui::PopItemWidth();
@@ -468,9 +569,19 @@ void MemoryVisualizer::DrawControls() {
         // Load memory map button
         ImGui::SameLine();
         if (ImGui::Button("Load Map") && targetPid > 0 && guestAgent) {
+            // Check if we have everything needed
+            if (!viewportTranslator) {
+                std::cerr << "ERROR: No viewport translator! Guest agent may not be connected." << std::endl;
+                std::cerr << "Please ensure QEMU is connected with guest agent." << std::endl;
+            }
+            
             std::vector<GuestMemoryRegion> regions;
             if (guestAgent->GetMemoryMap(targetPid, regions)) {
                 LoadMemoryMap(regions);
+                
+                // Make sure crunched reader has the PID
+                SetProcessPid(targetPid);
+                
                 std::cerr << "Loaded memory map for PID " << targetPid 
                          << " (" << regions.size() << " regions)" << std::endl;
                 
@@ -524,10 +635,26 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
         maxAddress = addressFlattener->GetFlatSize();
         currentPos = viewport.baseAddress;  // This is flat position in VA mode
         
-        // Show current VA
+        // Show current VA and region info
         uint64_t currentVA = addressFlattener->FlatToVirtual(currentPos);
         ImGui::Text("VA: 0x%llx", currentVA);
         ImGui::Text("Flat: %llu MB", currentPos / (1024*1024));
+        
+        // Show current region info
+        const auto* region = addressFlattener->GetRegionForFlat(currentPos);
+        if (region) {
+            ImGui::Separator();
+            ImGui::Text("Region: %.32s", region->name.c_str());
+            if (region->name.length() > 32) {
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", region->name.c_str());
+                }
+            }
+            uint64_t regionSize = region->virtualEnd - region->virtualStart;
+            ImGui::Text("Size: %.1f MB", regionSize / (1024.0 * 1024.0));
+            uint64_t offsetInRegion = currentVA - region->virtualStart;
+            ImGui::Text("Offset: +0x%llx", offsetInRegion);
+        }
     } else {
         // Physical mode - original behavior
         sliderUnit = 65536;  // 64K units
@@ -537,7 +664,9 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     
     // Vertical slider
     ImVec2 availSize = ImGui::GetContentRegionAvail();
-    float sliderHeight = availSize.y - 100;  // Leave room for buttons
+    // Need more room in VA mode for region info (but not too much!)
+    float reservedHeight = useVirtualAddresses ? 150 : 80;
+    float sliderHeight = std::max(50.0f, availSize.y - reservedHeight);  // Minimum height for slider
     
     // Convert address to vertical slider position (inverted - top is 0)
     uint64_t sliderValue = currentPos / sliderUnit;

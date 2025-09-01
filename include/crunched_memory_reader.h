@@ -26,6 +26,7 @@ public:
     void SetConnection(QemuConnection* qemu) {
         this->qemu = qemu;
     }
+    QemuConnection* GetConnection() const { return qemu; }
     void SetPID(int pid) { 
         this->targetPid = pid; 
     }

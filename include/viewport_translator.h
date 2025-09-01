@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <memory>
 #include "guest_agent.h"
+#include "pagemap_cache.h"
 
 namespace Haywire {
 
@@ -47,6 +48,9 @@ private:
     uint64_t viewportCenter;
     size_t viewportSize;
     
+    // Fast pagemap cache (loads entire pagemap once)
+    std::unique_ptr<PagemapCache> pagemapCache;
+    
     // Translation cache: [pid][va_page] -> PagemapEntry
     std::unordered_map<int, std::unordered_map<uint64_t, PagemapEntry>> cache;
     
@@ -56,7 +60,7 @@ private:
     // Constants
     static constexpr uint64_t PAGE_SIZE = 4096;
     static constexpr uint64_t PAGE_MASK = PAGE_SIZE - 1;
-    static constexpr size_t PREFETCH_RADIUS = 16;  // Pages around viewport
+    static constexpr size_t PREFETCH_RADIUS = 2;  // Pages around viewport (reduced for speed)
     
     // Helper to get page-aligned address
     uint64_t AlignToPage(uint64_t addr) const {

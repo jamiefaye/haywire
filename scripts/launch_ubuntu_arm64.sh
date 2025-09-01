@@ -8,7 +8,7 @@
 
 UBUNTU_ISO="/Users/jamie/haywire/ubuntu-25.04-desktop-arm64.iso"
 # Update this path to match your downloaded file
-DISK_IMAGE="ubuntu_arm64.qcow2"
+DISK_IMAGE="../vms/ubuntu_arm64.qcow2"
 
 # QEMU configuration
 MEMORY="4G"

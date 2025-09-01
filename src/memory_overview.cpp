@@ -293,23 +293,28 @@ uint32_t MemoryOverview::StateToColor(PageState state) const {
 
 void MemoryOverview::DrawCompact() {
     // Compact view without window chrome
-    // Show detected regions
-    if (!regions.empty()) {
-        ImGui::Text("Memory Regions:");
-        ImGui::Separator();
-        for (const auto& region : regions) {
-            if (ImGui::Selectable(region.name.c_str())) {
-                // TODO: Jump to this region in main view
-            }
-            ImGui::Text("  0x%llx (%.1f MB)", 
-                       region.base, 
-                       region.size / (1024.0 * 1024.0));
-        }
-        ImGui::Separator();
-    }
     
-    // Memory map visualization
-    if (!pixelBuffer.empty()) {
+    // Switch between physical and process mode
+    if (processMode) {
+        DrawProcessMap();
+    } else {
+        // Show detected regions
+        if (!regions.empty()) {
+            ImGui::Text("Memory Regions:");
+            ImGui::Separator();
+            for (const auto& region : regions) {
+                if (ImGui::Selectable(region.name.c_str())) {
+                    // TODO: Jump to this region in main view
+                }
+                ImGui::Text("  0x%llx (%.1f MB)", 
+                           region.base, 
+                           region.size / (1024.0 * 1024.0));
+            }
+            ImGui::Separator();
+        }
+        
+        // Memory map visualization
+        if (!pixelBuffer.empty()) {
         int width = pixelsPerRow;
         int height = (pageStates.size() + pixelsPerRow - 1) / pixelsPerRow;
         
@@ -334,9 +339,10 @@ void MemoryOverview::DrawCompact() {
                 ImGui::SetTooltip("Address: 0x%llx", address);
             }
         }
-    } else {
-        ImGui::Text("No memory scanned yet");
-    }
+        } else {
+            ImGui::Text("No memory scanned yet");
+        }
+    }  // End of else block (physical mode)
 }
 
 void MemoryOverview::Draw() {

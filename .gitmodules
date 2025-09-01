@@ -1,3 +1,7 @@
 [submodule "lib/imgui"]
 	path = lib/imgui
 	url = https://github.com/ocornut/imgui
+[submodule "qemu-mods/qemu-src"]
+	path = qemu-mods/qemu-src
+	url = https://gitlab.com/qemu-project/qemu.git
+	branch = v9.1.0

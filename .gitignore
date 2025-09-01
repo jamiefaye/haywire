@@ -52,3 +52,30 @@ vgcore.*
 
 # Old project files
 haywireold/
+
+# Python files
+*.py
+__pycache__/
+*.pyc
+
+# Video/Image files
+*.mp4
+*.ts
+*.png
+*.jpg
+
+# Test scripts
+test_*.py
+test_*.sh
+
+# ImGui config
+imgui.ini
+
+# VM images (keep in vms/ folder but don't track)
+vms/*.qcow2
+
+# QEMU binaries (built locally)
+qemu-mods/qemu-system-aarch64-unsigned
+
+# Temporary test attempts
+test_attempts/

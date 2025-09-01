@@ -1,11 +1,13 @@
 #include "viewport_translator.h"
 #include <iostream>
 #include <algorithm>
+#include <chrono>
 
 namespace Haywire {
 
 ViewportTranslator::ViewportTranslator(std::shared_ptr<GuestAgent> agent) 
-    : guestAgent(agent), currentPid(-1), viewportCenter(0), viewportSize(0) {
+    : guestAgent(agent), currentPid(-1), viewportCenter(0), viewportSize(0),
+      pagemapCache(std::make_unique<PagemapCache>()) {
     stats = {0, 0, 0, 0.0f};
 }
 
@@ -13,12 +15,18 @@ ViewportTranslator::~ViewportTranslator() {
 }
 
 void ViewportTranslator::SetViewport(int pid, uint64_t centerVA, size_t viewSize) {
+    // Check if we switched processes
+    if (pid != currentPid && pid > 0) {
+        // Clear cache when switching processes
+        cache.clear();
+        stats.totalEntries = 0;
+    }
+    
     currentPid = pid;
     viewportCenter = centerVA;
     viewportSize = viewSize;
     
-    // Automatically prefetch when viewport changes
-    PrefetchViewport();
+    // Don't prefetch - just cache on demand
 }
 
 uint64_t ViewportTranslator::TranslateAddress(int pid, uint64_t virtualAddr) {
@@ -30,9 +38,18 @@ uint64_t ViewportTranslator::TranslateAddress(int pid, uint64_t virtualAddr) {
 }
 
 bool ViewportTranslator::GetTranslation(int pid, uint64_t virtualAddr, PagemapEntry& entry) {
+    // Try fast pagemap cache first
+    if (pagemapCache->IsValid(pid)) {
+        if (pagemapCache->Lookup(virtualAddr, entry)) {
+            stats.hitCount++;
+            stats.hitRate = (float)stats.hitCount / (stats.hitCount + stats.missCount);
+            return true;
+        }
+    }
+    
     uint64_t pageAddr = AlignToPage(virtualAddr);
     
-    // Check cache first
+    // Check old cache as fallback
     auto pidIt = cache.find(pid);
     if (pidIt != cache.end()) {
         auto pageIt = pidIt->second.find(pageAddr);
@@ -51,15 +68,65 @@ bool ViewportTranslator::GetTranslation(int pid, uint64_t virtualAddr, PagemapEn
         }
     }
     
-    // Cache miss - fetch from guest agent
+    // Cache miss - fetch from guest agent (slow path)
     stats.missCount++;
     stats.hitRate = (float)stats.hitCount / (stats.hitCount + stats.missCount);
+    
+    // Log cache misses periodically
+    static int missCounter = 0;
+    if (++missCounter % 100 == 0) {
+        std::cerr << "Cache stats: " << stats.hitCount << " hits, " << stats.missCount 
+                  << " misses (" << (stats.hitRate * 100) << "% hit rate)" << std::endl;
+    }
     
     if (!guestAgent || !guestAgent->IsConnected()) {
         return false;
     }
     
-    // Fetch single page translation
+    // On cache miss, prefetch a screen-sized batch of pages
+    // This amortizes the ~300ms cost over many pages
+    const size_t SCREEN_PAGES = 256;  // About 1MB worth of pages
+    uint64_t batchStart = pageAddr;
+    
+    // Align batch to reduce fragmentation
+    if (batchStart > SCREEN_PAGES * PAGE_SIZE / 2) {
+        batchStart = batchStart - (SCREEN_PAGES * PAGE_SIZE / 2);
+    }
+    batchStart = AlignToPage(batchStart);
+    
+    size_t batchSize = SCREEN_PAGES * PAGE_SIZE;
+    
+    std::cerr << "Cache miss at VA 0x" << std::hex << virtualAddr 
+              << ", prefetching " << std::dec << SCREEN_PAGES << " pages..." << std::endl;
+    
+    // Batch fetch translations
+    std::vector<PagemapEntry> entries;
+    if (guestAgent->TranslateRange(pid, batchStart, batchSize, entries)) {
+        // Store all entries in cache
+        uint64_t currentVA = batchStart;
+        for (const auto& batchEntry : entries) {
+            uint64_t currentPage = AlignToPage(currentVA);
+            cache[pid][currentPage] = batchEntry;
+            currentVA += PAGE_SIZE;
+            stats.totalEntries++;
+        }
+        
+        std::cerr << "Prefetched " << entries.size() << " pages into cache" << std::endl;
+        
+        // Find our original requested entry
+        auto it = cache[pid].find(pageAddr);
+        if (it != cache[pid].end()) {
+            entry = it->second;
+            // Recalculate physical address with correct offset
+            if (entry.present) {
+                uint64_t pageOffset = virtualAddr & PAGE_MASK;
+                entry.physAddr = (entry.pfn * PAGE_SIZE) + pageOffset;
+            }
+            return true;
+        }
+    }
+    
+    // Fallback to single page if batch failed
     if (guestAgent->TranslateAddress(pid, virtualAddr, entry)) {
         // Store in cache
         cache[pid][pageAddr] = entry;
@@ -71,6 +138,9 @@ bool ViewportTranslator::GetTranslation(int pid, uint64_t virtualAddr, PagemapEn
 }
 
 void ViewportTranslator::PrefetchViewport() {
+    // Disabled - pagemap cache provides instant lookups
+    return;
+    
     if (!guestAgent || !guestAgent->IsConnected() || currentPid < 0) {
         return;
     }
@@ -91,13 +161,17 @@ void ViewportTranslator::PrefetchViewport() {
     // Align to page boundaries
     prefetchStart = AlignToPage(prefetchStart);
     
-    std::cerr << "Prefetching VA range 0x" << std::hex << prefetchStart 
-              << " - 0x" << (prefetchStart + prefetchSize) 
-              << " for PID " << std::dec << currentPid << std::endl;
+    // Measure timing
+    auto start = std::chrono::high_resolution_clock::now();
     
     // Fetch translations in bulk
     std::vector<PagemapEntry> entries;
-    if (guestAgent->TranslateRange(currentPid, prefetchStart, prefetchSize, entries)) {
+    bool success = guestAgent->TranslateRange(currentPid, prefetchStart, prefetchSize, entries);
+    
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    
+    if (success) {
         // Store in cache
         uint64_t currentVA = prefetchStart;
         for (const auto& entry : entries) {
@@ -106,7 +180,13 @@ void ViewportTranslator::PrefetchViewport() {
             stats.totalEntries++;
         }
         
-        std::cerr << "Prefetched " << entries.size() << " page translations" << std::endl;
+        size_t numPages = prefetchSize / PAGE_SIZE;
+        // Debug output disabled
+        // std::cerr << "Prefetch: " << entries.size() << " pages in " << duration.count() 
+        //           << "ms (" << (duration.count() > 0 ? entries.size() * 1000 / duration.count() : 0) 
+        //           << " pages/sec)" << std::endl;
+    } else {
+        std::cerr << "Prefetch failed after " << duration.count() << "ms" << std::endl;
     }
 }
 
