@@ -1,0 +1,61 @@
+--- Integration patch for Haywire process tracker ---
+
+1. In target/arm/helper.c, modify vmsa_ttbr_write to call our hook:
+
+static void vmsa_ttbr_write(CPUARMState *env, const ARMCPRegInfo *ri,
+                            uint64_t value)
+{
++   /* Haywire: Hook context switch to track processes via SP_EL0 */
++   extern void haywire_context_switch_hook(CPUARMState *env);
++   haywire_context_switch_hook(env);
++
+    /* Original TTBR write code... */
+    if (cpreg_field_is_64bit(ri) &&
+        extract64(raw_read(env, ri) ^ value, 48, 16) != 0) {
+        ARMCPU *cpu = env_archcpu(env);
+        tlb_flush(CPU(cpu));
+    }
+    raw_write(env, ri, value);
+}
+
+2. In target/arm/meson.build, add haywire-tracker.c:
+
+arm_ss.add(files(
+  'cpu.c',
+  'debug_helper.c',
+  'gdbstub.c',
+  'helper.c',
++ 'haywire-tracker.c',
+  'iwmmxt_helper.c',
+  ...
+))
+
+3. In qapi/meson.build, add haywire.json:
+
+qapi_all_modules = [
+  'block',
+  'common',
+  ...
++ 'haywire',
+  'machine',
+  ...
+]
+
+4. In target/arm/cpu.c, initialize Haywire on CPU init:
+
+static void arm_cpu_realizefn(DeviceState *dev, Error **errp)
+{
+    ...
++   /* Initialize Haywire process tracking */
++   extern void haywire_init(void);
++   static bool haywire_initialized = false;
++   if (!haywire_initialized) {
++       haywire_init();
++       haywire_initialized = true;
++   }
+    ...
+}
+
+5. Create qapi-schema.json entry to include haywire.json:
+
+{ 'include': 'haywire.json' }

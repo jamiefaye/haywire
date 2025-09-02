@@ -59,7 +59,7 @@ $QEMU_BIN \
     -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0 \
     -netdev user,id=net0,hostfwd=tcp::2222-:22 \
     -device virtio-net-pci,netdev=net0,romfile= \
-    -serial stdio \
+    -monitor stdio \
     -name "Ubuntu-ARM64-MemBackend"
 
 # Clean up memory file on exit

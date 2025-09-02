@@ -1,0 +1,50 @@
+#!/bin/bash
+# Multiple methods to get kernel symbols from Ubuntu VM
+
+echo "=== Method 1: Check for System.map ==="
+echo "ls -la /boot/System.map-$(uname -r)"
+echo "grep init_task /boot/System.map-$(uname -r) | head -5"
+echo ""
+
+echo "=== Method 2: Check /proc/kallsyms (if enabled) ==="
+echo "sudo grep init_task /proc/kallsyms | head -5"
+echo ""
+
+echo "=== Method 3: Install debug symbols ==="
+echo "# First check kernel version"
+echo "uname -r"
+echo ""
+echo "# Install debug symbols package"
+echo "sudo apt update"
+echo "sudo apt install linux-image-$(uname -r)-dbgsym"
+echo ""
+echo "# If that fails, try:"
+echo "sudo apt install linux-image-unsigned-$(uname -r)-dbgsym"
+echo ""
+
+echo "=== Method 4: Use debuginfod (Ubuntu 22.04+) ==="
+echo "# Set debuginfod URL"
+echo "export DEBUGINFOD_URLS=\"https://debuginfod.ubuntu.com\""
+echo ""
+echo "# Then run GDB with debuginfod enabled"
+echo "gdb -ex 'set debuginfod enabled on' -ex 'file /boot/vmlinuz-$(uname -r)' -ex 'p &init_task' -ex 'quit'"
+echo ""
+
+echo "=== Method 5: Extract vmlinux from vmlinuz ==="
+echo "# Some kernels have uncompressed vmlinux available"
+echo "ls -la /usr/lib/debug/boot/vmlinux-$(uname -r)"
+echo ""
+echo "# Or extract it manually"
+echo "sudo apt install linux-tools-$(uname -r)"
+echo "extract-vmlinux /boot/vmlinuz-$(uname -r) > vmlinux"
+echo "gdb vmlinux"
+echo ""
+
+echo "=== Method 6: Use kernel headers ==="
+echo "# Install kernel headers"
+echo "sudo apt install linux-headers-$(uname -r)"
+echo "# Headers contain structure definitions but not addresses"
+echo "ls -la /usr/src/linux-headers-$(uname -r)/"
+echo ""
+
+echo "Try these commands in order until one works!"
