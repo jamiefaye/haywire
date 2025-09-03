@@ -1,45 +1,38 @@
 #!/bin/bash
 
-# Clean QEMU launch script - no external hacking
-# Ready for cloud-init injection
+# Launch QEMU with TCG (Tiny Code Generator) instead of HVF
+# TCG is slower but gives us full control over the guest
 
-echo "Starting QEMU with cloud-init support..."
-echo "Memory will be at: /tmp/haywire-vm-mem for shared memory communication"
+echo "Starting QEMU with TCG (no HVF) for Haywire testing..."
+echo "WARNING: This will be MUCH slower than HVF!"
 echo ""
 
-# Clean up any existing memory file
+# Create memory backend file in RAM (tmpfs)
 MEMFILE="/tmp/haywire-vm-mem"
 MEMSIZE="4G"
+
+# Clean up any existing memory file
 rm -f "$MEMFILE"
 
-# Get script directory
+# Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# Use our built QEMU or fall back to system
+# Launch QEMU with memory backend
+# Use our custom build if it exists, otherwise use system QEMU
 QEMU_BIN="$SCRIPT_DIR/../qemu-mods/qemu-system-aarch64-unsigned"
 if [ ! -f "$QEMU_BIN" ]; then
     QEMU_BIN="qemu-system-aarch64"
-    echo "Using system QEMU"
+    echo "Using system QEMU (custom build not found)"
 else
-    echo "Using custom-built QEMU (now clean, no Haywire)"
+    echo "Using custom QEMU build with Haywire support"
 fi
 
-# Check if seed.iso exists for cloud-init
-# DISABLED for now to avoid SSH key regeneration issues
-CLOUD_INIT=""
-# if [ -f "/tmp/seed.iso" ]; then
-#     echo "Found cloud-init seed.iso - will auto-inject code!"
-#     CLOUD_INIT="-drive file=/tmp/seed.iso,if=virtio,format=raw"
-# else
-#     echo "No seed.iso found - VM will boot normally"
-#     echo "To inject code, create seed.iso with cloud-init data"
-# fi
-echo "Cloud-init disabled to preserve SSH keys"
+echo "Starting with TCG (software emulation) - NO HVF!"
+echo ""
 
 $QEMU_BIN \
     -M virt,highmem=on \
-    -accel hvf \
-    -cpu host \
+    -cpu cortex-a72 \
     -m $MEMSIZE \
     -object memory-backend-file,id=mem,size=$MEMSIZE,mem-path=$MEMFILE,share=on,prealloc=on \
     -numa node,memdev=mem \
@@ -53,17 +46,18 @@ $QEMU_BIN \
     -device intel-hda \
     -device hda-duplex \
     -drive if=virtio,format=qcow2,file="$SCRIPT_DIR/../vms/ubuntu_arm64.qcow2" \
-    $CLOUD_INIT \
     -boot c \
     -qmp tcp:localhost:4445,server=on,wait=off \
-    -monitor telnet:localhost:4444,server,wait=off \
+    -monitor telnet:localhost:4444,server=on,wait=off \
+    -gdb tcp::1234 \
     -chardev socket,path=/tmp/qga.sock,server=on,wait=off,id=qga0 \
     -device virtio-serial \
     -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0 \
     -netdev user,id=net0,hostfwd=tcp::2222-:22 \
     -device virtio-net-pci,netdev=net0,romfile= \
-    -serial stdio \
-    -name "Ubuntu-ARM64-Clean"
+    -monitor stdio \
+    -name "Ubuntu-ARM64-TCG-NoHVF"
 
-echo "Cleaning up..."
+# Clean up memory file on exit
+echo "Cleaning up memory backend file..."
 rm -f "$MEMFILE"

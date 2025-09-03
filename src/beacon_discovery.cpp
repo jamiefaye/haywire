@@ -9,28 +9,25 @@
 
 #define MEMORY_FILE "/tmp/haywire-vm-mem"
 #define PAGE_SIZE 4096
-#define MAGIC1 0x3142FACE
-#define MAGIC2 0xCAFEBABE
-#define MAGIC3 0xFEEDFACE
-#define MAGIC4 0xBAADF00D
+#define MAGIC1 0x3142FACE  // Little-endian bytes: CEFA4231
+#define MAGIC2 0xCAFEBABE  // Little-endian bytes: BEBAFECA
+#define MAGIC3 0xFEEDFACE  // Little-endian bytes: CEFAEDFE
+#define MAGIC4 0xBAADF00D  // Little-endian bytes: 0DF0ADBA
 
 struct PageBeacon {
-    uint32_t magic1;
-    uint32_t magic2;
-    uint32_t session_id;
-    uint32_t page_index;
-    uint64_t timestamp;
-    uint32_t process_count;
-    uint32_t update_counter;
-    uint32_t magic3;
-    uint32_t magic4;
-    uint8_t padding1[20];
-    char hostname[64];
-    uint32_t kernel_version[4];
-    uint32_t cpu_count;
-    uint32_t mem_total_mb;
-    uint8_t padding2[168];
-    uint8_t reserved[3776];
+    uint32_t magic1;        // 0x3142FACE    // 4 bytes
+    uint32_t magic2;        // 0xCAFEBABE    // 4 bytes
+    uint32_t session_id;                     // 4 bytes
+    uint32_t protocol_version;               // 4 bytes
+    uint64_t timestamp;                      // 8 bytes
+    uint32_t process_count;                  // 4 bytes
+    uint32_t update_counter;                 // 4 bytes
+    uint32_t magic3;        // 0xFEEDFACE    // 4 bytes
+    uint32_t magic4;        // 0xBAADF00D    // 4 bytes
+    char hostname[64];                       // 64 bytes
+    // Total so far: 40 + 64 = 104 bytes
+    // Need: 4096 - 104 = 3992 bytes
+    uint8_t padding[3992];
 } __attribute__((packed));
 
 static_assert(sizeof(PageBeacon) == PAGE_SIZE, "PageBeacon must be exactly 4096 bytes");
@@ -99,10 +96,10 @@ public:
                 beacon_offset = offset;
                 session_id = beacon->session_id;
                 
-                printf("Found beacon session 0x%08X at offset 0x%lX\n", 
-                       session_id, offset);
+                printf("Found beacon session 0x%08X at offset 0x%llX\n", 
+                       session_id, (unsigned long long)offset);
                 printf("  Hostname: %s\n", beacon->hostname);
-                printf("  Page index: %u\n", beacon->page_index);
+                printf("  Protocol version: %u\n", beacon->protocol_version);
                 printf("  Process count: %u\n", beacon->process_count);
                 
                 // Count contiguous pages
@@ -126,7 +123,7 @@ public:
             PageBeacon* beacon = (PageBeacon*)(mem + page * PAGE_SIZE);
             
             if (beacon->magic1 != MAGIC1 || beacon->magic2 != MAGIC2 ||
-                beacon->session_id != session_id || beacon->page_index != count) {
+                beacon->session_id != session_id) {
                 break;
             }
             count++;
