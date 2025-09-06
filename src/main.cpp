@@ -75,7 +75,21 @@ int main(int argc, char** argv) {
         pidSelector.SetSelectionCallback([&](uint32_t pid) {
             std::cout << "Switching to process " << pid << " mode\n";
             overview.SetProcessMode(true, pid);
-            // TODO: Load process sections from beacon instead of guest agent
+            
+            // Load process sections from camera beacon data
+            std::vector<BeaconSectionEntry> sections;
+            if (beaconReader->GetCameraProcessSections(1, pid, sections)) {
+                std::cout << "Loaded " << sections.size() << " memory sections from camera\n";
+                
+                // TODO: Convert BeaconSectionEntry to GuestMemoryRegion for visualization
+                // For now, just print what we got
+                for (const auto& section : sections) {
+                    std::cout << "  Section: 0x" << std::hex << section.start_addr 
+                              << "-0x" << section.end_addr << " " << section.pathname << std::dec << "\n";
+                }
+            } else {
+                std::cout << "Waiting for camera data for PID " << pid << "\n";
+            }
         });
     } else {
         std::cerr << "Failed to initialize beacon reader - PID selector disabled\n";

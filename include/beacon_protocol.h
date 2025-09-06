@@ -21,7 +21,6 @@ extern "C" {
 // Core constants
 #define BEACON_PAGE_SIZE        4096
 #define BEACON_MAGIC            0x3142FACE
-#define BEACON_DISCOVERY_MAGIC  0x44796148  // "HayD"
 
 // Beacon categories
 #define BEACON_CATEGORY_MASTER      0
@@ -43,8 +42,8 @@ extern "C" {
 #define BEACON_PATH_MAX_STORED   256   // Truncated path length
 #define BEACON_MAX_SECTIONS      100   // Max memory sections per process
 
-// PID list configuration
-#define BEACON_MAX_PIDS_PER_PAGE ((BEACON_PAGE_SIZE - 32 - 4) / 4)  // 1010 PIDs
+// PID list configuration  
+#define BEACON_MAX_PIDS_PER_PAGE ((BEACON_PAGE_SIZE - 32 - 8) / 4)  // 1009 PIDs (reduced by 1 for timestamp)
 #define BEACON_PID_GENERATIONS   10    // Keep 10 generations of PID lists
 
 
@@ -103,9 +102,9 @@ typedef struct BeaconPage {
     uint32_t session_id;
     uint32_t category;                       // Which category this belongs to
     uint32_t category_index;                 // Index within the category
+    uint32_t timestamp;                      // Unix timestamp from discovery page
     uint32_t sequence;                       // Sequence number
     uint32_t data_size;                      // Valid data size in this page
-    uint32_t reserved;                       // Padding/alignment
     uint8_t data[4060];                      // Actual data (4096 - 32 - 4 = 4060)
     uint32_t version_bottom;                 // Must match version_top for valid page
 } BeaconPage;
@@ -116,9 +115,10 @@ typedef struct BeaconPIDListPage {
     uint32_t version_top;                    // Version number at top
     uint32_t session_id;     
     uint32_t category;                       // BEACON_CATEGORY_PID
+    uint32_t category_index;                 // Page index within PID category (was page_number)
+    uint32_t timestamp;                      // Unix timestamp from discovery page
     uint32_t generation;                     // Which generation of PID list
     uint32_t total_pids;                     // Total PIDs in this generation
-    uint32_t page_number;                    // Page N of M in this generation
     uint32_t pids_in_page;                   // Number of PIDs in this page
     uint32_t pids[BEACON_MAX_PIDS_PER_PAGE]; // Array of process IDs (1010 entries)
     uint32_t version_bottom;                 // Must match version_top
@@ -127,21 +127,27 @@ typedef struct BeaconPIDListPage {
 // Camera control page (exactly 4096 bytes)
 typedef struct BeaconCameraControlPage {
     uint32_t magic;                          // BEACON_MAGIC
-    uint32_t version_top;
+    uint32_t version_top;                    // Version number at top
+    uint32_t session_id;                     // Session ID (companion PID)
+    uint32_t category;                       // BEACON_CATEGORY_CAMERA1 or CAMERA2
+    uint32_t category_index;                 // Always 0 (control page)
+    uint32_t timestamp;                      // Unix timestamp from discovery page
     uint32_t command;                        // BEACON_CAMERA_CMD_*
     uint32_t target_pid;                     // PID to focus on
     uint32_t status;                         // BEACON_CAMERA_STATUS_*
     uint32_t current_pid;                    // Currently watching PID
-    uint8_t padding[4068];                   // Pad to 4096 bytes
-    uint32_t version_bottom;
+    uint8_t padding[4052];                   // Pad to 4096 bytes (reduced by 4)
+    uint32_t version_bottom;                 // Must match version_top
 } BeaconCameraControlPage;
 
 // Discovery page - first page of MASTER category (exactly 4096 bytes)
 typedef struct BeaconDiscoveryPage {
-    uint32_t beacon_magic;                   // BEACON_MAGIC at page boundary
-    uint32_t discovery_magic;                // BEACON_DISCOVERY_MAGIC ("HayD")
-    uint32_t version;
-    uint32_t pid;
+    uint32_t magic;                          // BEACON_MAGIC
+    uint32_t version_top;                    // Version number at top
+    uint32_t session_id;                     // Session ID (companion PID)
+    uint32_t category;                       // BEACON_CATEGORY_MASTER (0)
+    uint32_t category_index;                 // Always 0 (discovery page)
+    uint32_t timestamp;                      // Unix timestamp when created
     
     // Category information
     struct {
@@ -151,7 +157,8 @@ typedef struct BeaconDiscoveryPage {
         uint32_t sequence;                   // Sequence number for tear detection
     } categories[BEACON_NUM_CATEGORIES];
     
-    uint8_t padding[4000];                   // Pad to 4096 bytes (4096 - 16 - 80)
+    uint8_t padding[3988];                   // Pad to 4096 bytes (4096 - 24 - 80 - 4)
+    uint32_t version_bottom;                 // Must match version_top
 } BeaconDiscoveryPage;
 
 #pragma pack(pop)

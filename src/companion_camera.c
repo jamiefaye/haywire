@@ -66,6 +66,7 @@ BeaconPage* write_to_category(uint32_t category_id, void* data, size_t size);
 static DiscoveryPage* discovery = NULL;
 static CategoryArray categories[BEACON_NUM_CATEGORIES];
 static uint32_t session_id = 0;
+static uint32_t session_timestamp = 0;  // Set once at startup
 static volatile int running = 1;
 static uint32_t current_generation = 0;
 static uint32_t pid_write_offset = 0;  // Current write position in PID category
@@ -526,9 +527,10 @@ void write_pid_generation(uint32_t* all_pids, uint32_t total_pids) {
         page->version_top = version;
         page->session_id = session_id;
         page->category = BEACON_CATEGORY_PID;
+        page->category_index = page_num;  // Now in standard position!
+        page->timestamp = discovery->timestamp;
         page->generation = current_generation;
         page->total_pids = total_pids;
-        page->page_number = page_num;
         
         // Fill in PIDs for this page
         uint32_t pids_this_page = total_pids - pids_written;
@@ -578,6 +580,7 @@ BeaconPage* write_to_category(uint32_t category_id, void* data, size_t size) {
     page->session_id = session_id;
     page->category = category_id;
     page->category_index = idx;
+    page->timestamp = session_timestamp;  // Use session timestamp
     page->sequence = cat->sequence++;
     page->data_size = (size > sizeof(page->data)) ? sizeof(page->data) : size;
     
@@ -604,6 +607,7 @@ int main() {
     signal(SIGTERM, sighandler);
     
     session_id = getpid();
+    session_timestamp = (uint32_t)time(NULL);  // Set once at startup
     
     // Calculate total pages needed
     uint32_t page_counts[BEACON_NUM_CATEGORIES] = {
@@ -632,6 +636,8 @@ int main() {
            total_pages, total_size/(1024*1024), aligned);
     memset(aligned, 0, total_size);
     
+    printf("Discovery page will be at %p\n", aligned);
+    
     // Set up category arrays
     uint8_t* current = (uint8_t*)aligned;
     for (int i = 0; i < BEACON_NUM_CATEGORIES; i++) {
@@ -645,12 +651,14 @@ int main() {
     // First page of MASTER category is discovery
     discovery = (DiscoveryPage*)categories[BEACON_CATEGORY_MASTER].pages;
     
-    // Initialize discovery page - beacon magic at boundary, then "H a y D"
-    discovery->beacon_magic = BEACON_MAGIC;  // Same as all beacon pages
-    uint8_t disc_bytes[4] = {0x48, 0x61, 0x79, 0x44};  // 'H', 'a', 'y', 'D'
-    memcpy(&discovery->discovery_magic, disc_bytes, 4);
-    discovery->version = 1;
-    discovery->pid = session_id;
+    // Initialize discovery page with standard header
+    discovery->magic = BEACON_MAGIC;
+    discovery->version_top = 1;
+    discovery->session_id = session_id;
+    discovery->category = BEACON_CATEGORY_MASTER;  // Category 0
+    discovery->category_index = 0;  // Discovery page
+    discovery->timestamp = session_timestamp;  // Use session timestamp
+    discovery->version_bottom = 1;  // Match version_top
     
     // Fill in category information in discovery
     uint32_t offset = 0;
@@ -659,6 +667,8 @@ int main() {
         discovery->categories[i].page_count = categories[i].page_count;
         discovery->categories[i].write_index = 0;
         discovery->categories[i].sequence = 0;
+        printf("  Discovery: Category %d - offset=%u, page_count=%u\n", 
+               i, offset, categories[i].page_count);
         offset += categories[i].page_count * PAGE_SIZE;
     }
     
@@ -669,15 +679,6 @@ int main() {
     for (int cat = 0; cat < BEACON_NUM_CATEGORIES; cat++) {
         int pages_initialized = 0;
         for (int page = 0; page < categories[cat].page_count; page++) {
-            // Skip the first page of MASTER category (it's the discovery page)
-            if (cat == BEACON_CATEGORY_MASTER && page == 0) {
-                // Just touch the discovery page to force it into physical memory
-                volatile uint8_t dummy = ((uint8_t*)discovery)[0];
-                (void)dummy;
-                pages_initialized++;
-                continue;
-            }
-            
             BeaconPage* bp = &categories[cat].pages[page];
             
             // First, zero the entire page to force it into physical memory
@@ -688,6 +689,7 @@ int main() {
             bp->session_id = session_id;
             bp->category = cat;
             bp->category_index = page;
+            bp->timestamp = session_timestamp;  // Set session timestamp
             bp->sequence = 0;  // Will be updated when page is actually written
             bp->data_size = 0;
             bp->version_top = bp->version_bottom = 0;
@@ -699,10 +701,13 @@ int main() {
     
     printf("All beacon pages initialized and forced into physical memory\n");
     
-    // Initialize camera control pages
+    // Initialize camera control pages with standard header
     CameraControlPage* cam1_control = (CameraControlPage*)&categories[BEACON_CATEGORY_CAMERA1].pages[0];
     cam1_control->magic = BEACON_MAGIC;
     cam1_control->version_top = 1;
+    cam1_control->session_id = session_id;
+    cam1_control->category = BEACON_CATEGORY_CAMERA1;
+    cam1_control->category_index = 0;
     cam1_control->command = 0;
     cam1_control->target_pid = 1;
     cam1_control->current_pid = 1;
@@ -712,6 +717,9 @@ int main() {
     CameraControlPage* cam2_control = (CameraControlPage*)&categories[BEACON_CATEGORY_CAMERA2].pages[0];
     cam2_control->magic = BEACON_MAGIC;
     cam2_control->version_top = 1;
+    cam2_control->session_id = session_id;
+    cam2_control->category = BEACON_CATEGORY_CAMERA2;
+    cam2_control->category_index = 0;
     cam2_control->command = 0;
     cam2_control->target_pid = 2;
     cam2_control->current_pid = 2;
@@ -735,14 +743,22 @@ int main() {
     uint32_t cycle = 0;
     while (running) {
         // Update discovery page
-        discovery->beacon_magic = BEACON_MAGIC;
-        uint8_t disc_bytes2[4] = {0x48, 0x61, 0x79, 0x44};  // 'H', 'a', 'y', 'D'
-        memcpy(&discovery->discovery_magic, disc_bytes2, 4);
+        discovery->magic = BEACON_MAGIC;
+        discovery->version_top = 1;
+        discovery->session_id = session_id;
+        discovery->category = BEACON_CATEGORY_MASTER;
+        discovery->category_index = 0;
+        discovery->timestamp = session_timestamp;  // Keep using session timestamp
+        discovery->version_bottom = 1;  // Match version_top
         
         // Update category info in discovery
+        uint32_t cat_offset = 0;
         for (int i = 0; i < BEACON_NUM_CATEGORIES; i++) {
+            discovery->categories[i].base_offset = cat_offset;
+            discovery->categories[i].page_count = categories[i].page_count;
             discovery->categories[i].write_index = categories[i].write_index;
             discovery->categories[i].sequence = categories[i].sequence;
+            cat_offset += categories[i].page_count * PAGE_SIZE;
         }
         
         // Don't refresh hints - they're static after allocation

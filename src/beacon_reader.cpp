@@ -1,5 +1,7 @@
 #include "beacon_reader.h"
 #include <iostream>
+#include <iomanip>
+#include <cstddef>
 #include <cstring>
 #include <fcntl.h>
 #include <unistd.h>
@@ -75,47 +77,76 @@ bool BeaconReader::FindDiscovery() {
 bool BeaconReader::ScanForDiscovery() {
     uint8_t* mem = static_cast<uint8_t*>(memBase);
     
-    // Scan for discovery page (BEACON_MAGIC followed by HAYD_MAGIC)
+    // First, find all discovery pages
+    std::vector<std::pair<size_t, uint32_t>> discoveryPages; // offset, timestamp
+    
     for (size_t offset = 0; offset + PAGE_SIZE <= memSize; offset += PAGE_SIZE) {
-        uint32_t* page = reinterpret_cast<uint32_t*>(mem + offset);
+        BeaconPage* page = reinterpret_cast<BeaconPage*>(mem + offset);
         
-        if (page[0] == BEACON_MAGIC && page[1] == BEACON_DISCOVERY_MAGIC) {
-            // Found discovery page!
-            discovery.offset = offset;
-            discovery.version = page[2];
-            discovery.pid = page[3];
-            
-            // Read category information (starts at offset 16)
-            uint32_t* catInfo = &page[4];
-            for (int i = 0; i < 5; i++) {
-                discovery.categories[i].base_offset = catInfo[i * 4 + 0];
-                discovery.categories[i].page_count = catInfo[i * 4 + 1];
-                discovery.categories[i].write_index = catInfo[i * 4 + 2];
-                discovery.categories[i].sequence = catInfo[i * 4 + 3];
-            }
-            
-            discovery.valid = true;
-            std::cout << "Found discovery page at 0x" << std::hex << offset << std::dec 
-                      << " (page " << offset/PAGE_SIZE << ")\n";
-            std::cout << "  Companion PID: " << discovery.pid << "\n";
-            std::cout << "  PID pages: " << discovery.categories[BEACON_CATEGORY_PID].page_count << "\n";
-            std::cout << "  RoundRobin pages: " << discovery.categories[BEACON_CATEGORY_ROUNDROBIN].page_count << "\n";
-            
-            // Now build page mappings for each category
-            BuildCategoryMappings();
-            
-            // Allocate receiving arrays
-            AllocateCategoryArrays();
-            
-            // Do initial copy of all pages
-            CopyPagesToArrays();
-            
-            return true;
+        if (page->magic == BEACON_MAGIC && page->category == BEACON_CATEGORY_MASTER && page->category_index == 0) {
+            BeaconDiscoveryPage* dp = reinterpret_cast<BeaconDiscoveryPage*>(page);
+            discoveryPages.push_back({offset, dp->timestamp});
+            std::cout << "Found discovery page at offset 0x" << std::hex << offset << std::dec 
+                      << " with timestamp " << dp->timestamp << " (PID " << dp->session_id << ")\n";
         }
     }
     
-    std::cerr << "Discovery page not found\n";
-    return false;
+    if (discoveryPages.empty()) {
+        std::cout << "No discovery pages found\n";
+        return false;
+    }
+    
+    // Select the discovery page with the most recent timestamp
+    auto newest = std::max_element(discoveryPages.begin(), discoveryPages.end(),
+                                   [](const auto& a, const auto& b) { return a.second < b.second; });
+    
+    size_t bestOffset = newest->first;
+    uint32_t bestTimestamp = newest->second;
+    
+    std::cout << "Selected discovery page at offset 0x" << std::hex << bestOffset << std::dec 
+              << " with timestamp " << bestTimestamp << " (newest of " << discoveryPages.size() << " found)\n";
+    
+    // Now load the selected discovery page
+    BeaconDiscoveryPage* dp = reinterpret_cast<BeaconDiscoveryPage*>(mem + bestOffset);
+    
+    discovery.offset = bestOffset;
+    discovery.version = dp->version_top;
+    discovery.pid = dp->session_id;
+    discovery.timestamp = dp->timestamp;  // Store timestamp for filtering
+    
+    std::cout << "  Reading discovery page categories:\n";
+    
+    // Direct memory read approach to bypass potential struct alignment issues
+    uint32_t* cat_data = (uint32_t*)&dp->categories[0];
+    for (int i = 0; i < 5; i++) {
+        // Each category has 4 uint32_t fields
+        discovery.categories[i].base_offset = cat_data[i * 4 + 0];
+        discovery.categories[i].page_count = cat_data[i * 4 + 1];
+        discovery.categories[i].write_index = cat_data[i * 4 + 2];
+        discovery.categories[i].sequence = cat_data[i * 4 + 3];
+        std::cout << "    Category " << i << ": offset=" << discovery.categories[i].base_offset 
+                  << ", page_count=" << discovery.categories[i].page_count << "\n";
+    }
+    
+    discovery.valid = true;
+    std::cout << "Selected discovery page:\n";
+    std::cout << "  Offset: 0x" << std::hex << discovery.offset << std::dec 
+              << " (page " << discovery.offset/PAGE_SIZE << ")\n";
+    std::cout << "  Companion PID: " << discovery.pid << "\n";
+    std::cout << "  Timestamp: " << discovery.timestamp << "\n";
+    std::cout << "  PID pages: " << discovery.categories[BEACON_CATEGORY_PID].page_count << "\n";
+    std::cout << "  RoundRobin pages: " << discovery.categories[BEACON_CATEGORY_ROUNDROBIN].page_count << "\n";
+    
+    // Now build page mappings for each category
+    BuildCategoryMappings();
+    
+    // Allocate receiving arrays
+    AllocateCategoryArrays();
+    
+    // Do initial copy of all pages
+    CopyPagesToArrays();
+    
+    return true;
 }
 
 void BeaconReader::BuildCategoryMappings() {
@@ -130,6 +161,11 @@ void BeaconReader::BuildCategoryMappings() {
         if (*magic == BEACON_MAGIC) {
             totalBeacons++;
             BeaconPage* page = reinterpret_cast<BeaconPage*>(mem + offset);
+            
+            // Skip pages from different timestamps (stale beacons)
+            if (page->timestamp != discovery.timestamp) {
+                continue;  // Different timestamp, skip this stale beacon
+            }
             
             // Extract category and page index
             uint32_t category = page->category;
@@ -509,6 +545,58 @@ uint32_t BeaconReader::GetCameraFocus(int cameraId) {
     }
     
     return 0;
+}
+
+bool BeaconReader::GetCameraProcessSections(int cameraId, uint32_t pid, std::vector<BeaconSectionEntry>& sections) {
+    if (!memBase || !discovery.valid) return false;
+    if (cameraId < 1 || cameraId > 2) return false;
+    
+    uint32_t category = (cameraId == 1) ? BEACON_CATEGORY_CAMERA1 : BEACON_CATEGORY_CAMERA2;
+    auto& camArray = categoryArrays[category];
+    
+    if (!camArray.initialized || camArray.validPages == 0) {
+        return false;
+    }
+    
+    sections.clear();
+    
+    // Skip control page (page 0), start reading from page 1
+    for (uint32_t pageIdx = 1; pageIdx < camArray.validPages; pageIdx++) {
+        if (!camArray.isPageValid(pageIdx)) continue;
+        
+        BeaconPage* page = reinterpret_cast<BeaconPage*>(camArray.getPage(pageIdx));
+        if (page->data_size == 0) continue;
+        
+        // Parse data in this page
+        uint8_t* data = page->data;
+        uint32_t offset = 0;
+        
+        while (offset + sizeof(BeaconProcessEntry) <= page->data_size) {
+            // Check if this is a process entry
+            BeaconProcessEntry* proc = reinterpret_cast<BeaconProcessEntry*>(data + offset);
+            if (proc->pid == pid) {
+                // Found the process, now read its sections
+                offset += sizeof(BeaconProcessEntry);
+                
+                for (uint32_t i = 0; i < proc->num_sections && offset + sizeof(BeaconSectionEntry) <= page->data_size; i++) {
+                    BeaconSectionEntry* section = reinterpret_cast<BeaconSectionEntry*>(data + offset);
+                    sections.push_back(*section);
+                    offset += sizeof(BeaconSectionEntry);
+                }
+                return true;
+            }
+            offset += sizeof(BeaconProcessEntry);
+        }
+    }
+    
+    return false;
+}
+
+bool BeaconReader::GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<uint64_t, uint64_t>& ptes) {
+    // TODO: Implement PTE reading from RLE compressed data
+    // For now, return empty - we'll implement this when we need the crunched view
+    ptes.clear();
+    return true;
 }
 
 void BeaconReader::AllocateCategoryArrays() {

@@ -60,6 +60,12 @@ public:
     // Get current camera focus
     uint32_t GetCameraFocus(int cameraId);
     
+    // Get process sections from camera data
+    bool GetCameraProcessSections(int cameraId, uint32_t pid, std::vector<BeaconSectionEntry>& sections);
+    
+    // Get process PTEs from camera data (for crunched view)
+    bool GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<uint64_t, uint64_t>& ptes);
+    
 private:
     // Memory mapping
     int memFd;
@@ -71,6 +77,7 @@ private:
         uint64_t offset;
         uint32_t version;
         uint32_t pid;
+        uint32_t timestamp;
         
         struct CategoryInfo {
             uint32_t base_offset;
