@@ -109,6 +109,11 @@ struct Response {
     uint8_t padding2[256];   // Pad to 4096 bytes total
 } __attribute__((packed));
 
+// Beacon page placeholder (defined elsewhere)
+struct PageBeacon {
+    uint8_t data[4096];
+} __attribute__((packed));
+
 // Complete shared memory layout
 struct SharedMemoryLayout {
     // Page 0: Beacon (4096 bytes)

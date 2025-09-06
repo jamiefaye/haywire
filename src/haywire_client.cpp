@@ -11,6 +11,9 @@
 
 #include "shm_protocol.h"
 
+#define MEMORY_FILE "/tmp/haywire-vm-mem"
+#define PAGE_SIZE 4096
+
 class HaywireClient {
 private:
     int fd;

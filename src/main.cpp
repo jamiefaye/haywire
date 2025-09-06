@@ -10,6 +10,8 @@
 #include "memory_overview.h"
 #include "hex_overlay.h"
 #include "viewport_translator.h"
+#include "beacon_reader.h"
+#include "pid_selector.h"
 
 using namespace Haywire;
 
@@ -59,6 +61,25 @@ int main(int argc, char** argv) {
     MemoryVisualizer visualizer;
     MemoryOverview overview;
     HexOverlay hexOverlay;
+    
+    // Beacon reader and PID selector
+    auto beaconReader = std::make_shared<BeaconReader>();
+    PIDSelector pidSelector;
+    
+    // Initialize beacon reader
+    if (beaconReader->Initialize()) {
+        std::cout << "Beacon reader initialized successfully\n";
+        pidSelector.SetBeaconReader(beaconReader);
+        
+        // Set callback to switch to process mode when PID is selected
+        pidSelector.SetSelectionCallback([&](uint32_t pid) {
+            std::cout << "Switching to process " << pid << " mode\n";
+            overview.SetProcessMode(true, pid);
+            // TODO: Load process sections from beacon instead of guest agent
+        });
+    } else {
+        std::cerr << "Failed to initialize beacon reader - PID selector disabled\n";
+    }
     
     // Create viewport translator using guest agent
     std::shared_ptr<ViewportTranslator> translator;
@@ -130,6 +151,11 @@ int main(int argc, char** argv) {
                 ImGui::Separator();
                 ImGui::MenuItem("Memory Visualizer", nullptr, &show_memory_view);
                 ImGui::MenuItem("Memory Overview", nullptr, &show_overview);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Process Selector", "P")) {
+                    pidSelector.Show();
+                }
+                ImGui::Separator();
                 ImGui::MenuItem("Metrics", nullptr, &show_metrics);
                 ImGui::MenuItem("Demo Window", nullptr, &show_demo_window);
                 ImGui::EndMenu();
@@ -148,6 +174,21 @@ int main(int argc, char** argv) {
             // Top bar with controls (full width, compact)
             ImGui::BeginChild("ControlBar", ImVec2(0, 60), true);
             visualizer.DrawControlBar(qemu);
+            
+            // Add Process Selector button
+            ImGui::SameLine();
+            ImGui::Separator();
+            ImGui::SameLine();
+            
+            if (ImGui::Button("Process Selector [P]")) {
+                pidSelector.Show();
+            }
+            
+            // Handle 'P' hotkey
+            if (ImGui::IsKeyPressed(ImGuiKey_P) && !ImGui::GetIO().WantTextInput) {
+                pidSelector.ToggleVisible();
+            }
+            
             ImGui::EndChild();
             
             // Bottom section with two panes
@@ -229,6 +270,9 @@ int main(int argc, char** argv) {
         if (show_demo_window) {
             ImGui::ShowDemoWindow(&show_demo_window);
         }
+        
+        // Draw PID selector window if visible
+        pidSelector.Draw();
         
         ImGui::Render();
         int display_w, display_h;
