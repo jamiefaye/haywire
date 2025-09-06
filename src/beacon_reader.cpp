@@ -1,4 +1,5 @@
 #include "beacon_reader.h"
+#include "guest_agent.h"
 #include <iostream>
 #include <iomanip>
 #include <cstddef>
@@ -6,6 +7,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <ctime>
 #include <sys/stat.h>
 #include <algorithm>
 #include <map>
@@ -18,7 +20,7 @@ namespace Haywire {
 // Verify structure sizes match companion expectations
 // These checks are now in beacon_protocol.h
 
-BeaconReader::BeaconReader() : memFd(-1), memBase(nullptr), memSize(0) {
+BeaconReader::BeaconReader() : memFd(-1), memBase(nullptr), memSize(0), companionPid(0), lastCompanionCheck(0) {
     discovery.valid = false;
 }
 
@@ -674,6 +676,105 @@ bool BeaconReader::RefreshCategoryPages() {
     }
     
     return viable;
+}
+
+// Companion management functions
+bool BeaconReader::StartCompanion(GuestAgent* agent) {
+    if (!agent) {
+        std::cout << "No guest agent available for companion startup\n";
+        return false;
+    }
+    
+    if (!agent->IsConnected()) {
+        std::cout << "Guest agent not connected\n";
+        return false;
+    }
+    
+    std::cout << "Starting companion via QGA...\n";
+    
+    // First, stop any existing companion
+    std::string output;
+    agent->ExecuteCommand("killall companion_camera companion_multi companion_v2 2>/dev/null || true", output);
+    
+    // Deploy the source files if they don't exist
+    agent->ExecuteCommand("[ -f /home/ubuntu/companion_camera.c ] || echo 'companion_camera.c not found'", output);
+    if (output.find("not found") != std::string::npos) {
+        std::cout << "Companion source files not found in VM. Please deploy them first.\n";
+        std::cout << "You can use: scp src/companion_camera.c include/beacon_protocol.h vm:~/\n";
+        return false;
+    }
+    
+    // Check if beacon_protocol.h exists
+    agent->ExecuteCommand("[ -f /home/ubuntu/beacon_protocol.h ] || echo 'beacon_protocol.h not found'", output);
+    if (output.find("not found") != std::string::npos) {
+        std::cout << "beacon_protocol.h not found in VM. Please deploy it first.\n";
+        return false;
+    }
+    
+    // Compile the companion
+    std::cout << "Compiling companion in VM...\n";
+    bool success = agent->ExecuteCommand("cd /home/ubuntu && gcc -I. -o companion_camera companion_camera.c", output);
+    if (!success || !output.empty()) {
+        std::cout << "Compilation failed: " << output << "\n";
+        return false;
+    }
+    
+    // Start the companion in background
+    std::cout << "Starting companion process...\n";
+    success = agent->ExecuteCommand("cd /home/ubuntu && nohup ./companion_camera > companion.log 2>&1 & echo $!", output);
+    if (!success) {
+        std::cout << "Failed to start companion\n";
+        return false;
+    }
+    
+    // Extract PID from output
+    try {
+        companionPid = std::stoul(output);
+        lastCompanionCheck = time(nullptr);
+        std::cout << "Started companion with PID " << companionPid << "\n";
+        
+        // Give it a moment to start up
+        usleep(500000); // 500ms
+        
+        return true;
+    } catch (...) {
+        std::cout << "Failed to parse companion PID from: " << output << "\n";
+        companionPid = 0;
+        return false;
+    }
+}
+
+bool BeaconReader::IsCompanionRunning() {
+    if (companionPid == 0) return false;
+    
+    // Don't check too frequently
+    uint32_t now = time(nullptr);
+    if (now - lastCompanionCheck < 5) {
+        return companionPid != 0; // Assume it's still running if we checked recently
+    }
+    
+    lastCompanionCheck = now;
+    
+    // For now, just check if we have a valid discovery page
+    // This is a good indicator that the companion is working
+    return discovery.valid && discovery.pid == companionPid;
+}
+
+bool BeaconReader::StopCompanion(GuestAgent* agent) {
+    if (!agent || companionPid == 0) return true;
+    
+    std::cout << "Stopping companion PID " << companionPid << "...\n";
+    
+    std::string output;
+    std::string killCmd = "kill " + std::to_string(companionPid) + " 2>/dev/null || killall companion_camera 2>/dev/null || true";
+    agent->ExecuteCommand(killCmd, output);
+    
+    companionPid = 0;
+    lastCompanionCheck = 0;
+    discovery.valid = false;
+    
+    std::cout << "Companion stopped\n";
+    return true;
 }
 
 } // namespace Haywire

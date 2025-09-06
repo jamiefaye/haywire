@@ -62,6 +62,9 @@ int main(int argc, char** argv) {
     MemoryOverview overview;
     HexOverlay hexOverlay;
     
+    // Auto-connect to QEMU first (before beacon reader)
+    bool autoConnected = qemu.AutoConnect();
+    
     // Beacon reader and PID selector
     auto beaconReader = std::make_shared<BeaconReader>();
     PIDSelector pidSelector;
@@ -69,6 +72,21 @@ int main(int argc, char** argv) {
     // Initialize beacon reader
     if (beaconReader->Initialize()) {
         std::cout << "Beacon reader initialized successfully\n";
+        
+        // Try to start companion automatically if beacon data is not found
+        if (!beaconReader->FindDiscovery()) {
+            std::cout << "No beacon data found - attempting to start companion...\n";
+            if (qemu.IsGuestAgentConnected()) {
+                beaconReader->StartCompanion(qemu.GetGuestAgent());
+                // Give companion time to start and create beacon data
+                sleep(2);
+                beaconReader->FindDiscovery();
+            } else {
+                std::cout << "Guest agent not connected - cannot auto-start companion\n";
+                std::cout << "You can manually start the companion in the VM or ensure QGA is running\n";
+            }
+        }
+        
         pidSelector.SetBeaconReader(beaconReader);
         
         // Set callback to switch to process mode when PID is selected
@@ -97,9 +115,6 @@ int main(int argc, char** argv) {
     
     // Create viewport translator using guest agent
     std::shared_ptr<ViewportTranslator> translator;
-    
-    // Auto-connect on startup
-    bool autoConnected = qemu.AutoConnect();
     
     // If connected and guest agent available, create translator
     if (autoConnected && qemu.IsGuestAgentConnected()) {

@@ -51,7 +51,7 @@ echo "Using UEFI firmware: $UEFI_CODE"
     -accel hvf \
     -cpu host \
     -m $MEMORY \
-    -object memory-backend-file,id=mem,size=$MEMORY,mem-path=/tmp/haywire-vm-mem,share=on \
+    -object memory-backend-file,id=mem,size=$MEMORY,mem-path=/tmp/haywire-vm-mem,share=on,prealloc=on \
     -numa node,memdev=mem \
     -smp $CORES \
     -bios "$UEFI_CODE" \

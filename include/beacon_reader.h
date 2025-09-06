@@ -66,11 +66,20 @@ public:
     // Get process PTEs from camera data (for crunched view)
     bool GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<uint64_t, uint64_t>& ptes);
     
+    // Companion management
+    bool StartCompanion(class GuestAgent* agent);
+    bool IsCompanionRunning();
+    bool StopCompanion(class GuestAgent* agent);
+    
 private:
     // Memory mapping
     int memFd;
     void* memBase;
     size_t memSize;
+    
+    // Companion management
+    uint32_t companionPid;
+    uint32_t lastCompanionCheck;
     
     // Discovery information
     struct DiscoveryInfo {
