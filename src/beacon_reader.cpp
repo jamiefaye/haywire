@@ -696,32 +696,48 @@ bool BeaconReader::StartCompanion(GuestAgent* agent) {
     std::string output;
     agent->ExecuteCommand("killall companion_camera companion_multi companion_v2 2>/dev/null || true", output);
     
-    // Deploy the source files if they don't exist
-    agent->ExecuteCommand("[ -f /home/ubuntu/companion_camera.c ] || echo 'companion_camera.c not found'", output);
-    if (output.find("not found") != std::string::npos) {
-        std::cout << "Companion source files not found in VM. Please deploy them first.\n";
-        std::cout << "You can use: scp src/companion_camera.c include/beacon_protocol.h vm:~/\n";
-        return false;
-    }
+    // Check if companion binary already exists
+    agent->ExecuteCommand("[ -x /home/ubuntu/companion_camera ] && echo 'BINARY_EXISTS'", output);
     
-    // Check if beacon_protocol.h exists
-    agent->ExecuteCommand("[ -f /home/ubuntu/beacon_protocol.h ] || echo 'beacon_protocol.h not found'", output);
-    if (output.find("not found") != std::string::npos) {
-        std::cout << "beacon_protocol.h not found in VM. Please deploy it first.\n";
-        return false;
-    }
-    
-    // Compile the companion
-    std::cout << "Compiling companion in VM...\n";
-    bool success = agent->ExecuteCommand("cd /home/ubuntu && gcc -I. -o companion_camera companion_camera.c", output);
-    if (!success || !output.empty()) {
-        std::cout << "Compilation failed: " << output << "\n";
-        return false;
+    if (output.find("BINARY_EXISTS") == std::string::npos) {
+        // Binary doesn't exist - need to check for source and compile
+        std::cout << "Companion binary not found, checking source files...\n";
+        
+        // Check if companion_camera.c exists
+        agent->ExecuteCommand("[ -f /home/ubuntu/companion_camera.c ] || echo 'SOURCE_MISSING'", output);
+        if (output.find("SOURCE_MISSING") != std::string::npos) {
+            std::cout << "companion_camera.c not found in VM. Please deploy:\n";
+            std::cout << "  scp src/companion_camera.c vm:~/\n";
+            std::cout << "  scp include/beacon_protocol.h vm:~/\n";
+            return false;
+        }
+        
+        // Check if beacon_protocol.h exists
+        agent->ExecuteCommand("[ -f /home/ubuntu/beacon_protocol.h ] || echo 'HEADER_MISSING'", output);
+        if (output.find("HEADER_MISSING") != std::string::npos) {
+            std::cout << "beacon_protocol.h not found in VM. Please deploy:\n";
+            std::cout << "  scp include/beacon_protocol.h vm:~/\n";
+            return false;
+        }
+        
+        // Compile the companion
+        std::cout << "Compiling companion in VM...\n";
+        agent->ExecuteCommand("cd /home/ubuntu && gcc -O2 -o companion_camera companion_camera.c 2>&1", output);
+        
+        // Verify binary was created
+        agent->ExecuteCommand("[ -x /home/ubuntu/companion_camera ] && echo 'COMPILE_SUCCESS'", output);
+        if (output.find("COMPILE_SUCCESS") == std::string::npos) {
+            std::cout << "Compilation failed\n";
+            return false;
+        }
+        std::cout << "Companion compiled successfully\n";
+    } else {
+        std::cout << "Using existing companion binary\n";
     }
     
     // Start the companion in background
     std::cout << "Starting companion process...\n";
-    success = agent->ExecuteCommand("cd /home/ubuntu && nohup ./companion_camera > companion.log 2>&1 & echo $!", output);
+    bool success = agent->ExecuteCommand("cd /home/ubuntu && nohup ./companion_camera > companion.log 2>&1 & echo $!", output);
     if (!success) {
         std::cout << "Failed to start companion\n";
         return false;
