@@ -146,6 +146,10 @@ int main(int argc, char** argv) {
     auto lastTime = std::chrono::high_resolution_clock::now();
     int frameCount = 0;
     
+    // Track beacon refresh timing
+    auto lastBeaconRefresh = std::chrono::high_resolution_clock::now();
+    const auto beaconRefreshInterval = std::chrono::seconds(2); // Refresh every 2 seconds
+    
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         
@@ -156,6 +160,17 @@ int main(int argc, char** argv) {
             fps = frameCount / delta;
             frameCount = 0;
             lastTime = currentTime;
+        }
+        
+        // Periodically refresh beacon data
+        if (currentTime - lastBeaconRefresh > beaconRefreshInterval) {
+            lastBeaconRefresh = currentTime;
+            
+            // Rescan beacon data
+            if (beaconReader->FindDiscovery()) {
+                // Beacon data refreshed - process list will update automatically
+                // PIDSelector will see the new data next time it's opened
+            }
         }
         
         ImGui_ImplOpenGL3_NewFrame();
