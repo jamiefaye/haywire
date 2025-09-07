@@ -46,24 +46,25 @@ set(IMGUI_SOURCES
     ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
-# Capstone (optional for now)
+# Capstone (disabled for now - not needed yet)
 find_package(PkgConfig)
-if(PKG_CONFIG_FOUND)
-    pkg_check_modules(CAPSTONE capstone)
-endif()
-
-# Fallback for Homebrew on Apple Silicon
-if(NOT CAPSTONE_FOUND AND APPLE)
-    find_path(CAPSTONE_INCLUDE_DIR capstone/capstone.h
-        PATHS /opt/homebrew/include /usr/local/include)
-    find_library(CAPSTONE_LIBRARY capstone
-        PATHS /opt/homebrew/lib /usr/local/lib)
-    if(CAPSTONE_INCLUDE_DIR AND CAPSTONE_LIBRARY)
-        set(CAPSTONE_FOUND TRUE)
-        set(CAPSTONE_INCLUDE_DIRS ${CAPSTONE_INCLUDE_DIR})
-        set(CAPSTONE_LIBRARIES ${CAPSTONE_LIBRARY})
-    endif()
-endif()
+# if(PKG_CONFIG_FOUND)
+#     pkg_check_modules(CAPSTONE capstone)
+# endif()
+# 
+# # Fallback for Homebrew on Apple Silicon
+# if(NOT CAPSTONE_FOUND AND APPLE)
+#     find_path(CAPSTONE_INCLUDE_DIR capstone/capstone.h
+#         PATHS /opt/homebrew/include /usr/local/include)
+#     find_library(CAPSTONE_LIBRARY capstone
+#         PATHS /opt/homebrew/lib /usr/local/lib)
+#     if(CAPSTONE_INCLUDE_DIR AND CAPSTONE_LIBRARY)
+#         set(CAPSTONE_FOUND TRUE)
+#         set(CAPSTONE_INCLUDE_DIRS ${CAPSTONE_INCLUDE_DIR})
+#         set(CAPSTONE_LIBRARIES ${CAPSTONE_LIBRARY})
+#     endif()
+# endif()
+set(CAPSTONE_FOUND FALSE)
 
 # JSON library (using nlohmann/json)
 include(FetchContent)

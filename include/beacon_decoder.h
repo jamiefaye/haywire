@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <vector>
+#include <map>
 #include <cstring>
 
 namespace Haywire {
@@ -125,17 +126,22 @@ private:
     
     // Storage for decoded data
     std::vector<PIDEntry> pidEntries;
-    std::vector<SectionEntry> sectionEntries;
-    std::vector<PTEEntry> pteEntries;
+    
+    // For camera data: track sections with their sequence numbers
+    // Key is a hash of the section (start_va + size), value is section + seq
+    std::map<uint64_t, std::pair<SectionEntry, uint32_t>> sectionMap;
+    std::vector<PTEEntry> pteEntries;  // PTEs follow section sequence
     std::vector<CameraHeaderEntry> cameraHeaders;
     
     // Track most recent data
     uint64_t lastTimestamp;
     uint32_t lastGeneration;
     uint32_t lastWriteSeq;
+    uint32_t currentPageSeq;  // Sequence number of current page being processed
     
     // Current camera context (for associating sections/PTEs with PIDs)
     uint32_t currentCameraPID;
+    uint32_t lastCameraPID;  // To detect when camera focus changes
 };
 
 } // namespace Haywire

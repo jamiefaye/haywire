@@ -7,7 +7,8 @@
 namespace Haywire {
 
 BeaconDecoder::BeaconDecoder() 
-    : lastTimestamp(0), lastGeneration(0), lastWriteSeq(0), currentCameraPID(0) {
+    : lastTimestamp(0), lastGeneration(0), lastWriteSeq(0), currentPageSeq(0),
+      currentCameraPID(0), lastCameraPID(0) {
 }
 
 BeaconDecoder::~BeaconDecoder() {
@@ -20,7 +21,7 @@ bool BeaconDecoder::ScanMemory(void* memBase, size_t memSize) {
     
     // Clear old data
     pidEntries.clear();
-    sectionEntries.clear();
+    sectionMap.clear();
     pteEntries.clear();
     cameraHeaders.clear();
     
@@ -37,7 +38,7 @@ bool BeaconDecoder::ScanMemory(void* memBase, size_t memSize) {
     if (validPages > 0) {
         std::cout << "Decoded " << validPages << " beacon pages: "
                   << pidEntries.size() << " PIDs, "
-                  << sectionEntries.size() << " sections, "
+                  << sectionMap.size() << " sections, "
                   << pteEntries.size() << " PTEs\n";
         return true;
     }
@@ -67,6 +68,7 @@ bool BeaconDecoder::DecodePage(const uint8_t* pageData) {
         lastWriteSeq = header->write_seq;
     }
     lastTimestamp = header->timestamp_ns;
+    currentPageSeq = header->write_seq;  // Track for section updates
     
     // Process entries based on observer type
     const uint8_t* dataPtr = pageData + header->data_offset;
@@ -147,13 +149,20 @@ void BeaconDecoder::DecodePIDEntry(const uint8_t* data) {
 void BeaconDecoder::DecodeSectionEntry(const uint8_t* data) {
     const SectionEntry* entry = reinterpret_cast<const SectionEntry*>(data);
     
-    // Associate with current camera PID if set
-    if (currentCameraPID != 0 && entry->pid == 0) {
-        SectionEntry modEntry = *entry;
-        modEntry.pid = currentCameraPID;
-        sectionEntries.push_back(modEntry);
-    } else {
-        sectionEntries.push_back(*entry);
+    // Create a modified entry with current camera PID if needed
+    SectionEntry section = *entry;
+    if (currentCameraPID != 0 && section.pid == 0) {
+        section.pid = currentCameraPID;
+    }
+    
+    // Create a key based on va_start and size
+    uint64_t key = (section.va_start << 16) ^ (section.va_end - section.va_start);
+    
+    // Check if we have this section already
+    auto it = sectionMap.find(key);
+    if (it == sectionMap.end() || it->second.second < currentPageSeq) {
+        // Either new section or newer version - update it
+        sectionMap[key] = std::make_pair(section, currentPageSeq);
     }
 }
 
@@ -164,13 +173,22 @@ void BeaconDecoder::DecodePTEEntry(const uint8_t* data) {
 
 void BeaconDecoder::DecodeCameraHeader(const uint8_t* data) {
     const CameraHeaderEntry* entry = reinterpret_cast<const CameraHeaderEntry*>(data);
+    
+    // If camera PID changes, clear all old camera data
+    if (entry->pid != lastCameraPID && lastCameraPID != 0) {
+        sectionMap.clear();
+        pteEntries.clear();
+    }
+    
     cameraHeaders.push_back(*entry);
     currentCameraPID = entry->pid; // Set context for following sections/PTEs
+    lastCameraPID = entry->pid;
 }
 
 std::vector<SectionEntry> BeaconDecoder::GetSectionsForPID(uint32_t pid) const {
     std::vector<SectionEntry> result;
-    for (const auto& section : sectionEntries) {
+    for (const auto& pair : sectionMap) {
+        const SectionEntry& section = pair.second.first;
         if (section.pid == pid) {
             result.push_back(section);
         }

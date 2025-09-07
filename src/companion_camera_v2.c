@@ -123,17 +123,18 @@ int main() {
         return 1;
     }
     
-    // Initialize encoder as PID scanner for now
-    uint32_t observer_type = OBSERVER_PID_SCANNER;
+    // Initialize encoder as camera (does both PID scanning and memory maps)
+    uint32_t observer_type = OBSERVER_CAMERA;
     beacon_encoder_init(&encoder, observer_type, 512, mem_base, mem_size);
     
-    printf("PID scanner started (type=%u)\n", observer_type);
+    printf("Camera %d started (type=%u)\n", CAMERA_ID, observer_type);
     
     // Default to init process if no target set
     target_pid = 1;
     
-    // Main loop - just scan PIDs for now
+    // Main loop - scan PIDs and camera target
     while (keep_running) {
+        // First, scan all PIDs
         DIR* proc_dir = opendir("/proc");
         if (!proc_dir) {
             perror("opendir /proc");
@@ -174,10 +175,15 @@ int main() {
         
         closedir(proc_dir);
         
+        // Then scan target process memory maps (camera functionality)
+        if (target_pid > 0) {
+            scan_process_memory(target_pid);
+        }
+        
         // Flush to ensure data is written
         beacon_encoder_flush(&encoder);
         
-        printf("Scanned %d PIDs\n", pid_count);
+        printf("Scanned %d PIDs, camera focused on PID %u\n", pid_count, target_pid);
         
         // Sleep before next scan
         sleep(1);
