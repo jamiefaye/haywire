@@ -117,23 +117,24 @@ response = json.loads(sock.recv(4096).decode())
 7. **Page alignment critical** - Beacons must be on 4KB boundaries
 8. **Zero page optimization** - memset(0) doesn't allocate physical pages
 
-## Recent Progress (September 2, 2025)
+## Recent Progress (December 2024)
 
-### Beacon-Based Shared Memory Protocol
-- Transitioned from external memory introspection to cooperative beacon approach
-- Each 4KB page has 64-byte beacon header with magic numbers (0x3142FACE, 0xCAFEBABE)
-- Implemented bidirectional page tables for O(1) beacon lookups
-- Protocol v4 adds beacon classes for typed memory regions
+### New Beacon Encoder/Decoder Architecture
+- Simplified beacon protocol with page-based encoding (no entries span pages)
+- Encoder (companion side): `beacon_encoder.c/h` - writes structured data to shared memory
+- Decoder (Haywire side): `beacon_decoder.cpp/h` - reads and parses beacon data
+- Shared memory at `/dev/shm/haywire_pid_scanner` (note: underscore, not hyphen)
+- Multiple observer types: OBSERVER_PID_SCANNER, OBSERVER_CAMERA, etc.
 
-### Beacon Classes (Protocol v4)
-```
-Pages    0-15:   INDEX (16 pages) - Discovery and master index
-Pages   16-31:   REQUEST_RING (16 pages) - Request circular buffer
-Pages   32-47:   RESPONSE_RING (16 pages) - Response buffer  
-Pages   48-63:   STATISTICS (16 pages) - Performance counters
-Pages   64-1087: BULK_DATA (1024 pages) - Large transfers
-Pages 1088-2047: RESERVED (960 pages) - Future expansion
-```
+### Beacon Page Structure
+- 4096-byte pages with header containing magic numbers (0x3142FACE, 0xCAFEBABE)
+- Header includes: observer_type, generation, write_seq, timestamp, entry_count
+- Entry types: ENTRY_PID, ENTRY_SECTION, ENTRY_PTE, ENTRY_CAMERA_HEADER
+- Tear-resistant design: complete entries only, no cross-page spans
+
+### Current Companion Processes
+- `companion_pid_scanner` - Scans /proc and writes PID list (working)
+- `companion_camera_v2` - Monitors specific process memory maps (in progress)
 
 ### SSH Setup
 - Primary user: `ubuntu` (passwordless via SSH key)
@@ -143,18 +144,19 @@ Pages 1088-2047: RESERVED (960 pages) - Future expansion
 
 ## TODO/Future Work
 
-1. Fix beacon class enum values between handler and scanner
-2. Implement request/response protocol using rings
-3. Add master index for O(1) discovery
-4. Create bulk transfer protocol for large data
+1. Complete companion_camera_v2 implementation
+2. Test camera integration with Haywire decoder
+3. Add control mechanism for camera focus selection
+4. Implement real PTE reading from /proc/pid/pagemap
 5. Add Windows EPROCESS support
 
 ## Debugging Tips
 
 - Use `fprintf(stderr, ...)` in QEMU code for debugging
 - Check `/tmp/kernel_dump.txt` for QMP dump output
-- Memory file is at `/tmp/haywire-vm-mem` (if configured)
+- Shared memory file is at `/dev/shm/haywire_pid_scanner` (both host and guest)
 - QMP port is usually 4445, monitor port 4444
+- Kill background processes with: `killall ssh haywire`
 
 ## Contact/Issues
 

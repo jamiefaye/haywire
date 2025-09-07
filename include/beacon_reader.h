@@ -9,6 +9,9 @@
 
 namespace Haywire {
 
+// Forward declaration
+class BeaconDecoder;
+
 // Process information from beacon pages
 struct BeaconProcessInfo {
     uint32_t pid;
@@ -80,6 +83,9 @@ private:
     // Companion management
     uint32_t companionPid;
     uint32_t lastCompanionCheck;
+    
+    // New beacon decoder
+    std::unique_ptr<BeaconDecoder> decoder;
     
     // Discovery information
     struct DiscoveryInfo {

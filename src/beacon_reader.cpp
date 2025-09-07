@@ -1,4 +1,5 @@
 #include "beacon_reader.h"
+#include "beacon_decoder.h"
 #include "guest_agent.h"
 #include <iostream>
 #include <iomanip>
@@ -22,6 +23,7 @@ namespace Haywire {
 
 BeaconReader::BeaconReader() : memFd(-1), memBase(nullptr), memSize(0), companionPid(0), lastCompanionCheck(0) {
     discovery.valid = false;
+    decoder = std::make_unique<BeaconDecoder>();
 }
 
 BeaconReader::~BeaconReader() {
@@ -77,78 +79,19 @@ bool BeaconReader::FindDiscovery() {
 }
 
 bool BeaconReader::ScanForDiscovery() {
-    uint8_t* mem = static_cast<uint8_t*>(memBase);
-    
-    // First, find all discovery pages
-    std::vector<std::pair<size_t, uint32_t>> discoveryPages; // offset, timestamp
-    
-    for (size_t offset = 0; offset + PAGE_SIZE <= memSize; offset += PAGE_SIZE) {
-        BeaconPage* page = reinterpret_cast<BeaconPage*>(mem + offset);
-        
-        if (page->magic == BEACON_MAGIC && page->category == BEACON_CATEGORY_MASTER && page->category_index == 0) {
-            BeaconDiscoveryPage* dp = reinterpret_cast<BeaconDiscoveryPage*>(page);
-            discoveryPages.push_back({offset, dp->timestamp});
-            std::cout << "Found discovery page at offset 0x" << std::hex << offset << std::dec 
-                      << " with timestamp " << dp->timestamp << " (PID " << dp->session_id << ")\n";
+    // Use the new decoder to scan for beacon data
+    if (decoder->ScanMemory(memBase, memSize)) {
+        // Check if we have recent PID data
+        const auto& pids = decoder->GetPIDEntries();
+        if (!pids.empty()) {
+            std::cout << "Found " << pids.size() << " processes in beacon data\n";
+            discovery.valid = true;
+            return true;
         }
     }
     
-    if (discoveryPages.empty()) {
-        std::cout << "No discovery pages found\n";
-        return false;
-    }
-    
-    // Select the discovery page with the most recent timestamp
-    auto newest = std::max_element(discoveryPages.begin(), discoveryPages.end(),
-                                   [](const auto& a, const auto& b) { return a.second < b.second; });
-    
-    size_t bestOffset = newest->first;
-    uint32_t bestTimestamp = newest->second;
-    
-    std::cout << "Selected discovery page at offset 0x" << std::hex << bestOffset << std::dec 
-              << " with timestamp " << bestTimestamp << " (newest of " << discoveryPages.size() << " found)\n";
-    
-    // Now load the selected discovery page
-    BeaconDiscoveryPage* dp = reinterpret_cast<BeaconDiscoveryPage*>(mem + bestOffset);
-    
-    discovery.offset = bestOffset;
-    discovery.version = dp->version_top;
-    discovery.pid = dp->session_id;
-    discovery.timestamp = dp->timestamp;  // Store timestamp for filtering
-    
-    std::cout << "  Reading discovery page categories:\n";
-    
-    // Direct memory read approach to bypass potential struct alignment issues
-    uint32_t* cat_data = (uint32_t*)&dp->categories[0];
-    for (int i = 0; i < 5; i++) {
-        // Each category has 4 uint32_t fields
-        discovery.categories[i].base_offset = cat_data[i * 4 + 0];
-        discovery.categories[i].page_count = cat_data[i * 4 + 1];
-        discovery.categories[i].write_index = cat_data[i * 4 + 2];
-        discovery.categories[i].sequence = cat_data[i * 4 + 3];
-        std::cout << "    Category " << i << ": offset=" << discovery.categories[i].base_offset 
-                  << ", page_count=" << discovery.categories[i].page_count << "\n";
-    }
-    
-    discovery.valid = true;
-    std::cout << "Selected discovery page:\n";
-    std::cout << "  Offset: 0x" << std::hex << discovery.offset << std::dec 
-              << " (page " << discovery.offset/PAGE_SIZE << ")\n";
-    std::cout << "  Companion PID: " << discovery.pid << "\n";
-    std::cout << "  Timestamp: " << discovery.timestamp << "\n";
-    std::cout << "  PID pages: " << discovery.categories[BEACON_CATEGORY_PID].page_count << "\n";
-    std::cout << "  RoundRobin pages: " << discovery.categories[BEACON_CATEGORY_ROUNDROBIN].page_count << "\n";
-    
-    // Now build page mappings for each category
-    BuildCategoryMappings();
-    
-    // Allocate receiving arrays
-    AllocateCategoryArrays();
-    
-    // Do initial copy of all pages
-    CopyPagesToArrays();
-    
-    return true;
+    std::cout << "No beacon data found\n";
+    return false;
 }
 
 void BeaconReader::BuildCategoryMappings() {
@@ -289,29 +232,22 @@ bool BeaconReader::GetPIDList(std::vector<uint32_t>& pids) {
         if (!FindDiscovery()) return false;
     }
     
-    // Get all PID generations and find the most recent complete one
-    auto generations = GetPIDGenerations();
-    if (generations.empty()) return false;
+    // Use the new decoder to get PID list
+    if (!decoder) return false;
     
-    // Find the most recent complete generation
-    for (auto it = generations.rbegin(); it != generations.rend(); ++it) {
-        if (it->is_complete) {
-            pids = it->pids;
-            std::cout << "Using PID generation " << it->generation 
-                      << " with " << it->total_pids << " PIDs\n";
-            return true;
-        }
+    const auto& pidEntries = decoder->GetPIDEntries();
+    if (pidEntries.empty()) {
+        return false;
     }
     
-    // If no complete generation, use the most recent one
-    if (!generations.empty()) {
-        pids = generations.back().pids;
-        std::cout << "Using incomplete PID generation " << generations.back().generation 
-                  << " with " << pids.size() << " PIDs\n";
-        return true;
+    // Extract PIDs from entries
+    pids.clear();
+    for (const auto& entry : pidEntries) {
+        pids.push_back(entry.pid);
     }
     
-    return false;
+    std::cout << "Got " << pids.size() << " PIDs from decoder\n";
+    return true;
 }
 
 std::vector<PIDGeneration> BeaconReader::GetPIDGenerations() {
@@ -382,9 +318,29 @@ std::vector<PIDGeneration> BeaconReader::GetPIDGenerations() {
 }
 
 bool BeaconReader::GetProcessInfo(uint32_t pid, BeaconProcessInfo& info) {
-    if (!memBase || !discovery.valid) return false;
+    if (!memBase || !decoder) return false;
     
-    return ScanRoundRobinForProcess(pid, info);
+    // Refresh beacon data
+    decoder->ScanMemory(memBase, memSize);
+    
+    // Find the PID in the decoded entries
+    const auto& pids = decoder->GetPIDEntries();
+    for (const auto& entry : pids) {
+        if (entry.pid == pid) {
+            info.pid = entry.pid;
+            info.ppid = entry.ppid;
+            info.name = std::string(entry.comm);
+            info.state = entry.state;
+            info.rss = entry.rss_kb * 1024;  // Convert KB to bytes
+            info.vsize = 0;  // Not available in new format yet
+            info.num_threads = 0;  // Not available in new format yet
+            info.exe_path = "";  // Not available in new format yet
+            info.hasDetails = true;
+            return true;
+        }
+    }
+    
+    return false;
 }
 
 bool BeaconReader::ScanRoundRobinForProcess(uint32_t pid, BeaconProcessInfo& info) {
@@ -437,60 +393,28 @@ bool BeaconReader::ScanRoundRobinForProcess(uint32_t pid, BeaconProcessInfo& inf
 
 std::map<uint32_t, BeaconProcessInfo> BeaconReader::GetAllProcessInfo() {
     std::map<uint32_t, BeaconProcessInfo> processes;
-    if (!memBase || !discovery.valid) return processes;
+    if (!decoder) return processes;
     
-    uint8_t* mem = static_cast<uint8_t*>(memBase);
+    // Use decoder to get PID entries
+    const auto& pidEntries = decoder->GetPIDEntries();
     
-    if (!categoryMappings[BEACON_CATEGORY_ROUNDROBIN].valid) {
-        std::cerr << "Round-robin category not valid\n";
-        return processes;
+    for (const auto& entry : pidEntries) {
+        BeaconProcessInfo info;
+        info.pid = entry.pid;
+        info.ppid = entry.ppid;
+        info.name = std::string(entry.comm);
+        info.state = entry.state;
+        // Note: The new format stores RSS in KB, need to convert for compatibility
+        info.vsize = 0;  // Not available in new format
+        info.rss = entry.rss_kb * 1024 / 4096;  // Convert KB to pages
+        info.num_threads = 0;  // Not available in new format
+        info.exe_path = "";  // Not available in new format
+        info.hasDetails = true;
+        
+        processes[info.pid] = info;
     }
     
-    // Scan all valid pages in round-robin array
-    auto& rrArray = categoryArrays[BEACON_CATEGORY_ROUNDROBIN];
-    if (!rrArray.initialized) {
-        std::cerr << "Round-robin array not initialized\n";
-        return processes;
-    }
-    
-    std::cout << "Scanning " << rrArray.validPages << " valid round-robin pages\n";
-    
-    for (size_t i = 0; i < rrArray.pageCount; i++) {
-        if (!rrArray.isPageValid(i)) continue;
-        
-        void* pagePtr = rrArray.getPage(i);
-        BeaconPage* page = reinterpret_cast<BeaconPage*>(pagePtr);
-        
-        // Check if page is valid
-        if (page->magic != BEACON_MAGIC || 
-            page->version_top != page->version_bottom ||
-            page->category != BEACON_CATEGORY_ROUNDROBIN) {
-            continue;
-        }
-        
-        // Check if this page contains a ProcessEntry
-        if (page->data_size >= sizeof(ProcessEntry)) {
-            ProcessEntry* entry = reinterpret_cast<ProcessEntry*>(page->data);
-            
-            // Only process if it looks like a valid PID
-            if (entry->pid > 0 && entry->pid < 1000000) {
-                BeaconProcessInfo info;
-                info.pid = entry->pid;
-                info.ppid = entry->ppid;
-                info.name = std::string(entry->comm, strnlen(entry->comm, 16));
-                info.state = entry->state;
-                info.vsize = entry->vsize;
-                info.rss = entry->rss;
-                info.num_threads = entry->num_threads;
-                info.exe_path = std::string(entry->exe_path, strnlen(entry->exe_path, 256));
-                info.hasDetails = true;
-                
-                processes[info.pid] = info;
-            }
-        }
-    }
-    
-    std::cout << "Found " << processes.size() << " processes with details in round-robin\n";
+    std::cout << "Found " << processes.size() << " processes with details from decoder\n";
     return processes;
 }
 
