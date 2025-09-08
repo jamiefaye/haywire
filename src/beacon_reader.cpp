@@ -79,18 +79,67 @@ bool BeaconReader::FindDiscovery() {
 }
 
 bool BeaconReader::ScanForDiscovery() {
-    // Use the new decoder to scan for beacon data
-    if (decoder->ScanMemory(memBase, memSize)) {
-        // Check if we have recent PID data
-        const auto& pids = decoder->GetPIDEntries();
-        if (!pids.empty()) {
-            std::cout << "Found " << pids.size() << " processes in beacon data\n";
+    if (!memBase || !memSize) return false;
+    
+    uint8_t* mem = static_cast<uint8_t*>(memBase);
+    size_t pagesScanned = 0;
+    size_t beaconsFound = 0;
+    
+    std::cout << "Scanning " << (memSize / (1024*1024)) << " MB for discovery page...\n";
+    
+    // Look for the discovery page (BEACON_CATEGORY_MASTER with index 0)
+    for (size_t offset = 0; offset + PAGE_SIZE <= memSize; offset += PAGE_SIZE) {
+        pagesScanned++;
+        
+        // Report progress every 256MB
+        if (pagesScanned % 65536 == 0) {
+            std::cout << "  Scanned " << (pagesScanned * PAGE_SIZE / (1024*1024)) 
+                      << " MB, found " << beaconsFound << " beacon pages so far...\n";
+        }
+        // Count all beacon pages we encounter
+        if (*reinterpret_cast<uint32_t*>(mem + offset) == BEACON_MAGIC) {
+            beaconsFound++;
+        }
+        
+        BeaconDiscoveryPage* page = reinterpret_cast<BeaconDiscoveryPage*>(mem + offset);
+        
+        // Check if this is the discovery page
+        if (page->magic == BEACON_MAGIC &&
+            page->category == BEACON_CATEGORY_MASTER &&
+            page->category_index == 0 &&
+            page->version_top == page->version_bottom) {
+            
+            // Found the discovery page!
+            discovery.offset = offset;
+            discovery.version = page->version_top;
+            discovery.pid = page->session_id;
+            discovery.timestamp = page->timestamp;
+            
+            // Copy category information
+            for (int i = 0; i < BEACON_NUM_CATEGORIES; i++) {
+                discovery.categories[i].base_offset = page->categories[i].base_offset;
+                discovery.categories[i].page_count = page->categories[i].page_count;
+                discovery.categories[i].write_index = page->categories[i].write_index;
+                discovery.categories[i].sequence = page->categories[i].sequence;
+            }
+            
             discovery.valid = true;
+            
+            std::cout << "\nFound discovery page at offset 0x" << std::hex << offset << std::dec
+                      << " (session=" << discovery.pid 
+                      << ", timestamp=" << discovery.timestamp << ")\n";
+            std::cout << "Total pages scanned: " << pagesScanned 
+                      << " (" << beaconsFound << " were beacon pages)\n";
+            
+            // Now build the category mappings
+            BuildCategoryMappings();
+            
             return true;
         }
     }
     
-    std::cout << "No beacon data found\n";
+    std::cout << "\nDiscovery page not found after scanning " << pagesScanned << " pages\n";
+    std::cout << "Found " << beaconsFound << " beacon pages total (but no discovery page)\n";
     return false;
 }
 
@@ -100,6 +149,9 @@ void BeaconReader::BuildCategoryMappings() {
     // First pass: collect ALL beacon pages and organize by category and index
     std::map<uint32_t, std::map<uint32_t, size_t>> categoryPages; // [category][index] = offset
     int totalBeacons = 0;
+    int validBeacons = 0;
+    int staleBeacons = 0;  // From different sessions
+    int bogusBeacons = 0;  // Invalid category or index
     
     for (size_t offset = 0; offset + PAGE_SIZE <= memSize; offset += PAGE_SIZE) {
         uint32_t* magic = reinterpret_cast<uint32_t*>(mem + offset);
@@ -107,29 +159,39 @@ void BeaconReader::BuildCategoryMappings() {
             totalBeacons++;
             BeaconPage* page = reinterpret_cast<BeaconPage*>(mem + offset);
             
-            // Skip pages from different timestamps (stale beacons)
-            if (page->timestamp != discovery.timestamp) {
-                continue;  // Different timestamp, skip this stale beacon
+            // Check if page is from current session
+            if (page->session_id != discovery.pid) {
+                staleBeacons++;
+                continue;  // Different session, skip this stale beacon
             }
             
             // Extract category and page index
             uint32_t category = page->category;
-            uint32_t pageIndex = page->category_index;  // This should be the page's index within its category
+            uint32_t pageIndex = page->category_index;
             
-            if (category < 5 && pageIndex < 10000) {  // Valid category and sane index
+            // Validate category and index
+            if (category >= BEACON_NUM_CATEGORIES || pageIndex >= 10000) {
+                bogusBeacons++;
+                if (bogusBeacons <= 5) {  // Report first few bogus pages
+                    std::cout << "  Bogus beacon at 0x" << std::hex << offset << std::dec 
+                              << " (cat=" << category << ", idx=" << pageIndex << ")\n";
+                }
+            } else {
+                // Valid beacon page
+                validBeacons++;
                 categoryPages[category][pageIndex] = offset;
-            } else if (totalBeacons <= 10) {
-                // Debug first few invalid pages
-                std::cout << "  Page at 0x" << std::hex << offset << std::dec 
-                          << " has invalid cat=" << category << " idx=" << pageIndex << "\n";
             }
         }
     }
     
-    std::cout << "Found " << totalBeacons << " total beacon pages in memory\n";
+    std::cout << "\nBeacon Discovery Results:\n";
+    std::cout << "  Total beacon pages found: " << totalBeacons << "\n";
+    std::cout << "  Valid beacon pages (current session): " << validBeacons << "\n";
+    std::cout << "  Stale beacon pages (old sessions): " << staleBeacons << "\n";
+    std::cout << "  Bogus beacon pages (invalid cat/idx): " << bogusBeacons << "\n";
     
     // Build the COMPLETE mappings for each category
-    for (int cat = 0; cat < 5; cat++) {
+    for (int cat = 0; cat < 4; cat++) {
         auto& catInfo = discovery.categories[cat];
         auto& mapping = categoryMappings[cat];
         
@@ -225,6 +287,10 @@ void BeaconReader::BuildCategoryMappings() {
             std::cout << "Category " << cat << ": not configured (0 pages expected)\n";
         }
     }
+    
+    // Now allocate and copy the category arrays
+    AllocateCategoryArrays();
+    CopyPagesToArrays();
 }
 
 bool BeaconReader::GetPIDList(std::vector<uint32_t>& pids) {
@@ -232,22 +298,33 @@ bool BeaconReader::GetPIDList(std::vector<uint32_t>& pids) {
         if (!FindDiscovery()) return false;
     }
     
-    // Use the new decoder to get PID list
-    if (!decoder) return false;
-    
-    const auto& pidEntries = decoder->GetPIDEntries();
-    if (pidEntries.empty()) {
+    // NEW: Use the new beacon protocol format instead of old decoder
+    auto generations = GetPIDGenerations();
+    if (generations.empty()) {
+        std::cerr << "ERROR: No PID generations found in new beacon format\n";
+        std::cerr << "       Make sure companion_camera_v2 is using new beacon_protocol.h\n";
         return false;
     }
     
-    // Extract PIDs from entries
-    pids.clear();
-    for (const auto& entry : pidEntries) {
-        pids.push_back(entry.pid);
+    // Find the most recent complete generation
+    for (auto it = generations.rbegin(); it != generations.rend(); ++it) {
+        if (it->is_complete) {
+            pids = it->pids;
+            std::cout << "Got " << pids.size() << " PIDs from generation " << it->generation 
+                      << " (new beacon format)\n";
+            return true;
+        }
     }
     
-    std::cout << "Got " << pids.size() << " PIDs from decoder\n";
-    return true;
+    // If no complete generation, use the most recent one anyway
+    if (!generations.empty()) {
+        pids = generations.back().pids;
+        std::cout << "Got " << pids.size() << " PIDs from partial generation " 
+                  << generations.back().generation << " (new beacon format)\n";
+        return true;
+    }
+    
+    return false;
 }
 
 std::vector<PIDGeneration> BeaconReader::GetPIDGenerations() {
@@ -296,9 +373,9 @@ std::vector<PIDGeneration> BeaconReader::GetPIDGenerations() {
             genMap[gen].is_complete = false;
         }
         
-        // Add PIDs from this page
-        for (uint32_t j = 0; j < page->pids_in_page && j < 1012; j++) {
-            genMap[gen].pids.push_back(page->pids[j]);
+        // Add PIDs from this page (now reading from entries array)
+        for (uint32_t j = 0; j < page->pids_in_page && j < BEACON_MAX_PIDS_PER_PAGE; j++) {
+            genMap[gen].pids.push_back(page->entries[j].pid);
         }
     }
     
@@ -318,134 +395,169 @@ std::vector<PIDGeneration> BeaconReader::GetPIDGenerations() {
 }
 
 bool BeaconReader::GetProcessInfo(uint32_t pid, BeaconProcessInfo& info) {
-    if (!memBase || !decoder) return false;
+    if (!memBase) return false;
     
-    // Refresh beacon data
-    decoder->ScanMemory(memBase, memSize);
+    // OLD DECODER NO LONGER SUPPORTED
+    std::cerr << "WARNING: GetProcessInfo() called - old decoder no longer supported\n";
+    std::cerr << "         Process details should come from camera beacon data\n";
     
-    // Find the PID in the decoded entries
-    const auto& pids = decoder->GetPIDEntries();
-    for (const auto& entry : pids) {
-        if (entry.pid == pid) {
-            info.pid = entry.pid;
-            info.ppid = entry.ppid;
-            info.name = std::string(entry.comm);
-            info.state = entry.state;
-            info.rss = entry.rss_kb * 1024;  // Convert KB to bytes
-            info.vsize = 0;  // Not available in new format yet
-            info.num_threads = 0;  // Not available in new format yet
-            info.exe_path = "";  // Not available in new format yet
-            info.hasDetails = true;
-            return true;
-        }
-    }
+    // Return minimal info for now
+    info.pid = pid;
+    info.ppid = 0;
+    info.name = "PID " + std::to_string(pid);
+    info.state = '?';
+    info.rss = 0;
+    info.vsize = 0;
+    info.num_threads = 0;
+    info.exe_path = "";
+    info.hasDetails = false;
     
     return false;
 }
 
-bool BeaconReader::ScanRoundRobinForProcess(uint32_t pid, BeaconProcessInfo& info) {
+// Process scanning moved to camera beacon pages
+
+std::map<uint32_t, BeaconProcessInfo> BeaconReader::GetAllProcessInfo() {
+    std::map<uint32_t, BeaconProcessInfo> processes;
+    if (!memBase || !discovery.valid) return processes;
+    
+    // Read process details from the new PID beacon pages
+    auto& pidMapping = categoryMappings[BEACON_CATEGORY_PID];
+    if (!pidMapping.valid) return processes;
+    
     uint8_t* mem = static_cast<uint8_t*>(memBase);
     
-    if (!categoryMappings[BEACON_CATEGORY_ROUNDROBIN].valid) return false;
-    
-    // Scan round-robin array for this PID
-    auto& rrArray = categoryArrays[BEACON_CATEGORY_ROUNDROBIN];
-    if (!rrArray.initialized) return false;
-    
-    for (size_t i = 0; i < rrArray.pageCount; i++) {
-        if (!rrArray.isPageValid(i)) continue;
+    // Find the most recent generation
+    uint32_t maxGen = 0;
+    for (size_t i = 0; i < pidMapping.expectedCount; i++) {
+        if (!pidMapping.sourcePresent[i]) continue;
         
-        void* pagePtr = rrArray.getPage(i);
-        BeaconPage* page = reinterpret_cast<BeaconPage*>(pagePtr);
+        size_t offset = pidMapping.sourceOffsets[i];
+        PIDListPage* page = reinterpret_cast<PIDListPage*>(mem + offset);
         
-        // Check if page is valid
-        if (page->magic != BEACON_MAGIC || 
-            page->version_top != page->version_bottom ||
-            page->category != BEACON_CATEGORY_ROUNDROBIN) {
-            continue;
-        }
-        
-        // Check if this page contains a ProcessEntry
-        if (page->data_size >= sizeof(ProcessEntry)) {
-            ProcessEntry* entry = reinterpret_cast<ProcessEntry*>(page->data);
-            
-            if (entry->pid == pid) {
-                // Found it!
-                info.pid = entry->pid;
-                info.ppid = entry->ppid;
-                info.name = std::string(entry->comm, strnlen(entry->comm, 16));
-                info.state = entry->state;
-                info.vsize = entry->vsize;
-                info.rss = entry->rss;
-                info.num_threads = entry->num_threads;
-                info.exe_path = std::string(entry->exe_path, strnlen(entry->exe_path, 256));
-                info.hasDetails = true;
-                return true;
+        if (page->magic == BEACON_MAGIC && page->version_top == page->version_bottom) {
+            if (page->generation > maxGen) {
+                maxGen = page->generation;
             }
         }
     }
     
-    // Not found in round-robin, return basic info
-    info.pid = pid;
-    info.hasDetails = false;
-    return false;
-}
-
-std::map<uint32_t, BeaconProcessInfo> BeaconReader::GetAllProcessInfo() {
-    std::map<uint32_t, BeaconProcessInfo> processes;
-    if (!decoder) return processes;
-    
-    // Use decoder to get PID entries
-    const auto& pidEntries = decoder->GetPIDEntries();
-    
-    for (const auto& entry : pidEntries) {
-        BeaconProcessInfo info;
-        info.pid = entry.pid;
-        info.ppid = entry.ppid;
-        info.name = std::string(entry.comm);
-        info.state = entry.state;
-        // Note: The new format stores RSS in KB, need to convert for compatibility
-        info.vsize = 0;  // Not available in new format
-        info.rss = entry.rss_kb * 1024 / 4096;  // Convert KB to pages
-        info.num_threads = 0;  // Not available in new format
-        info.exe_path = "";  // Not available in new format
-        info.hasDetails = true;
+    // Read all entries from the most recent generation
+    for (size_t i = 0; i < pidMapping.expectedCount; i++) {
+        if (!pidMapping.sourcePresent[i]) continue;
         
-        processes[info.pid] = info;
+        size_t offset = pidMapping.sourceOffsets[i];
+        PIDListPage* page = reinterpret_cast<PIDListPage*>(mem + offset);
+        
+        if (page->magic == BEACON_MAGIC && 
+            page->version_top == page->version_bottom &&
+            page->generation == maxGen) {
+            
+            // Read entries from this page
+            for (uint32_t j = 0; j < page->pids_in_page && j < BEACON_MAX_PIDS_PER_PAGE; j++) {
+                const auto& entry = page->entries[j];
+                
+                BeaconProcessInfo info;
+                info.pid = entry.pid;
+                info.ppid = entry.ppid;
+                info.name = std::string(entry.comm);
+                info.state = entry.state;
+                info.rss = entry.rss_kb * 1024 / 4096;  // Convert KB to pages
+                info.vsize = 0;  // Not available in current format
+                info.num_threads = 0;  // Not available in current format
+                info.exe_path = "";  // Not available in current format
+                info.hasDetails = true;
+                
+                processes[info.pid] = info;
+            }
+        }
     }
     
-    std::cout << "Found " << processes.size() << " processes with details from decoder\n";
+    std::cout << "Found " << processes.size() << " processes with details from PID beacon pages\n";
     return processes;
 }
 
 bool BeaconReader::SetCameraFocus(int cameraId, uint32_t pid) {
-    if (!memBase || !discovery.valid) return false;
+    if (!memBase || !memSize) return false;
     if (cameraId < 1 || cameraId > 2) return false;
     
     uint8_t* mem = static_cast<uint8_t*>(memBase);
-    uint32_t category = (cameraId == 1) ? BEACON_CATEGORY_CAMERA1 : BEACON_CATEGORY_CAMERA2;
     
-    auto& camArray = categoryArrays[category];
-    if (!camArray.initialized || camArray.validPages == 0) {
+    // Look for the camera control page using new beacon protocol
+    // Camera control pages have:
+    // - magic == BEACON_MAGIC (0x3142FACE)
+    // - category == BEACON_CATEGORY_CAMERA1 or BEACON_CATEGORY_CAMERA2
+    // - category_index == 0 (control page is always index 0)
+    uint32_t targetCategory = (cameraId == 1) ? BEACON_CATEGORY_CAMERA1 : BEACON_CATEGORY_CAMERA2;
+    bool foundControlPage = false;
+    size_t maxInitialScan = std::min(memSize, size_t(100 * 1024 * 1024)); // First 100MB
+    
+    // First pass: Check likely locations (every 1MB in first 100MB)
+    for (size_t offset = 0; offset < maxInitialScan && !foundControlPage; offset += (1024 * 1024)) {
+        if (offset + PAGE_SIZE > memSize) break;
+        
+        const BeaconCameraControlPage* control = reinterpret_cast<const BeaconCameraControlPage*>(mem + offset);
+        
+        // Check if this is a valid camera control page
+        if (control->magic == BEACON_MAGIC && 
+            control->category == targetCategory &&
+            control->category_index == 0) {
+            
+            // Found the control page - update it
+            BeaconCameraControlPage* writableControl = reinterpret_cast<BeaconCameraControlPage*>(mem + offset);
+            
+            // Increment version for tear detection
+            uint32_t newVersion = control->version_top + 1;
+            
+            // Update the control page
+            writableControl->version_top = newVersion;
+            writableControl->target_pid = pid;
+            writableControl->version_bottom = newVersion;  // Must match version_top for valid write
+            
+            std::cout << "SetCameraFocus: Camera " << cameraId << " -> PID " << pid 
+                      << " (control page at offset 0x" << std::hex << offset << std::dec 
+                      << ", version=" << newVersion << ")\n";
+            foundControlPage = true;
+            
+            // Remember this location for next time
+            static size_t cachedControlOffset = 0;
+            cachedControlOffset = offset;
+        }
+    }
+    
+    // If not found in likely locations, do full scan (but warn)
+    if (!foundControlPage) {
+        std::cout << "SetCameraFocus: Control page not in expected location, scanning all memory...\n";
+        for (size_t offset = 0; offset + PAGE_SIZE <= memSize; offset += PAGE_SIZE) {
+            const BeaconCameraControlPage* control = reinterpret_cast<const BeaconCameraControlPage*>(mem + offset);
+            
+            if (control->magic == BEACON_MAGIC && 
+                control->category == targetCategory &&
+                control->category_index == 0) {
+                
+                BeaconCameraControlPage* writableControl = reinterpret_cast<BeaconCameraControlPage*>(mem + offset);
+                
+                uint32_t newVersion = control->version_top + 1;
+                
+                writableControl->version_top = newVersion;
+                writableControl->target_pid = pid;
+                writableControl->version_bottom = newVersion;
+                
+                std::cout << "SetCameraFocus: Camera " << cameraId << " -> PID " << pid 
+                          << " (control page at offset 0x" << std::hex << offset << std::dec 
+                          << ", version=" << newVersion << ")\n";
+                foundControlPage = true;
+                break;
+            }
+        }
+    }
+    
+    if (!foundControlPage) {
+        std::cout << "SetCameraFocus: No camera " << cameraId 
+                  << " control page found (category=" << targetCategory << ")\n";
         return false;
     }
     
-    // Control page is first page of camera category
-    if (!camArray.isPageValid(0)) {
-        std::cerr << "Camera " << cameraId << " control page is torn\n";
-        return false;
-    }
-    
-    void* pagePtr = camArray.getPage(0);
-    CameraControlPage* control = reinterpret_cast<CameraControlPage*>(pagePtr);
-    
-    // Set up control command
-    control->magic = BEACON_MAGIC;
-    control->version_top = control->version_bottom = 1;
-    control->command = 1;  // change_focus
-    control->target_pid = pid;
-    
-    std::cout << "Set camera " << cameraId << " focus to PID " << pid << "\n";
     return true;
 }
 
@@ -473,49 +585,14 @@ uint32_t BeaconReader::GetCameraFocus(int cameraId) {
     return 0;
 }
 
-bool BeaconReader::GetCameraProcessSections(int cameraId, uint32_t pid, std::vector<BeaconSectionEntry>& sections) {
-    if (!memBase || !discovery.valid) return false;
-    if (cameraId < 1 || cameraId > 2) return false;
+bool BeaconReader::GetCameraProcessSections(int cameraId, uint32_t pid, std::vector<SectionEntry>& sections) {
+    if (!decoder) return false;
     
-    uint32_t category = (cameraId == 1) ? BEACON_CATEGORY_CAMERA1 : BEACON_CATEGORY_CAMERA2;
-    auto& camArray = categoryArrays[category];
+    // Use the decoder to get sections for the PID
+    sections = decoder->GetSectionsForPID(pid);
     
-    if (!camArray.initialized || camArray.validPages == 0) {
-        return false;
-    }
-    
-    sections.clear();
-    
-    // Skip control page (page 0), start reading from page 1
-    for (uint32_t pageIdx = 1; pageIdx < camArray.validPages; pageIdx++) {
-        if (!camArray.isPageValid(pageIdx)) continue;
-        
-        BeaconPage* page = reinterpret_cast<BeaconPage*>(camArray.getPage(pageIdx));
-        if (page->data_size == 0) continue;
-        
-        // Parse data in this page
-        uint8_t* data = page->data;
-        uint32_t offset = 0;
-        
-        while (offset + sizeof(BeaconProcessEntry) <= page->data_size) {
-            // Check if this is a process entry
-            BeaconProcessEntry* proc = reinterpret_cast<BeaconProcessEntry*>(data + offset);
-            if (proc->pid == pid) {
-                // Found the process, now read its sections
-                offset += sizeof(BeaconProcessEntry);
-                
-                for (uint32_t i = 0; i < proc->num_sections && offset + sizeof(BeaconSectionEntry) <= page->data_size; i++) {
-                    BeaconSectionEntry* section = reinterpret_cast<BeaconSectionEntry*>(data + offset);
-                    sections.push_back(*section);
-                    offset += sizeof(BeaconSectionEntry);
-                }
-                return true;
-            }
-            offset += sizeof(BeaconProcessEntry);
-        }
-    }
-    
-    return false;
+    // Return true if we found any sections
+    return !sections.empty();
 }
 
 bool BeaconReader::GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<uint64_t, uint64_t>& ptes) {
@@ -526,7 +603,7 @@ bool BeaconReader::GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<
 }
 
 void BeaconReader::AllocateCategoryArrays() {
-    for (int cat = 0; cat < 5; cat++) {
+    for (int cat = 0; cat < 4; cat++) {
         auto& array = categoryArrays[cat];
         auto& mapping = categoryMappings[cat];
         
@@ -550,7 +627,7 @@ void BeaconReader::AllocateCategoryArrays() {
 void BeaconReader::CopyPagesToArrays() {
     uint8_t* mem = static_cast<uint8_t*>(memBase);
     
-    for (int cat = 0; cat < 5; cat++) {
+    for (int cat = 0; cat < 4; cat++) {
         auto& array = categoryArrays[cat];
         auto& mapping = categoryMappings[cat];
         
@@ -593,7 +670,7 @@ bool BeaconReader::RefreshCategoryPages() {
     
     // Check if we have minimum viable data
     bool viable = false;
-    for (int cat = 0; cat < 5; cat++) {
+    for (int cat = 0; cat < 4; cat++) {
         if (categoryArrays[cat].validPages > 0) {
             viable = true;
         }

@@ -24,15 +24,13 @@ extern "C" {
 
 // Beacon categories
 #define BEACON_CATEGORY_MASTER      0
-#define BEACON_CATEGORY_ROUNDROBIN  1  
-#define BEACON_CATEGORY_PID         2
-#define BEACON_CATEGORY_CAMERA1     3
-#define BEACON_CATEGORY_CAMERA2     4
-#define BEACON_NUM_CATEGORIES       5
+#define BEACON_CATEGORY_PID         1
+#define BEACON_CATEGORY_CAMERA1     2
+#define BEACON_CATEGORY_CAMERA2     3
+#define BEACON_NUM_CATEGORIES       4
 
 // Pages per category (must match companion allocation)
 #define BEACON_MASTER_PAGES      1     // Just the discovery page
-#define BEACON_ROUNDROBIN_PAGES  500   // Round-robin process scanning
 #define BEACON_PID_PAGES         32    // PID list snapshots (32KB, ~32k PIDs)
 #define BEACON_CAMERA1_PAGES     200   // Camera watching specific PID
 #define BEACON_CAMERA2_PAGES     200   // Camera watching another PID
@@ -42,14 +40,23 @@ extern "C" {
 #define BEACON_PATH_MAX_STORED   256   // Truncated path length
 #define BEACON_MAX_SECTIONS      100   // Max memory sections per process
 
+// PID entry structure (48 bytes)
+typedef struct BeaconPIDEntry {
+    uint32_t type;      // ENTRY_PID (0)
+    uint32_t pid;
+    uint32_t ppid;
+    uint32_t uid;
+    uint32_t gid;
+    uint64_t rss_kb;
+    char comm[16];
+    char state;
+    uint8_t padding[3];
+} __attribute__((packed)) BeaconPIDEntry;
+
 // PID list configuration  
-#define BEACON_MAX_PIDS_PER_PAGE ((BEACON_PAGE_SIZE - 32 - 8) / 4)  // 1009 PIDs (reduced by 1 for timestamp)
+#define BEACON_MAX_PIDS_PER_PAGE 84  // Exactly fits: 36 header + (84 * 48) entries + 4 version_bottom = 4096
 #define BEACON_PID_GENERATIONS   10    // Keep 10 generations of PID lists
 
-
-// Camera commands
-#define BEACON_CAMERA_CMD_NONE          0
-#define BEACON_CAMERA_CMD_CHANGE_FOCUS  1
 
 // Camera status
 #define BEACON_CAMERA_STATUS_IDLE       0
@@ -62,38 +69,6 @@ extern "C" {
  */
 
 #pragma pack(push, 1)
-
-// Fixed-size process entry (344 bytes packed)
-typedef struct BeaconProcessEntry {
-    uint32_t pid;
-    uint32_t ppid;
-    uint32_t uid;
-    uint32_t gid;
-    char comm[BEACON_PROCESS_NAME_LEN];     // Process name
-    char state;                              // R/S/D/Z/T
-    int8_t nice;
-    uint16_t num_threads;
-    uint64_t vsize;                          // Virtual memory size
-    uint64_t rss;                            // Resident set size in pages
-    uint64_t start_time;                     // Process start time
-    uint64_t utime;                          // User CPU time
-    uint64_t stime;                          // System CPU time
-    uint32_t num_sections;                   // Number of memory sections
-    char exe_path[BEACON_PATH_MAX_STORED];   // Executable path
-} BeaconProcessEntry;
-
-// Fixed-size memory section entry
-typedef struct BeaconSectionEntry {
-    uint32_t pid;                            // Which process this belongs to
-    uint64_t start_addr;                     // Start of memory region
-    uint64_t end_addr;                       // End of memory region
-    uint32_t permissions;                    // rwxp as bitfield
-    uint64_t offset;                         // File offset
-    uint32_t major;                          // Device major
-    uint32_t minor;                          // Device minor
-    uint64_t inode;
-    char pathname[BEACON_PATH_MAX_STORED];   // Mapped file or [heap], [stack], etc.
-} BeaconSectionEntry;
 
 // Regular beacon page with tear detection (exactly 4096 bytes)
 typedef struct BeaconPage {
@@ -120,7 +95,8 @@ typedef struct BeaconPIDListPage {
     uint32_t generation;                     // Which generation of PID list
     uint32_t total_pids;                     // Total PIDs in this generation
     uint32_t pids_in_page;                   // Number of PIDs in this page
-    uint32_t pids[BEACON_MAX_PIDS_PER_PAGE]; // Array of process IDs (1010 entries)
+    BeaconPIDEntry entries[BEACON_MAX_PIDS_PER_PAGE]; // Array of PID entries (84 entries)
+    uint8_t padding[24];                     // Padding: 36 + 4032 + 24 + 4 = 4096
     uint32_t version_bottom;                 // Must match version_top
 } BeaconPIDListPage;
 
@@ -132,11 +108,10 @@ typedef struct BeaconCameraControlPage {
     uint32_t category;                       // BEACON_CATEGORY_CAMERA1 or CAMERA2
     uint32_t category_index;                 // Always 0 (control page)
     uint32_t timestamp;                      // Unix timestamp from discovery page
-    uint32_t command;                        // BEACON_CAMERA_CMD_*
     uint32_t target_pid;                     // PID to focus on
     uint32_t status;                         // BEACON_CAMERA_STATUS_*
     uint32_t current_pid;                    // Currently watching PID
-    uint8_t padding[4052];                   // Pad to 4096 bytes (reduced by 4)
+    uint8_t padding[4056];                   // Pad to 4096 bytes
     uint32_t version_bottom;                 // Must match version_top
 } BeaconCameraControlPage;
 
@@ -157,7 +132,7 @@ typedef struct BeaconDiscoveryPage {
         uint32_t sequence;                   // Sequence number for tear detection
     } categories[BEACON_NUM_CATEGORIES];
     
-    uint8_t padding[3988];                   // Pad to 4096 bytes (4096 - 24 - 80 - 4)
+    uint8_t padding[4004];                   // Pad to 4096 bytes (4096 - 24 - 64 - 4)
     uint32_t version_bottom;                 // Must match version_top
 } BeaconDiscoveryPage;
 
@@ -170,7 +145,6 @@ BEACON_STATIC_ASSERT(sizeof(BeaconPage) == 4096, BeaconPage_size);
 BEACON_STATIC_ASSERT(sizeof(BeaconPIDListPage) == 4096, BeaconPIDListPage_size);
 BEACON_STATIC_ASSERT(sizeof(BeaconCameraControlPage) == 4096, BeaconCameraControlPage_size);
 BEACON_STATIC_ASSERT(sizeof(BeaconDiscoveryPage) == 4096, BeaconDiscoveryPage_size);
-BEACON_STATIC_ASSERT(sizeof(BeaconProcessEntry) == 336, BeaconProcessEntry_size);
 
 #ifdef __cplusplus
 }

@@ -1,8 +1,10 @@
 #include "beacon_decoder.h"
 #include <iostream>
+#include <iomanip>
 #include <chrono>
 #include <cstring>
 #include <algorithm>
+#include <set>
 
 namespace Haywire {
 
@@ -19,6 +21,11 @@ bool BeaconDecoder::ScanMemory(void* memBase, size_t memSize) {
         return false;
     }
     
+    // DEPRECATED: This decoder uses the OLD beacon protocol
+    std::cerr << "ERROR: BeaconDecoder::ScanMemory() uses OLD beacon protocol (MAGIC1/MAGIC2)\n";
+    std::cerr << "       The companion now uses NEW beacon protocol from beacon_protocol.h\n";
+    std::cerr << "       Use BeaconReader::GetPIDGenerations() instead of decoder->ScanMemory()\n";
+    
     // Clear old data
     pidEntries.clear();
     sectionMap.clear();
@@ -26,12 +33,57 @@ bool BeaconDecoder::ScanMemory(void* memBase, size_t memSize) {
     cameraHeaders.clear();
     
     uint8_t* mem = static_cast<uint8_t*>(memBase);
+    
+    // First pass: find the maximum generation number and count torn pages
+    uint32_t maxGeneration = 0;
+    size_t tornPages = 0;
+    size_t totalBeaconPages = 0;
+    size_t oldFormatPages = 0;
+    
+    for (size_t offset = 0; offset + PAGE_SIZE <= memSize; offset += PAGE_SIZE) {
+        const BeaconPageHeader* header = reinterpret_cast<const BeaconPageHeader*>(mem + offset);
+        if (header->magic1 == BEACON_MAGIC1 && header->magic2 == BEACON_MAGIC2) {
+            oldFormatPages++;
+            totalBeaconPages++;
+            
+            // Check for torn page (generation != write_seq indicates torn write)
+            if (header->generation != header->write_seq) {
+                tornPages++;
+            }
+            
+            if (header->generation > maxGeneration) {
+                maxGeneration = header->generation;
+            }
+        }
+    }
+    
+    if (oldFormatPages > 0) {
+        std::cerr << "WARNING: Found " << oldFormatPages << " OLD format beacon pages (MAGIC1/MAGIC2)\n";
+        std::cerr << "         These are from an old companion version and will be ignored\n";
+    }
+    
+    // Only report torn pages if we found any
+    if (tornPages > 0) {
+        std::cout << "WARNING: Found " << tornPages << " torn beacon pages (out of " 
+                  << totalBeaconPages << " total beacon pages)\n";
+    }
+    
+    // Set generation range to decode: (max-1) and max
+    // This avoids torn reads while including complete data from previous run
+    uint32_t minGenToProcess = (maxGeneration > 0) ? maxGeneration - 1 : 0;
+    lastGeneration = maxGeneration;
+    lastWriteSeq = 0;
+    
     size_t validPages = 0;
     
-    // Scan all pages
+    // Second pass: decode pages from the last two generations
     for (size_t offset = 0; offset + PAGE_SIZE <= memSize; offset += PAGE_SIZE) {
-        if (DecodePage(mem + offset)) {
-            validPages++;
+        const BeaconPageHeader* header = reinterpret_cast<const BeaconPageHeader*>(mem + offset);
+        if (header->magic1 == BEACON_MAGIC1 && header->magic2 == BEACON_MAGIC2 &&
+            header->generation >= minGenToProcess && header->generation <= maxGeneration) {
+            if (DecodePage(mem + offset)) {
+                validPages++;
+            }
         }
     }
     
@@ -54,16 +106,7 @@ bool BeaconDecoder::DecodePage(const uint8_t* pageData) {
         return false;
     }
     
-    // Skip old data (only process recent generations)
-    if (lastGeneration != 0 && header->generation < lastGeneration) {
-        return false;
-    }
-    
-    // Update tracking
-    if (header->generation > lastGeneration) {
-        lastGeneration = header->generation;
-        lastWriteSeq = 0;
-    }
+    // Update tracking for sequence numbers
     if (header->write_seq > lastWriteSeq) {
         lastWriteSeq = header->write_seq;
     }
