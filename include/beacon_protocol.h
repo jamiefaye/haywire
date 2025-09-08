@@ -63,6 +63,32 @@ typedef struct BeaconPIDEntry {
 #define BEACON_CAMERA_STATUS_SWITCHING  1
 #define BEACON_CAMERA_STATUS_ACTIVE     2
 
+// Entry types for camera data stream
+#define BEACON_ENTRY_TYPE_SECTION  0x01  // Section entry (96 bytes)
+#define BEACON_ENTRY_TYPE_PTE      0x02  // PTE entry (24 bytes)  
+#define BEACON_ENTRY_TYPE_END      0xFF  // End of entries marker
+
+// Section entry for camera data (96 bytes)
+typedef struct BeaconSectionEntry {
+    uint8_t type;           // BEACON_ENTRY_TYPE_SECTION
+    uint8_t reserved[3];
+    uint32_t pid;
+    uint64_t va_start;      // Start of valid VA range
+    uint64_t va_end;        // End of valid VA range
+    uint32_t perms;         // r/w/x/p flags
+    uint8_t padding[4];
+    char path[64];          // File path or [heap], [stack], etc.
+} __attribute__((packed)) BeaconSectionEntry;
+
+// PTE entry for camera data - only allocated pages (24 bytes)
+typedef struct BeaconPTEEntry {
+    uint8_t type;           // BEACON_ENTRY_TYPE_PTE
+    uint8_t reserved[3];
+    uint32_t flags;         // Page flags
+    uint64_t va;            // Virtual address (page-aligned)
+    uint64_t pa;            // Physical address (non-zero)
+} __attribute__((packed)) BeaconPTEEntry;
+
 /*
  * All structures are packed to ensure exact layout.
  * Every structure that represents a beacon page MUST be exactly 4096 bytes.
@@ -114,6 +140,21 @@ typedef struct BeaconCameraControlPage {
     uint8_t padding[4056];                   // Pad to 4096 bytes
     uint32_t version_bottom;                 // Must match version_top
 } BeaconCameraControlPage;
+
+// Camera data page - stream format (exactly 4096 bytes)
+typedef struct BeaconCameraDataPage {
+    uint32_t magic;                          // BEACON_MAGIC
+    uint32_t version_top;                    // Version number at top
+    uint32_t session_id;                     // Session ID (companion PID)
+    uint32_t category;                       // BEACON_CATEGORY_CAMERA1 or CAMERA2
+    uint32_t category_index;                 // 1-199 for data pages
+    uint32_t timestamp;                      // Unix timestamp
+    uint32_t target_pid;                     // Which PID this data is for
+    uint16_t entry_count;                    // Number of entries in this page
+    uint16_t continuation;                   // 0=last page, 1=more pages follow
+    uint8_t data[4052];                      // Stream of mixed section/PTE entries
+    uint32_t version_bottom;                 // Must match version_top
+} BeaconCameraDataPage;
 
 // Discovery page - first page of MASTER category (exactly 4096 bytes)
 typedef struct BeaconDiscoveryPage {

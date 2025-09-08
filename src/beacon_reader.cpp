@@ -23,6 +23,7 @@ namespace Haywire {
 
 BeaconReader::BeaconReader() : memFd(-1), memBase(nullptr), memSize(0), companionPid(0), lastCompanionCheck(0) {
     discovery.valid = false;
+    discovery.allPagesFound = false;
     decoder = std::make_unique<BeaconDecoder>();
 }
 
@@ -75,6 +76,13 @@ void BeaconReader::Cleanup() {
 bool BeaconReader::FindDiscovery() {
     if (!memBase) return false;
     
+    // If we already found all pages, just refresh the data from known locations
+    if (discovery.valid && discovery.allPagesFound) {
+        // Refresh the pages we already know about
+        return RefreshCategoryPages();
+    }
+    
+    // Otherwise do a full scan
     return ScanForDiscovery();
 }
 
@@ -286,6 +294,23 @@ void BeaconReader::BuildCategoryMappings() {
         } else {
             std::cout << "Category " << cat << ": not configured (0 pages expected)\n";
         }
+    }
+    
+    // Check if we found all expected pages
+    size_t totalExpected = 0;
+    size_t totalFound = 0;
+    for (int cat = 0; cat < 4; cat++) {
+        totalExpected += categoryMappings[cat].expectedCount;
+        totalFound += categoryMappings[cat].foundCount;
+    }
+    
+    discovery.allPagesFound = (totalFound == totalExpected);
+    if (discovery.allPagesFound) {
+        std::cout << "\n✓ All " << totalExpected << " expected beacon pages found!\n";
+        std::cout << "  Switching to fast refresh mode (no more full memory scans)\n";
+    } else {
+        std::cout << "\n⚠ Found " << totalFound << "/" << totalExpected << " expected pages\n";
+        std::cout << "  Will continue scanning for missing pages\n";
     }
     
     // Now allocate and copy the category arrays
@@ -586,19 +611,160 @@ uint32_t BeaconReader::GetCameraFocus(int cameraId) {
 }
 
 bool BeaconReader::GetCameraProcessSections(int cameraId, uint32_t pid, std::vector<SectionEntry>& sections) {
-    if (!decoder) return false;
+    sections.clear();
     
-    // Use the decoder to get sections for the PID
-    sections = decoder->GetSectionsForPID(pid);
+    if (!memBase || !discovery.valid) return false;
+    if (cameraId < 1 || cameraId > 2) return false;
     
-    // Return true if we found any sections
+    uint32_t category = (cameraId == 1) ? BEACON_CATEGORY_CAMERA1 : BEACON_CATEGORY_CAMERA2;
+    auto& camArray = categoryArrays[category];
+    
+    if (!camArray.initialized) {
+        return false;
+    }
+    
+    // Camera data pages start at index 1 (index 0 is control page)
+    for (size_t pageIdx = 1; pageIdx < camArray.pageCount; pageIdx++) {
+        if (!camArray.isPageValid(pageIdx)) {
+            continue;
+        }
+        
+        void* pagePtr = camArray.getPage(pageIdx);
+        BeaconCameraDataPage* dataPage = reinterpret_cast<BeaconCameraDataPage*>(pagePtr);
+        
+        // Check page validity and if it contains data for the requested PID
+        if (dataPage->magic != BEACON_MAGIC || 
+            dataPage->version_top != dataPage->version_bottom ||
+            dataPage->target_pid != pid) {
+            continue;
+        }
+        
+        // Parse the stream of entries in this page
+        uint8_t* dataPtr = dataPage->data;
+        size_t bytesProcessed = 0;
+        
+        for (uint16_t i = 0; i < dataPage->entry_count && bytesProcessed < 4052; i++) {
+            uint8_t entryType = *dataPtr;
+            
+            if (entryType == BEACON_ENTRY_TYPE_END) {
+                break;  // End of entries in this page
+            }
+            else if (entryType == BEACON_ENTRY_TYPE_SECTION) {
+                BeaconSectionEntry* beaconSection = reinterpret_cast<BeaconSectionEntry*>(dataPtr);
+                
+                // Convert to SectionEntry format
+                SectionEntry section;
+                section.type = 1;  // ENTRY_SECTION
+                section.pid = beaconSection->pid;
+                section.va_start = beaconSection->va_start;
+                section.va_end = beaconSection->va_end;
+                section.perms = beaconSection->perms;
+                strncpy(section.path, beaconSection->path, 63);
+                section.path[63] = '\0';
+                
+                sections.push_back(section);
+                
+                dataPtr += sizeof(BeaconSectionEntry);
+                bytesProcessed += sizeof(BeaconSectionEntry);
+            }
+            else if (entryType == BEACON_ENTRY_TYPE_PTE) {
+                // Skip PTE entries for now (handled in GetCameraPTEs)
+                dataPtr += sizeof(BeaconPTEEntry);
+                bytesProcessed += sizeof(BeaconPTEEntry);
+            }
+            else {
+                // Unknown entry type, stop processing this page
+                std::cerr << "Unknown entry type " << (int)entryType << " in camera data page\n";
+                break;
+            }
+        }
+        
+        // If continuation flag is not set, we've processed all pages for this PID
+        if (dataPage->continuation == 0) {
+            break;
+        }
+    }
+    
+    if (!sections.empty()) {
+        std::cout << "GetCameraProcessSections: Found " << sections.size() 
+                  << " sections for PID " << pid << " from camera " << cameraId << "\n";
+    }
+    
     return !sections.empty();
 }
 
 bool BeaconReader::GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<uint64_t, uint64_t>& ptes) {
-    // TODO: Implement PTE reading from RLE compressed data
-    // For now, return empty - we'll implement this when we need the crunched view
     ptes.clear();
+    
+    if (!memBase || !discovery.valid) return false;
+    if (cameraId < 1 || cameraId > 2) return false;
+    
+    uint32_t category = (cameraId == 1) ? BEACON_CATEGORY_CAMERA1 : BEACON_CATEGORY_CAMERA2;
+    auto& camArray = categoryArrays[category];
+    
+    if (!camArray.initialized) {
+        return false;
+    }
+    
+    // Camera data pages start at index 1 (index 0 is control page)
+    for (size_t pageIdx = 1; pageIdx < camArray.pageCount; pageIdx++) {
+        if (!camArray.isPageValid(pageIdx)) {
+            continue;
+        }
+        
+        void* pagePtr = camArray.getPage(pageIdx);
+        BeaconCameraDataPage* dataPage = reinterpret_cast<BeaconCameraDataPage*>(pagePtr);
+        
+        // Check page validity and if it contains data for the requested PID
+        if (dataPage->magic != BEACON_MAGIC || 
+            dataPage->version_top != dataPage->version_bottom ||
+            dataPage->target_pid != pid) {
+            continue;
+        }
+        
+        // Parse the stream of entries in this page
+        uint8_t* dataPtr = dataPage->data;
+        size_t bytesProcessed = 0;
+        
+        for (uint16_t i = 0; i < dataPage->entry_count && bytesProcessed < 4052; i++) {
+            uint8_t entryType = *dataPtr;
+            
+            if (entryType == BEACON_ENTRY_TYPE_END) {
+                break;  // End of entries in this page
+            }
+            else if (entryType == BEACON_ENTRY_TYPE_SECTION) {
+                // Skip section entries (handled in GetCameraProcessSections)
+                dataPtr += sizeof(BeaconSectionEntry);
+                bytesProcessed += sizeof(BeaconSectionEntry);
+            }
+            else if (entryType == BEACON_ENTRY_TYPE_PTE) {
+                BeaconPTEEntry* beaconPTE = reinterpret_cast<BeaconPTEEntry*>(dataPtr);
+                
+                // Add PTE to map (only if physical address is non-zero, indicating it's allocated)
+                if (beaconPTE->pa != 0) {
+                    ptes[beaconPTE->va] = beaconPTE->pa;
+                }
+                
+                dataPtr += sizeof(BeaconPTEEntry);
+                bytesProcessed += sizeof(BeaconPTEEntry);
+            }
+            else {
+                // Unknown entry type, stop processing this page
+                break;
+            }
+        }
+        
+        // If continuation flag is not set, we've processed all pages for this PID
+        if (dataPage->continuation == 0) {
+            break;
+        }
+    }
+    
+    if (!ptes.empty()) {
+        std::cout << "GetCameraPTEs: Found " << ptes.size() 
+                  << " PTEs for PID " << pid << " from camera " << cameraId << "\n";
+    }
+    
     return true;
 }
 
@@ -665,14 +831,24 @@ void BeaconReader::CopyPagesToArrays() {
 }
 
 bool BeaconReader::RefreshCategoryPages() {
-    // This would be called periodically to refresh torn pages
+    // Fast refresh - just copy from known locations without scanning
+    static int refreshCount = 0;
+    refreshCount++;
+    
+    // Only print every 10th refresh to avoid spam
+    if (refreshCount % 10 == 0) {
+        std::cout << "Refreshing beacon pages from known locations (refresh #" << refreshCount << ")\n";
+    }
+    
     CopyPagesToArrays();
     
     // Check if we have minimum viable data
     bool viable = false;
+    int validCategories = 0;
     for (int cat = 0; cat < 4; cat++) {
         if (categoryArrays[cat].validPages > 0) {
             viable = true;
+            validCategories++;
         }
     }
     

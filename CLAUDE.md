@@ -123,7 +123,6 @@ response = json.loads(sock.recv(4096).decode())
 - Simplified beacon protocol with page-based encoding (no entries span pages)
 - Encoder (companion side): `beacon_encoder.c/h` - writes structured data to shared memory
 - Decoder (Haywire side): `beacon_decoder.cpp/h` - reads and parses beacon data
-- Shared memory at `/dev/shm/haywire_pid_scanner` (note: underscore, not hyphen)
 - Multiple observer types: OBSERVER_PID_SCANNER, OBSERVER_CAMERA, etc.
 
 ### Beacon Page Structure
@@ -131,6 +130,21 @@ response = json.loads(sock.recv(4096).decode())
 - Header includes: observer_type, generation, write_seq, timestamp, entry_count
 - Entry types: ENTRY_PID, ENTRY_SECTION, ENTRY_PTE, ENTRY_CAMERA_HEADER
 - Tear-resistant design: complete entries only, no cross-page spans
+
+### Beacon Communication Architecture
+- **Memory allocation**: Companion programs use malloc (page-aligned) to allocate beacon pages
+- **Visibility**: malloc'd memory IS visible through QEMU's memory-backend-file
+- **Unidirectional channels**: Each page is either g2h (guest-to-haywire) OR h2g (haywire-to-guest)
+  - g2h pages: Companion writes, Haywire reads (e.g., PID lists, camera data)
+  - h2g pages: Haywire writes, companion reads (e.g., camera control commands)
+- **Tear detection**: Both directions use sequence number matching for consistency
+- **Discovery**: All beacon pages (both g2h and h2g) are found via the same scanning mechanism
+
+### Camera Implementation
+- **Page 0**: h2g beacon page (control page) - Haywire writes focus commands here
+- **Pages 1-N**: g2h beacon pages - Companion writes sections/PTEs here
+- Control page has beacon headers but data area contains CameraControlPage structure
+- Companion checks control page for torn reads before processing commands
 
 ### Current Companion Processes
 - `companion_pid_scanner` - Scans /proc and writes PID list (working)
@@ -144,11 +158,12 @@ response = json.loads(sock.recv(4096).decode())
 
 ## TODO/Future Work
 
-1. Complete companion_camera_v2 implementation
-2. Test camera integration with Haywire decoder
-3. Add control mechanism for camera focus selection
+1. Fix companion_camera_v2 to properly initialize page 0 as h2g beacon page
+2. Fix Haywire's SetCameraFocus to find and write to camera control page
+3. Implement proper tear detection in companion's check_camera_control
 4. Implement real PTE reading from /proc/pid/pagemap
 5. Add Windows EPROCESS support
+6. Future: Additional h2g control pages for buffer resizing, etc.
 
 ## Debugging Tips
 

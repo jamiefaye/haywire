@@ -10,7 +10,6 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include "beacon_encoder.h"
 #include "beacon_protocol.h"
 
 #define CAMERA_ID 1  // Camera 1 or 2
@@ -31,15 +30,12 @@ static void* pids_ptr = NULL;              // 16 pages for PID lists
 static void* camera1_ptr = NULL;           // 1 control + 199 data pages
 static void* camera2_ptr = NULL;           // 1 control + 199 data pages
 
-// Beacon encoders for each category
-static BeaconEncoder pid_encoder;
-static BeaconEncoder camera_encoder;
-
 // Current target PID for this camera
 static uint32_t target_pid = 0;
 
-// Circular buffer tracking for camera data pages
-static uint32_t camera_write_index = 0;  // Which data page to write next (0-198)
+// Camera data writing state
+static uint32_t camera_sequence = 0;  // Sequence number for camera data pages
+static uint32_t camera_write_index = 1;  // Which data page to write next (1-199, 0 is control)
 
 // Signal handler for clean shutdown
 static volatile int keep_running = 1;
@@ -180,7 +176,7 @@ int init_memory() {
     return 0;
 }
 
-// Read process memory maps and encode as sections
+// Write camera data using stream format
 void scan_process_memory(uint32_t pid) {
     char maps_path[256];
     snprintf(maps_path, sizeof(maps_path), "/proc/%u/maps", pid);
@@ -191,8 +187,29 @@ void scan_process_memory(uint32_t pid) {
         return;
     }
     
-    // First add a camera header to identify this scan
-    beacon_encoder_add_camera_header(&camera_encoder, CAMERA_ID, pid, time(NULL));
+    // Get the appropriate camera pointer
+    void* camera_ptr = (CAMERA_ID == 1) ? camera1_ptr : camera2_ptr;
+    
+    // Start fresh from page 1 (page 0 is control)
+    camera_write_index = 1;
+    camera_sequence++;
+    
+    // Current page being written
+    BeaconCameraDataPage* current_page = (BeaconCameraDataPage*)((uint8_t*)camera_ptr + camera_write_index * 4096);
+    uint8_t* write_ptr = current_page->data;
+    uint16_t entry_count = 0;
+    size_t bytes_used = 0;
+    
+    // Update page header
+    current_page->magic = BEACON_MAGIC;
+    current_page->version_top = camera_sequence;
+    current_page->session_id = getpid();
+    current_page->category = (CAMERA_ID == 1) ? BEACON_CATEGORY_CAMERA1 : BEACON_CATEGORY_CAMERA2;
+    current_page->category_index = camera_write_index;
+    current_page->timestamp = time(NULL);
+    current_page->target_pid = pid;
+    current_page->entry_count = 0;
+    current_page->continuation = 0;
     
     char line[512];
     int section_count = 0;
@@ -209,26 +226,79 @@ void scan_process_memory(uint32_t pid) {
                        &start, &end, perms, &offset, dev, &inode, path);
         
         if (n >= 6) {
-            // Calculate flags from permissions
-            uint32_t flags = 0;
-            if (perms[0] == 'r') flags |= 0x1;  // PROT_READ
-            if (perms[1] == 'w') flags |= 0x2;  // PROT_WRITE
-            if (perms[2] == 'x') flags |= 0x4;  // PROT_EXEC
-            if (perms[3] == 'p') flags |= 0x8;  // MAP_PRIVATE
-            else flags |= 0x10;  // MAP_SHARED
+            // Check if we have room for a section entry (96 bytes)
+            if (bytes_used + sizeof(BeaconSectionEntry) > 4052) {
+                // Finish current page and start a new one
+                current_page->entry_count = entry_count;
+                current_page->continuation = 1;  // More pages follow
+                current_page->version_bottom = current_page->version_top;
+                
+                // Move to next page
+                camera_write_index++;
+                if (camera_write_index >= BEACON_CAMERA1_PAGES) {
+                    // Out of pages, stop scanning
+                    break;
+                }
+                
+                current_page = (BeaconCameraDataPage*)((uint8_t*)camera_ptr + camera_write_index * 4096);
+                write_ptr = current_page->data;
+                entry_count = 0;
+                bytes_used = 0;
+                
+                // Initialize new page header
+                current_page->magic = BEACON_MAGIC;
+                current_page->version_top = camera_sequence;
+                current_page->session_id = getpid();
+                current_page->category = (CAMERA_ID == 1) ? BEACON_CATEGORY_CAMERA1 : BEACON_CATEGORY_CAMERA2;
+                current_page->category_index = camera_write_index;
+                current_page->timestamp = time(NULL);
+                current_page->target_pid = pid;
+                current_page->entry_count = 0;
+                current_page->continuation = 0;
+            }
             
-            // Add section entry
-            beacon_encoder_add_section(&camera_encoder, pid, start, end - start, flags, path);
+            // Write section entry
+            BeaconSectionEntry* section = (BeaconSectionEntry*)write_ptr;
+            section->type = BEACON_ENTRY_TYPE_SECTION;
+            section->pid = pid;
+            section->va_start = start;
+            section->va_end = end;
+            
+            // Calculate flags from permissions
+            section->perms = 0;
+            if (perms[0] == 'r') section->perms |= 0x1;  // PROT_READ
+            if (perms[1] == 'w') section->perms |= 0x2;  // PROT_WRITE
+            if (perms[2] == 'x') section->perms |= 0x4;  // PROT_EXEC
+            if (perms[3] == 'p') section->perms |= 0x8;  // MAP_PRIVATE
+            else section->perms |= 0x10;  // MAP_SHARED
+            
+            strncpy(section->path, path, 63);
+            section->path[63] = '\0';
+            
+            write_ptr += sizeof(BeaconSectionEntry);
+            bytes_used += sizeof(BeaconSectionEntry);
+            entry_count++;
             section_count++;
             
-            // Also scan for page table entries if this is a data section
-            if ((flags & 0x2) && !(flags & 0x4)) {  // Writable, not executable
-                // For now, just add a few sample PTEs
-                // In real implementation, would read /proc/pid/pagemap
-                for (int i = 0; i < 5 && (start + i * 0x1000) < end; i++) {
-                    uint64_t va = start + i * 0x1000;
-                    uint64_t pa = 0x40000000 + (va & 0xFFFFF000);  // Fake physical address
-                    beacon_encoder_add_pte(&camera_encoder, pid, va, pa);
+            // Also add some sample PTEs for writable data sections
+            if ((section->perms & 0x2) && !(section->perms & 0x4)) {  // Writable, not executable
+                // Add up to 3 sample PTEs (real implementation would read /proc/pid/pagemap)
+                for (int i = 0; i < 3 && (start + i * 0x1000) < end; i++) {
+                    // Check if we have room for a PTE entry (24 bytes)
+                    if (bytes_used + sizeof(BeaconPTEEntry) > 4052) {
+                        break;  // No room in this page
+                    }
+                    
+                    BeaconPTEEntry* pte = (BeaconPTEEntry*)write_ptr;
+                    pte->type = BEACON_ENTRY_TYPE_PTE;
+                    pte->reserved[0] = pte->reserved[1] = pte->reserved[2] = 0;
+                    pte->flags = 0x1;  // Present flag
+                    pte->va = start + i * 0x1000;
+                    pte->pa = 0x40000000 + (pte->va & 0xFFFFF000);  // Fake physical address
+                    
+                    write_ptr += sizeof(BeaconPTEEntry);
+                    bytes_used += sizeof(BeaconPTEEntry);
+                    entry_count++;
                 }
             }
         }
@@ -236,9 +306,20 @@ void scan_process_memory(uint32_t pid) {
     
     fclose(fp);
     
+    // Mark end of entries
+    if (bytes_used + 1 <= 4052) {
+        *write_ptr = BEACON_ENTRY_TYPE_END;
+        bytes_used++;
+    }
+    
+    // Finish the last page
+    current_page->entry_count = entry_count;
+    current_page->continuation = 0;  // Last page
+    current_page->version_bottom = current_page->version_top;
+    
     if (section_count > 0) {
-        printf("Camera %d: Scanned PID %u - found %d sections\n", 
-               CAMERA_ID, pid, section_count);
+        printf("Camera %d: Wrote %d sections for PID %u to pages 1-%u\n", 
+               CAMERA_ID, section_count, pid, camera_write_index);
     }
 }
 
@@ -381,18 +462,6 @@ int main() {
         return 1;
     }
     
-    // Get the appropriate camera pointer
-    void* camera_ptr = (CAMERA_ID == 1) ? camera1_ptr : camera2_ptr;
-    
-    // Initialize PID encoder (writes to PID pages)
-    beacon_encoder_init(&pid_encoder, OBSERVER_PID_SCANNER, 512, pids_ptr, 16 * 4096);
-    
-    // Initialize camera encoder (writes to camera data pages, skipping control page)
-    // Start from page 1 since page 0 is the control page
-    void* camera_data_base = (uint8_t*)camera_ptr + 4096;
-    size_t camera_data_size = (BEACON_CAMERA1_PAGES - 1) * 4096;
-    beacon_encoder_init(&camera_encoder, OBSERVER_CAMERA, 512, camera_data_base, camera_data_size);
-    
     printf("Camera %d started with 4 beacon areas\n", CAMERA_ID);
     
     // Default to init process if no target set
@@ -417,18 +486,12 @@ int main() {
             scan_process_memory(target_pid);
         }
         
-        // Flush encoders to ensure data is written
-        beacon_encoder_flush(&pid_encoder);
-        beacon_encoder_flush(&camera_encoder);
-        
         // Sleep before next scan
         sleep(1);
     }
     
     // Cleanup
     printf("Camera %d: Shutting down\n", CAMERA_ID);
-    beacon_encoder_flush(&pid_encoder);
-    beacon_encoder_flush(&camera_encoder);
     
     // Free all 4 memory areas
     if (master_page) free(master_page);

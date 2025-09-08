@@ -9,8 +9,9 @@
 
 namespace Haywire {
 
-// Forward declaration
+// Forward declarations
 class BeaconDecoder;
+struct SectionEntry;
 
 // Process information from beacon pages
 struct BeaconProcessInfo {
@@ -51,10 +52,10 @@ public:
     // Get all available PID generations
     std::vector<PIDGeneration> GetPIDGenerations();
     
-    // Get process info from round-robin data
+    // Get process info from beacon data
     bool GetProcessInfo(uint32_t pid, BeaconProcessInfo& info);
     
-    // Get all processes with details from round-robin
+    // Get all processes with details from beacons
     std::map<uint32_t, BeaconProcessInfo> GetAllProcessInfo();
     
     // Write to camera control page
@@ -64,7 +65,7 @@ public:
     uint32_t GetCameraFocus(int cameraId);
     
     // Get process sections from camera data
-    bool GetCameraProcessSections(int cameraId, uint32_t pid, std::vector<BeaconSectionEntry>& sections);
+    bool GetCameraProcessSections(int cameraId, uint32_t pid, std::vector<SectionEntry>& sections);
     
     // Get process PTEs from camera data (for crunched view)
     bool GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<uint64_t, uint64_t>& ptes);
@@ -99,9 +100,10 @@ private:
             uint32_t page_count;
             uint32_t write_index;
             uint32_t sequence;
-        } categories[5];  // MASTER, ROUNDROBIN, PID, CAMERA1, CAMERA2
+        } categories[4];  // MASTER, PID, CAMERA1, CAMERA2
         
         bool valid;
+        bool allPagesFound;  // True when we've found all expected beacon pages
     };
     DiscoveryInfo discovery;
     
@@ -125,7 +127,7 @@ private:
             return index < pageCount && pageValid[index];
         }
     };
-    CategoryArray categoryArrays[5];
+    CategoryArray categoryArrays[4];
     
     // Mapping from memory file to receiving arrays
     struct CategoryMapping {
@@ -135,14 +137,13 @@ private:
         size_t foundCount;                    // How many pages found in memory file
         bool valid;                          // True if we found enough pages to be useful
     };
-    CategoryMapping categoryMappings[5];
+    CategoryMapping categoryMappings[4];
     
     // Constants from shared protocol
     static constexpr size_t PAGE_SIZE = BEACON_PAGE_SIZE;
     
     // Use the shared protocol structures
     using PIDListPage = BeaconPIDListPage;
-    using ProcessEntry = BeaconProcessEntry;
     using BeaconPage = ::BeaconPage;
     using CameraControlPage = BeaconCameraControlPage;
     using DiscoveryPage = BeaconDiscoveryPage;
@@ -155,7 +156,6 @@ private:
     void CopyPagesToArrays();
     bool RefreshCategoryPages();  // Re-copy pages and check for tears
     bool ReadPIDGeneration(uint32_t generation, PIDGeneration& gen);
-    bool ScanRoundRobinForProcess(uint32_t pid, BeaconProcessInfo& info);
 };
 
 } // namespace Haywire

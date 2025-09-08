@@ -20,6 +20,7 @@ enum ObserverType {
     OBSERVER_MASTER = 0,
     OBSERVER_PID_SCANNER = 1,
     OBSERVER_CAMERA = 2,
+    OBSERVER_CAMERA_CONTROL = 3,  // h2g control page
 };
 
 // Entry types

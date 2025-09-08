@@ -181,15 +181,15 @@ void PIDSelector::Draw() {
         ImGui::EndTable();
     }
     
-    // Bottom buttons
+    // Bottom section
     ImGui::Separator();
     
-    if (ImGui::Button("Select") && selectedPID > 0) {
-        HandleSelection(selectedPID);
-    }
+    // Info text
+    ImGui::TextDisabled("Click any row to select and focus camera on that process");
     
     ImGui::SameLine();
-    if (ImGui::Button("Cancel")) {
+    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 80);
+    if (ImGui::Button("Close")) {
         Hide();
     }
     
@@ -274,6 +274,9 @@ void PIDSelector::DrawProcessRow(const ProcessDisplayEntry& entry, bool isSelect
     if (ImGui::Selectable(std::to_string(entry.pid).c_str(), isSelected,
                           ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap)) {
         selectedPID = entry.pid;
+        
+        // Single-click to select immediately
+        HandleSelection(entry.pid);
     }
     
     // Name column
@@ -319,17 +322,26 @@ void PIDSelector::DrawProcessRow(const ProcessDisplayEntry& entry, bool isSelect
 }
 
 void PIDSelector::HandleSelection(uint32_t pid) {
+    std::cout << "\n=== PIDSelector::HandleSelection ===\n";
     std::cout << "Selected PID " << pid << " for camera " << selectedCamera << "\n";
     
     // Set camera focus via beacon
     if (beaconReader) {
+        std::cout << "Setting camera focus...\n";
         beaconReader->SetCameraFocus(selectedCamera, pid);
+    } else {
+        std::cout << "WARNING: No beacon reader available!\n";
     }
     
     // Call selection callback
     if (onSelection) {
+        std::cout << "Calling selection callback...\n";
         onSelection(pid);
+    } else {
+        std::cout << "WARNING: No selection callback set!\n";
     }
+    
+    std::cout << "=================================\n";
     
     // Hide menu
     Hide();

@@ -1,5 +1,8 @@
 #include <iostream>
+#include <iomanip>
 #include <chrono>
+#include <unordered_map>
+#include <unistd.h>
 
 #include <GLFW/glfw3.h>
 #include "imgui.h"
@@ -11,6 +14,7 @@
 #include "hex_overlay.h"
 #include "viewport_translator.h"
 #include "beacon_reader.h"
+#include "beacon_decoder.h"
 #include "pid_selector.h"
 
 using namespace Haywire;
@@ -91,19 +95,140 @@ int main(int argc, char** argv) {
         
         // Set callback to switch to process mode when PID is selected
         pidSelector.SetSelectionCallback([&](uint32_t pid) {
+            std::cout << "\n=== Main: PID Selection Callback ===\n";
             std::cout << "Switching to process " << pid << " mode\n";
             overview.SetProcessMode(true, pid);
             
-            // Load process sections from camera beacon data
-            std::vector<BeaconSectionEntry> sections;
-            if (beaconReader->GetCameraProcessSections(1, pid, sections)) {
-                std::cout << "Loaded " << sections.size() << " memory sections from camera\n";
+            // First, tell the camera to focus on this PID
+            beaconReader->SetCameraFocus(1, pid);
+            
+            // Load process sections from camera beacon data with retry
+            std::vector<SectionEntry> sections;
+            std::cout << "Waiting for camera to scan PID " << pid << "...\n";
+            
+            // Retry for up to 3 seconds for camera data to become available
+            int retries = 30;  // 30 * 100ms = 3 seconds
+            bool gotSections = false;
+            while (retries > 0) {
+                if (beaconReader->GetCameraProcessSections(1, pid, sections) && !sections.empty()) {
+                    gotSections = true;
+                    break;
+                }
+                usleep(100000);  // Wait 100ms
+                retries--;
                 
-                // TODO: Convert BeaconSectionEntry to GuestMemoryRegion for visualization
-                // For now, just print what we got
+                // Re-scan beacon data to pick up new camera writes
+                beaconReader->FindDiscovery();
+            }
+            
+            if (gotSections) {
+                std::cout << "\n=== Memory Map for PID " << pid << " ===\n";
+                std::cout << "Loaded " << sections.size() << " memory sections from camera beacon\n";
+                std::cout << "------------------------------------------------\n";
+                
+                // Print section details
                 for (const auto& section : sections) {
-                    std::cout << "  Section: 0x" << std::hex << section.start_addr 
-                              << "-0x" << section.end_addr << " " << section.pathname << std::dec << "\n";
+                    // Convert permissions bitfield to string
+                    std::string perms;
+                    perms += (section.perms & 0x1) ? 'r' : '-';  // PROT_READ
+                    perms += (section.perms & 0x2) ? 'w' : '-';  // PROT_WRITE
+                    perms += (section.perms & 0x4) ? 'x' : '-';  // PROT_EXEC
+                    perms += (section.perms & 0x8) ? 'p' : 's';  // MAP_PRIVATE/SHARED
+                    
+                    // Calculate size in KB/MB
+                    uint64_t size = section.va_end - section.va_start;
+                    std::string sizeStr;
+                    if (size >= 1024*1024*1024) {
+                        sizeStr = std::to_string(size / (1024*1024*1024)) + " GB";
+                    } else if (size >= 1024*1024) {
+                        sizeStr = std::to_string(size / (1024*1024)) + " MB";
+                    } else if (size >= 1024) {
+                        sizeStr = std::to_string(size / 1024) + " KB";
+                    } else {
+                        sizeStr = std::to_string(size) + " B";
+                    }
+                    
+                    std::cout << std::hex << std::setfill('0') 
+                              << "  0x" << std::setw(12) << section.va_start 
+                              << "-0x" << std::setw(12) << section.va_end 
+                              << std::dec << std::setfill(' ')
+                              << " " << perms 
+                              << " " << std::setw(8) << sizeStr
+                              << " " << section.path << "\n";
+                }
+                std::cout << "------------------------------------------------\n";
+                
+                // Also get and display PTEs
+                std::unordered_map<uint64_t, uint64_t> ptes;
+                if (beaconReader->GetCameraPTEs(1, pid, ptes)) {
+                    std::cout << "\n=== Page Table Entries for PID " << pid << " ===\n";
+                    std::cout << "Found " << ptes.size() << " PTEs\n";
+                    
+                    // Show first 10 PTEs as examples
+                    int count = 0;
+                    for (const auto& [va, pa] : ptes) {
+                        if (count >= 10) {
+                            std::cout << "... and " << (ptes.size() - 10) << " more PTEs\n";
+                            break;
+                        }
+                        std::cout << "  VA: 0x" << std::hex << va 
+                                  << " -> PA: 0x" << pa << std::dec << "\n";
+                        count++;
+                    }
+                    std::cout << "------------------------------------------------\n";
+                }
+                
+                // Convert SectionEntry to GuestMemoryRegion for visualization
+                std::vector<GuestMemoryRegion> regions;
+                for (const auto& section : sections) {
+                    GuestMemoryRegion region;
+                    region.start = section.va_start;
+                    region.end = section.va_end;
+                    
+                    // Convert permissions bitfield to string
+                    std::string perms;
+                    perms += (section.perms & 0x1) ? 'r' : '-';  // PROT_READ
+                    perms += (section.perms & 0x2) ? 'w' : '-';  // PROT_WRITE
+                    perms += (section.perms & 0x4) ? 'x' : '-';  // PROT_EXEC
+                    perms += (section.perms & 0x8) ? 'p' : 's';  // MAP_PRIVATE/SHARED
+                    region.permissions = perms;
+                    
+                    region.name = section.path;
+                    regions.push_back(region);
+                }
+                std::cout << "------------------------------------------------\n";
+                
+                // Load the memory map into the visualizer
+                visualizer.LoadMemoryMap(regions);
+                visualizer.SetProcessPid(pid);
+                
+                // Navigate to first executable or readable region to avoid 0x0 errors
+                uint64_t startAddr = 0;
+                for (const auto& region : regions) {
+                    // Look for first executable region (likely the main binary)
+                    if (region.permissions.find('x') != std::string::npos) {
+                        startAddr = region.start;
+                        break;
+                    }
+                }
+                // If no executable found, use first readable region
+                if (startAddr == 0) {
+                    for (const auto& region : regions) {
+                        if (region.permissions.find('r') != std::string::npos) {
+                            startAddr = region.start;
+                            break;
+                        }
+                    }
+                }
+                
+                if (startAddr != 0) {
+                    visualizer.NavigateToAddress(startAddr);
+                    std::cout << "Navigated to address 0x" << std::hex << startAddr << std::dec << "\n";
+                }
+                
+                // Also trigger the onProcessMapLoaded callback
+                if (visualizer.onProcessMapLoaded) {
+                    visualizer.onProcessMapLoaded(pid, regions);
                 }
             } else {
                 std::cout << "Waiting for camera data for PID " << pid << "\n";
