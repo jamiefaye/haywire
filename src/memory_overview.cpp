@@ -556,6 +556,16 @@ void MemoryOverview::LoadProcessMap(GuestAgent* agent) {
     }
 }
 
+void MemoryOverview::LoadProcessSections(const std::vector<GuestMemoryRegion>& regions) {
+    // Store sections for display
+    processSections = regions;
+    
+    // If we have a flattener, update it with the new regions
+    if (flattener) {
+        flattener->BuildFromRegions(regions);
+    }
+}
+
 void MemoryOverview::DrawProcessMap() {
     if (targetPid <= 0) {
         ImGui::Text("No process selected");
@@ -563,8 +573,64 @@ void MemoryOverview::DrawProcessMap() {
         return;
     }
     
-    ImGui::Text("Process %d Memory Map (Crunched View)", targetPid);
+    ImGui::Text("Process %d Memory Map", targetPid);
     ImGui::Separator();
+    
+    // Show sections list if available
+    if (!processSections.empty()) {
+        if (ImGui::CollapsingHeader("Memory Sections", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::BeginChild("SectionsList", ImVec2(0, 150), true, 
+                            ImGuiWindowFlags_HorizontalScrollbar);
+            
+            // Table with columns for address range, permissions, size, and name
+            if (ImGui::BeginTable("Sections", 4, 
+                                ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | 
+                                ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY)) {
+                ImGui::TableSetupColumn("Address Range", ImGuiTableColumnFlags_WidthFixed, 200);
+                ImGui::TableSetupColumn("Perms", ImGuiTableColumnFlags_WidthFixed, 50);
+                ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 80);
+                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableHeadersRow();
+                
+                for (const auto& section : processSections) {
+                    ImGui::TableNextRow();
+                    
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::Text("0x%llx-0x%llx", section.start, section.end);
+                    
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::Text("%s", section.permissions.c_str());
+                    
+                    ImGui::TableSetColumnIndex(2);
+                    uint64_t size = section.end - section.start;
+                    if (size >= 1024*1024) {
+                        ImGui::Text("%.1f MB", size / (1024.0 * 1024.0));
+                    } else if (size >= 1024) {
+                        ImGui::Text("%.1f KB", size / 1024.0);
+                    } else {
+                        ImGui::Text("%llu B", size);
+                    }
+                    
+                    ImGui::TableSetColumnIndex(3);
+                    ImGui::Text("%s", section.name.c_str());
+                    
+                    // Click to navigate
+                    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
+                        if (navCallback) {
+                            navCallback(section.start);
+                        }
+                    }
+                }
+                
+                ImGui::EndTable();
+            }
+            
+            ImGui::EndChild();
+        }
+        
+        ImGui::Separator();
+        ImGui::Text("Crunched Address Space View:");
+    }
     
     if (!flattener) {
         ImGui::Text("No address space flattener available");

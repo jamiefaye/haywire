@@ -202,6 +202,9 @@ int main(int argc, char** argv) {
                 visualizer.LoadMemoryMap(regions);
                 visualizer.SetProcessPid(pid);
                 
+                // Also load sections into the overview
+                overview.LoadProcessSections(regions);
+                
                 // Navigate to first executable or readable region to avoid 0x0 errors
                 uint64_t startAddr = 0;
                 for (const auto& region : regions) {

@@ -8,6 +8,7 @@
 #include "mmap_reader.h"
 #include "process_memory_map.h"
 #include "address_space_flattener.h"
+#include "guest_agent.h"
 
 namespace Haywire {
 
@@ -54,6 +55,7 @@ public:
     // Process memory map mode
     void SetProcessMode(bool enabled, int pid = -1);
     void LoadProcessMap(GuestAgent* agent);
+    void LoadProcessSections(const std::vector<GuestMemoryRegion>& regions);
     void SetFlattener(AddressSpaceFlattener* flattener) { this->flattener = flattener; }
     
     // Get address from pixel position
@@ -100,6 +102,7 @@ private:
     bool processMode;
     int targetPid;
     ProcessMemoryMap processMap;
+    std::vector<GuestMemoryRegion> processSections;
     AddressSpaceFlattener* flattener;
     NavigationCallback navCallback;
     
