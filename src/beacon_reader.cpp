@@ -821,7 +821,14 @@ void BeaconReader::CopyPagesToArrays() {
                 array.validPages++;
             } else {
                 array.pageValid[i] = false;
-                std::cerr << "Category " << cat << " page " << i << " is torn\n";
+                if (cat == 2 && (i == 1 || i == 2)) {
+                    std::cerr << "Category " << cat << " page " << i << " torn: "
+                              << "magic=0x" << std::hex << page->magic 
+                              << " version_top=" << std::dec << page->version_top
+                              << " version_bottom=" << page->version_bottom << "\n";
+                } else {
+                    std::cerr << "Category " << cat << " page " << i << " is torn\n";
+                }
             }
         }
         

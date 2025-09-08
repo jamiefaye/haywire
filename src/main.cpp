@@ -164,16 +164,10 @@ int main(int argc, char** argv) {
                     std::cout << "\n=== Page Table Entries for PID " << pid << " ===\n";
                     std::cout << "Found " << ptes.size() << " PTEs\n";
                     
-                    // Show first 10 PTEs as examples
-                    int count = 0;
+                    // Show all PTEs
                     for (const auto& [va, pa] : ptes) {
-                        if (count >= 10) {
-                            std::cout << "... and " << (ptes.size() - 10) << " more PTEs\n";
-                            break;
-                        }
                         std::cout << "  VA: 0x" << std::hex << va 
                                   << " -> PA: 0x" << pa << std::dec << "\n";
-                        count++;
                     }
                     std::cout << "------------------------------------------------\n";
                 }

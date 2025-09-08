@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <stdint.h>
 #include "beacon_protocol.h"
 
 #define CAMERA_ID 1  // Camera 1 or 2
@@ -176,6 +177,78 @@ int init_memory() {
     return 0;
 }
 
+// Read page table entries from /proc/pid/pagemap
+int read_ptes_for_region(uint32_t pid, uint64_t start_va, uint64_t end_va, 
+                         uint8_t** write_ptr, size_t* bytes_used, uint16_t* entry_count,
+                         size_t max_bytes) {
+    char pagemap_path[256];
+    snprintf(pagemap_path, sizeof(pagemap_path), "/proc/%u/pagemap", pid);
+    
+    int pagemap_fd = open(pagemap_path, O_RDONLY);
+    if (pagemap_fd < 0) {
+        // Can't read pagemap (might need root)
+        return 0;
+    }
+    
+    int ptes_written = 0;
+    uint64_t page_size = 4096;
+    
+    // Iterate through pages in the region
+    for (uint64_t va = start_va; va < end_va; va += page_size) {
+        // Check if we have room for a PTE entry (24 bytes)
+        if (*bytes_used + sizeof(BeaconPTEEntry) > max_bytes) {
+            break;  // No room in this page
+        }
+        
+        // Calculate pagemap offset for this virtual address
+        uint64_t pagemap_offset = (va / page_size) * sizeof(uint64_t);
+        
+        // Seek to the pagemap entry
+        if (lseek(pagemap_fd, pagemap_offset, SEEK_SET) < 0) {
+            continue;
+        }
+        
+        // Read the pagemap entry
+        uint64_t pagemap_entry;
+        if (read(pagemap_fd, &pagemap_entry, sizeof(pagemap_entry)) != sizeof(pagemap_entry)) {
+            continue;
+        }
+        
+        // Parse pagemap entry
+        // Bit 63: page present
+        // Bits 0-54: page frame number (if present)
+        // Bit 62: page swapped
+        // Bit 61: page exclusively mapped
+        uint64_t present = (pagemap_entry >> 63) & 1;
+        uint64_t pfn = pagemap_entry & ((1ULL << 55) - 1);
+        
+        // Only add PTE if page is present (allocated)
+        if (present && pfn != 0) {
+            uint64_t pa = pfn * page_size;
+            
+            BeaconPTEEntry* pte = (BeaconPTEEntry*)*write_ptr;
+            pte->type = BEACON_ENTRY_TYPE_PTE;
+            pte->reserved[0] = pte->reserved[1] = pte->reserved[2] = 0;
+            pte->flags = 0x1;  // Present flag
+            pte->va = va;
+            pte->pa = pa;
+            
+            *write_ptr += sizeof(BeaconPTEEntry);
+            *bytes_used += sizeof(BeaconPTEEntry);
+            (*entry_count)++;
+            ptes_written++;
+            
+            // Limit PTEs per section to avoid filling pages too quickly
+            if (ptes_written >= 50) {
+                break;
+            }
+        }
+    }
+    
+    close(pagemap_fd);
+    return ptes_written;
+}
+
 // Write camera data using stream format
 void scan_process_memory(uint32_t pid) {
     char maps_path[256];
@@ -210,6 +283,7 @@ void scan_process_memory(uint32_t pid) {
     current_page->target_pid = pid;
     current_page->entry_count = 0;
     current_page->continuation = 0;
+    current_page->version_bottom = camera_sequence;  // Match version_top to prevent torn reads
     
     char line[512];
     int section_count = 0;
@@ -227,7 +301,7 @@ void scan_process_memory(uint32_t pid) {
         
         if (n >= 6) {
             // Check if we have room for a section entry (96 bytes)
-            if (bytes_used + sizeof(BeaconSectionEntry) > 4052) {
+            if (bytes_used + sizeof(BeaconSectionEntry) > 4060) {
                 // Finish current page and start a new one
                 current_page->entry_count = entry_count;
                 current_page->continuation = 1;  // More pages follow
@@ -255,6 +329,7 @@ void scan_process_memory(uint32_t pid) {
                 current_page->target_pid = pid;
                 current_page->entry_count = 0;
                 current_page->continuation = 0;
+                current_page->version_bottom = camera_sequence;  // Match version_top to prevent torn reads
             }
             
             // Write section entry
@@ -282,10 +357,10 @@ void scan_process_memory(uint32_t pid) {
             
             // Also add some sample PTEs for writable data sections
             if ((section->perms & 0x2) && !(section->perms & 0x4)) {  // Writable, not executable
-                // Add up to 3 sample PTEs (real implementation would read /proc/pid/pagemap)
-                for (int i = 0; i < 3 && (start + i * 0x1000) < end; i++) {
+                // Add up to 50 sample PTEs (fake for now) to test page boundaries
+                for (int i = 0; i < 50 && (start + i * 0x1000) < end; i++) {
                     // Check if we have room for a PTE entry (24 bytes)
-                    if (bytes_used + sizeof(BeaconPTEEntry) > 4052) {
+                    if (bytes_used + sizeof(BeaconPTEEntry) > 4060) {
                         break;  // No room in this page
                     }
                     
@@ -307,7 +382,7 @@ void scan_process_memory(uint32_t pid) {
     fclose(fp);
     
     // Mark end of entries
-    if (bytes_used + 1 <= 4052) {
+    if (bytes_used + 1 <= 4060) {
         *write_ptr = BEACON_ENTRY_TYPE_END;
         bytes_used++;
     }

@@ -152,7 +152,7 @@ typedef struct BeaconCameraDataPage {
     uint32_t target_pid;                     // Which PID this data is for
     uint16_t entry_count;                    // Number of entries in this page
     uint16_t continuation;                   // 0=last page, 1=more pages follow
-    uint8_t data[4052];                      // Stream of mixed section/PTE entries
+    uint8_t data[4060];                      // Stream of mixed section/PTE entries (4096 - 32 - 4 = 4060)
     uint32_t version_bottom;                 // Must match version_top
 } BeaconCameraDataPage;
 
@@ -185,6 +185,7 @@ typedef struct BeaconDiscoveryPage {
 BEACON_STATIC_ASSERT(sizeof(BeaconPage) == 4096, BeaconPage_size);
 BEACON_STATIC_ASSERT(sizeof(BeaconPIDListPage) == 4096, BeaconPIDListPage_size);
 BEACON_STATIC_ASSERT(sizeof(BeaconCameraControlPage) == 4096, BeaconCameraControlPage_size);
+BEACON_STATIC_ASSERT(sizeof(BeaconCameraDataPage) == 4096, BeaconCameraDataPage_size);
 BEACON_STATIC_ASSERT(sizeof(BeaconDiscoveryPage) == 4096, BeaconDiscoveryPage_size);
 
 #ifdef __cplusplus
