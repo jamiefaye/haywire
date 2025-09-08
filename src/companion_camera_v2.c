@@ -238,10 +238,7 @@ int read_ptes_for_region(uint32_t pid, uint64_t start_va, uint64_t end_va,
             (*entry_count)++;
             ptes_written++;
             
-            // Limit PTEs per section to avoid filling pages too quickly
-            if (ptes_written >= 50) {
-                break;
-            }
+            // No limit - send all present PTEs for the section
         }
     }
     
@@ -355,25 +352,34 @@ void scan_process_memory(uint32_t pid) {
             entry_count++;
             section_count++;
             
-            // Also add some sample PTEs for writable data sections
-            if ((section->perms & 0x2) && !(section->perms & 0x4)) {  // Writable, not executable
-                // Add up to 50 sample PTEs (fake for now) to test page boundaries
-                for (int i = 0; i < 50 && (start + i * 0x1000) < end; i++) {
-                    // Check if we have room for a PTE entry (24 bytes)
-                    if (bytes_used + sizeof(BeaconPTEEntry) > 4060) {
-                        break;  // No room in this page
+            // Add real PTEs for all sections with any permissions
+            if (section->perms != 0) {  // Any section with permissions (readable, writable, or executable)
+                // Try to read real PTEs from pagemap
+                int ptes_added = read_ptes_for_region(pid, start, end, 
+                                                      &write_ptr, &bytes_used, &entry_count,
+                                                      4060 - bytes_used);
+                if (ptes_added > 0) {
+                    // Successfully read real PTEs
+                    // write_ptr, bytes_used, and entry_count already updated by read_ptes_for_region
+                } else {
+                    // Fallback: Add a few fake PTEs if pagemap not available
+                    for (int i = 0; i < 3 && (start + i * 0x1000) < end; i++) {
+                        // Check if we have room for a PTE entry (24 bytes)
+                        if (bytes_used + sizeof(BeaconPTEEntry) > 4060) {
+                            break;  // No room in this page
+                        }
+                        
+                        BeaconPTEEntry* pte = (BeaconPTEEntry*)write_ptr;
+                        pte->type = BEACON_ENTRY_TYPE_PTE;
+                        pte->reserved[0] = pte->reserved[1] = pte->reserved[2] = 0;
+                        pte->flags = 0x1;  // Present flag
+                        pte->va = start + i * 0x1000;
+                        pte->pa = 0x40000000 + (pte->va & 0xFFFFF000);  // Fake physical address
+                        
+                        write_ptr += sizeof(BeaconPTEEntry);
+                        bytes_used += sizeof(BeaconPTEEntry);
+                        entry_count++;
                     }
-                    
-                    BeaconPTEEntry* pte = (BeaconPTEEntry*)write_ptr;
-                    pte->type = BEACON_ENTRY_TYPE_PTE;
-                    pte->reserved[0] = pte->reserved[1] = pte->reserved[2] = 0;
-                    pte->flags = 0x1;  // Present flag
-                    pte->va = start + i * 0x1000;
-                    pte->pa = 0x40000000 + (pte->va & 0xFFFFF000);  // Fake physical address
-                    
-                    write_ptr += sizeof(BeaconPTEEntry);
-                    bytes_used += sizeof(BeaconPTEEntry);
-                    entry_count++;
                 }
             }
         }
