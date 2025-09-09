@@ -4,8 +4,12 @@
 #include <vector>
 #include <cstdint>
 #include <sys/mman.h>
+#include <memory>
 
 namespace Haywire {
+
+// Forward declaration
+class MemoryMapper;
 
 class MemoryBackend {
 public:
@@ -31,6 +35,10 @@ public:
     std::string GetBackendPath() const { return backendPath; }
     size_t GetMappedSize() const { return mappedSize; }
     
+    // Initialize memory mapping discovery
+    bool InitializeMemoryMapping(const std::string& monitor_host = "localhost", 
+                                 int monitor_port = 4444);
+    
     void Unmap();
     
 private:
@@ -38,6 +46,7 @@ private:
     size_t mappedSize;
     int fd;
     std::string backendPath;
+    std::unique_ptr<MemoryMapper> memoryMapper;
     
     // Try common locations for memory-backend files
     bool TryMapPath(const std::string& path);

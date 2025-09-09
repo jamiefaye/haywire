@@ -29,6 +29,10 @@ QemuConnection::QemuConnection()
     if (memoryBackend->AutoDetect()) {
         useMemoryBackend = true;
         std::cerr << "Memory backend auto-detected and enabled!\n";
+        
+        // Initialize memory mapping discovery
+        std::cerr << "Discovering memory regions from QEMU monitor...\n";
+        memoryBackend->InitializeMemoryMapping("localhost", 4444);
     }
 }
 

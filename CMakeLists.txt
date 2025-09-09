@@ -82,6 +82,7 @@ add_executable(haywire
     src/gdb_connection.cpp
     src/mmap_reader.cpp
     src/memory_backend.cpp
+    src/memory_mapper.cpp
     src/guest_agent.cpp
     src/viewport_translator.cpp
     src/process_memory_map.cpp

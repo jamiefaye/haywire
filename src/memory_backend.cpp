@@ -1,4 +1,5 @@
 #include "memory_backend.h"
+#include "memory_mapper.h"
 #include <iostream>
 #include <fcntl.h>
 #include <unistd.h>
@@ -10,6 +11,7 @@
 namespace Haywire {
 
 MemoryBackend::MemoryBackend() : mappedData(nullptr), mappedSize(0), fd(-1) {
+    memoryMapper = std::make_unique<MemoryMapper>();
 }
 
 MemoryBackend::~MemoryBackend() {
@@ -135,17 +137,21 @@ bool MemoryBackend::MapMemoryBackend(const std::string& path, size_t size) {
 }
 
 bool MemoryBackend::Read(uint64_t gpa, size_t size, std::vector<uint8_t>& buffer) {
-    // TEST: ARM64 guest RAM starts at 0x40000000
-    const uint64_t TEST_RAM_BASE = 0x40000000;
+    // Use MemoryMapper if available, otherwise fall back to hardcoded offset
+    int64_t fileOffset;
     
-    // Convert physical address to file offset
-    uint64_t fileOffset = gpa;
-    if (gpa >= TEST_RAM_BASE) {
-        fileOffset = gpa - TEST_RAM_BASE;
-        static int debugCount = 0;
-        if (++debugCount <= 5) {
-            std::cerr << "MemoryBackend: PA 0x" << std::hex << gpa 
-                      << " -> file offset 0x" << fileOffset << std::dec << std::endl;
+    if (memoryMapper && memoryMapper->GetRegions().size() > 0) {
+        fileOffset = memoryMapper->TranslateGPAToFileOffset(gpa);
+        if (fileOffset < 0) {
+            // Address not in any mapped region
+            return false;
+        }
+    } else {
+        // Fallback: ARM64 guest RAM starts at 0x40000000
+        const uint64_t TEST_RAM_BASE = 0x40000000;
+        fileOffset = gpa;
+        if (gpa >= TEST_RAM_BASE) {
+            fileOffset = gpa - TEST_RAM_BASE;
         }
     }
     
@@ -173,18 +179,45 @@ bool MemoryBackend::Read(uint64_t gpa, size_t size, std::vector<uint8_t>& buffer
 }
 
 const uint8_t* MemoryBackend::GetDirectPointer(uint64_t gpa) const {
-    // TEST: ARM64 guest RAM starts at 0x40000000
-    const uint64_t TEST_RAM_BASE = 0x40000000;
+    // Use MemoryMapper if available, otherwise fall back to hardcoded offset
+    int64_t fileOffset;
     
-    uint64_t fileOffset = gpa;
-    if (gpa >= TEST_RAM_BASE) {
-        fileOffset = gpa - TEST_RAM_BASE;
+    if (memoryMapper && memoryMapper->GetRegions().size() > 0) {
+        fileOffset = memoryMapper->TranslateGPAToFileOffset(gpa);
+        if (fileOffset < 0) {
+            return nullptr;
+        }
+    } else {
+        // Fallback: ARM64 guest RAM starts at 0x40000000
+        const uint64_t TEST_RAM_BASE = 0x40000000;
+        fileOffset = gpa;
+        if (gpa >= TEST_RAM_BASE) {
+            fileOffset = gpa - TEST_RAM_BASE;
+        }
     }
     
     if (!mappedData || fileOffset >= mappedSize) {
         return nullptr;
     }
     return mappedData + fileOffset;
+}
+
+bool MemoryBackend::InitializeMemoryMapping(const std::string& monitor_host, int monitor_port) {
+    if (!memoryMapper) {
+        memoryMapper = std::make_unique<MemoryMapper>();
+    }
+    
+    std::cout << "MemoryBackend: Initializing memory mapping from QEMU monitor" << std::endl;
+    bool success = memoryMapper->DiscoverMemoryMap(monitor_host, monitor_port);
+    
+    if (success) {
+        std::cout << "MemoryBackend: Successfully discovered memory regions" << std::endl;
+        memoryMapper->LogRegions();
+    } else {
+        std::cerr << "MemoryBackend: Failed to discover memory regions, using fallback" << std::endl;
+    }
+    
+    return success;
 }
 
 void MemoryBackend::Unmap() {
