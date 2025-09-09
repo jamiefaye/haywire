@@ -807,7 +807,7 @@ void BeaconReader::CopyPagesToArrays() {
             void* dst = &array.data[i * PAGE_SIZE];
             memcpy(dst, src, PAGE_SIZE);
             
-            // Check if page is torn
+            // Check page validity
             BeaconPage* page = reinterpret_cast<BeaconPage*>(dst);
             if (page->magic == BEACON_MAGIC && 
                 page->version_top == page->version_bottom) {
@@ -816,14 +816,14 @@ void BeaconReader::CopyPagesToArrays() {
                 array.validPages++;
             } else {
                 array.pageValid[i] = false;
-                if (cat == 2 && (i == 1 || i == 2)) {
-                    std::cerr << "Category " << cat << " page " << i << " torn: "
-                              << "magic=0x" << std::hex << page->magic 
-                              << " version_top=" << std::dec << page->version_top
-                              << " version_bottom=" << page->version_bottom << "\n";
-                } else {
-                    std::cerr << "Category " << cat << " page " << i << " is torn\n";
+                // Only report actual torn pages (top != bottom), not stale ones
+                if (page->version_top != page->version_bottom) {
+                    // Page is actually torn (write interrupted)
+                    std::cerr << "Category " << cat << " page " << i << " is torn "
+                              << "(top=" << page->version_top 
+                              << " != bottom=" << page->version_bottom << ")\n";
                 }
+                // Stale pages (top == bottom but wrong sequence) are silently ignored
             }
         }
         

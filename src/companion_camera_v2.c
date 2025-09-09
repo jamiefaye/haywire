@@ -614,7 +614,7 @@ int main() {
         }
         
         // Sleep before next scan
-        sleep(1);
+        usleep(250000);  // 250ms = 4Hz scan rate
     }
     
     // Cleanup
