@@ -586,16 +586,27 @@ void MemoryOverview::DrawProcessMap() {
             if (ImGui::BeginTable("Sections", 4, 
                                 ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | 
                                 ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY)) {
-                ImGui::TableSetupColumn("Address Range", ImGuiTableColumnFlags_WidthFixed, 200);
-                ImGui::TableSetupColumn("Perms", ImGuiTableColumnFlags_WidthFixed, 50);
-                ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 80);
+                ImGui::TableSetupColumn("Address Range", ImGuiTableColumnFlags_WidthFixed, 250);
+                ImGui::TableSetupColumn("Perms", ImGuiTableColumnFlags_WidthFixed, 60);
+                ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 100);
                 ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableHeadersRow();
                 
                 for (const auto& section : processSections) {
                     ImGui::TableNextRow();
                     
+                    // Make the entire row selectable
                     ImGui::TableSetColumnIndex(0);
+                    char label[64];
+                    snprintf(label, sizeof(label), "##section_%llx", section.start);
+                    if (ImGui::Selectable(label, false, ImGuiSelectableFlags_SpanAllColumns)) {
+                        if (navCallback) {
+                            navCallback(section.start);
+                        }
+                    }
+                    
+                    // Draw the actual content
+                    ImGui::SameLine();
                     ImGui::Text("0x%llx-0x%llx", section.start, section.end);
                     
                     ImGui::TableSetColumnIndex(1);
@@ -613,13 +624,6 @@ void MemoryOverview::DrawProcessMap() {
                     
                     ImGui::TableSetColumnIndex(3);
                     ImGui::Text("%s", section.name.c_str());
-                    
-                    // Click to navigate
-                    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
-                        if (navCallback) {
-                            navCallback(section.start);
-                        }
-                    }
                 }
                 
                 ImGui::EndTable();
