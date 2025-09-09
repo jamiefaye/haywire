@@ -20,6 +20,7 @@ namespace Haywire {
 
 class QemuConnection;
 class ViewportTranslator;
+class BeaconTranslator;
 class AddressSpaceFlattener;
 class CrunchedRangeNavigator;
 class CrunchedMemoryReader;
@@ -52,6 +53,7 @@ public:
     
     // VA to PA translation
     void SetTranslator(std::shared_ptr<ViewportTranslator> translator);
+    void SetBeaconTranslator(std::shared_ptr<BeaconTranslator> beaconTranslator);
     void SetProcessPid(int pid);
     void SetGuestAgent(GuestAgent* agent) { guestAgent = agent; }
     

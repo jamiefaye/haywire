@@ -95,6 +95,7 @@ add_executable(haywire
     src/fft16384.cpp
     src/beacon_reader.cpp
     src/beacon_decoder.cpp
+    src/beacon_translator.cpp
     src/pid_selector.cpp
     ${IMGUI_SOURCES}
 )

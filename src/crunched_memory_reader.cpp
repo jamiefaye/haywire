@@ -5,7 +5,8 @@
 namespace Haywire {
 
 CrunchedMemoryReader::CrunchedMemoryReader() 
-    : flattener(nullptr), translator(nullptr), qemu(nullptr), targetPid(-1) {
+    : flattener(nullptr), translator(nullptr), beaconTranslator(nullptr), 
+      qemu(nullptr), targetPid(-1) {
 }
 
 CrunchedMemoryReader::~CrunchedMemoryReader() {
@@ -17,8 +18,8 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
         std::cerr << "CrunchedReader: No flattener!" << std::endl;
         return 0;
     }
-    if (!translator) {
-        std::cerr << "CrunchedReader: No translator!" << std::endl;
+    if (!translator && !beaconTranslator) {
+        std::cerr << "CrunchedReader: No translator (neither viewport nor beacon)!" << std::endl;
         return 0;
     }
     if (!qemu) {
@@ -63,16 +64,21 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
         size_t toRead = std::min(remainingInRegion, size - totalRead);
         
         // Read in page-sized chunks for efficiency
-        const size_t PAGE_SIZE = 4096;
+        const size_t pageSize = 4096;
         size_t regionBytesRead = 0;
         
         while (regionBytesRead < toRead) {
-            size_t chunkSize = std::min(PAGE_SIZE, toRead - regionBytesRead);
+            size_t chunkSize = std::min<size_t>(pageSize, toRead - regionBytesRead);
             uint64_t chunkVA = virtualAddr + regionBytesRead;
             
-            // Translate VA to PA
+            // Translate VA to PA using beacon translator if available, otherwise viewport
             translationsNeeded++;
-            uint64_t physAddr = translator->TranslateAddress(targetPid, chunkVA);
+            uint64_t physAddr = 0;
+            if (beaconTranslator) {
+                physAddr = beaconTranslator->TranslateAddress(targetPid, chunkVA);
+            } else if (translator) {
+                physAddr = translator->TranslateAddress(targetPid, chunkVA);
+            }
             
             if (physAddr == 0) {
                 // Page not present - fill with zeros

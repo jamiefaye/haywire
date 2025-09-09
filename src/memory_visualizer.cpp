@@ -85,6 +85,12 @@ void MemoryVisualizer::SetTranslator(std::shared_ptr<ViewportTranslator> transla
     }
 }
 
+void MemoryVisualizer::SetBeaconTranslator(std::shared_ptr<BeaconTranslator> beaconTranslator) {
+    if (crunchedReader) {
+        crunchedReader->SetBeaconTranslator(beaconTranslator);
+    }
+}
+
 void MemoryVisualizer::SetProcessPid(int pid) {
     targetPid = pid;
     if (crunchedReader) {

@@ -24,7 +24,7 @@ namespace Haywire {
 BeaconReader::BeaconReader() : memFd(-1), memBase(nullptr), memSize(0), companionPid(0), lastCompanionCheck(0) {
     discovery.valid = false;
     discovery.allPagesFound = false;
-    decoder = std::make_unique<BeaconDecoder>();
+    decoder = std::make_shared<BeaconDecoder>();
 }
 
 BeaconReader::~BeaconReader() {

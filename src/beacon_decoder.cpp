@@ -258,4 +258,26 @@ bool BeaconDecoder::HasRecentData(uint64_t maxAgeNs) const {
     return (nowNs - lastTimestamp) < maxAgeNs;
 }
 
+std::unordered_map<uint64_t, uint64_t> BeaconDecoder::GetCameraPTEs(int camera) const {
+    std::unordered_map<uint64_t, uint64_t> result;
+    
+    // For now, just return all PTEs we have
+    // The PTEs are associated with the current camera PID through currentCameraPID
+    // TODO: Track which camera the PTEs came from
+    for (const auto& pte : pteEntries) {
+        result[pte.va] = pte.pa;
+    }
+    
+    return result;
+}
+
+int BeaconDecoder::GetCameraTargetPID(int camera) const {
+    // Return the current camera PID we're tracking
+    // TODO: Track separate PIDs for camera 1 and 2
+    if (!cameraHeaders.empty()) {
+        return cameraHeaders.back().pid;
+    }
+    return currentCameraPID;
+}
+
 } // namespace Haywire

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <vector>
 #include <map>
+#include <unordered_map>
 #include <cstring>
 
 namespace Haywire {
@@ -114,6 +115,12 @@ public:
     
     // Check if we have recent data
     bool HasRecentData(uint64_t maxAgeNs = 5000000000ULL) const; // 5 seconds default
+    
+    // Get PTEs as a map for a specific camera (1 or 2)
+    std::unordered_map<uint64_t, uint64_t> GetCameraPTEs(int camera) const;
+    
+    // Get target PID for a specific camera
+    int GetCameraTargetPID(int camera) const;
     
 private:
     // Decode a single page

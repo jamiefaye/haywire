@@ -75,6 +75,11 @@ public:
     bool IsCompanionRunning();
     bool StopCompanion(class GuestAgent* agent);
     
+    // Get the decoder for external use
+    std::shared_ptr<BeaconDecoder> GetDecoder() const { 
+        return decoder; 
+    }
+    
 private:
     // Memory mapping
     int memFd;
@@ -86,7 +91,7 @@ private:
     uint32_t lastCompanionCheck;
     
     // New beacon decoder
-    std::unique_ptr<BeaconDecoder> decoder;
+    std::shared_ptr<BeaconDecoder> decoder;
     
     // Discovery information
     struct DiscoveryInfo {

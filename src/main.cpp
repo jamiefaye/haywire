@@ -15,6 +15,7 @@
 #include "viewport_translator.h"
 #include "beacon_reader.h"
 #include "beacon_decoder.h"
+#include "beacon_translator.h"
 #include "pid_selector.h"
 
 using namespace Haywire;
@@ -71,6 +72,7 @@ int main(int argc, char** argv) {
     
     // Beacon reader and PID selector
     auto beaconReader = std::make_shared<BeaconReader>();
+    std::shared_ptr<BeaconTranslator> beaconTranslator;
     PIDSelector pidSelector;
     
     // Initialize beacon reader
@@ -92,6 +94,13 @@ int main(int argc, char** argv) {
         }
         
         pidSelector.SetBeaconReader(beaconReader);
+        
+        // Create beacon translator using the decoder
+        if (beaconReader->GetDecoder()) {
+            beaconTranslator = std::make_shared<BeaconTranslator>(beaconReader->GetDecoder());
+            visualizer.SetBeaconTranslator(beaconTranslator);
+            std::cout << "Beacon translator created and connected to visualizer\n";
+        }
         
         // Set callback to switch to process mode when PID is selected
         pidSelector.SetSelectionCallback([&](uint32_t pid) {
