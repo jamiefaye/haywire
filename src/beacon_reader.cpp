@@ -760,11 +760,6 @@ bool BeaconReader::GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<
         }
     }
     
-    if (!ptes.empty()) {
-        std::cout << "GetCameraPTEs: Found " << ptes.size() 
-                  << " PTEs for PID " << pid << " from camera " << cameraId << "\n";
-    }
-    
     return true;
 }
 
@@ -832,8 +827,13 @@ void BeaconReader::CopyPagesToArrays() {
             }
         }
         
-        std::cout << "Category " << cat << ": copied " << array.validPages 
-                  << " valid pages (of " << mapping.foundCount << " found)\n";
+        // Only print on first refresh or when there's a change
+        static int lastValidPages[4] = {-1, -1, -1, -1};
+        if (lastValidPages[cat] != array.validPages) {
+            std::cout << "Category " << cat << ": copied " << array.validPages 
+                      << " valid pages (of " << mapping.foundCount << " found)\n";
+            lastValidPages[cat] = array.validPages;
+        }
     }
 }
 

@@ -27,6 +27,9 @@ public:
     void SetBeaconTranslator(std::shared_ptr<BeaconTranslator> beaconTranslator) {
         this->beaconTranslator = beaconTranslator;
     }
+    std::shared_ptr<BeaconTranslator> GetBeaconTranslator() const {
+        return beaconTranslator;
+    }
     void SetConnection(QemuConnection* qemu) {
         this->qemu = qemu;
     }

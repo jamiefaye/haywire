@@ -95,12 +95,10 @@ int main(int argc, char** argv) {
         
         pidSelector.SetBeaconReader(beaconReader);
         
-        // Create beacon translator using the decoder
-        if (beaconReader->GetDecoder()) {
-            beaconTranslator = std::make_shared<BeaconTranslator>(beaconReader->GetDecoder());
-            visualizer.SetBeaconTranslator(beaconTranslator);
-            std::cout << "Beacon translator created and connected to visualizer\n";
-        }
+        // Create beacon translator using the reader
+        beaconTranslator = std::make_shared<BeaconTranslator>(beaconReader);
+        visualizer.SetBeaconTranslator(beaconTranslator);
+        std::cout << "Beacon translator created and connected to visualizer\n";
         
         // Set callback to switch to process mode when PID is selected
         pidSelector.SetSelectionCallback([&](uint32_t pid) {

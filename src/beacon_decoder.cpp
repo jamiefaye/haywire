@@ -17,14 +17,16 @@ BeaconDecoder::~BeaconDecoder() {
 }
 
 bool BeaconDecoder::ScanMemory(void* memBase, size_t memSize) {
+    // DEPRECATED: This entire decoder uses the OLD beacon protocol
+    std::cerr << "ERROR: BeaconDecoder::ScanMemory() uses OLD beacon protocol (MAGIC1/MAGIC2)\n";
+    std::cerr << "       The companion now uses NEW beacon protocol from beacon_protocol.h\n";
+    std::cerr << "       Use BeaconReader instead of BeaconDecoder\n";
+    return false;
+    
+#ifdef UNUSED
     if (!memBase || memSize < PAGE_SIZE) {
         return false;
     }
-    
-    // DEPRECATED: This decoder uses the OLD beacon protocol
-    std::cerr << "ERROR: BeaconDecoder::ScanMemory() uses OLD beacon protocol (MAGIC1/MAGIC2)\n";
-    std::cerr << "       The companion now uses NEW beacon protocol from beacon_protocol.h\n";
-    std::cerr << "       Use BeaconReader::GetPIDGenerations() instead of decoder->ScanMemory()\n";
     
     // Clear old data
     pidEntries.clear();
@@ -96,8 +98,10 @@ bool BeaconDecoder::ScanMemory(void* memBase, size_t memSize) {
     }
     
     return false;
+#endif // UNUSED
 }
 
+#ifdef USE_OLD_BEACON_PROTOCOL
 bool BeaconDecoder::DecodePage(const uint8_t* pageData) {
     const BeaconPageHeader* header = reinterpret_cast<const BeaconPageHeader*>(pageData);
     
@@ -272,12 +276,24 @@ std::unordered_map<uint64_t, uint64_t> BeaconDecoder::GetCameraPTEs(int camera) 
 }
 
 int BeaconDecoder::GetCameraTargetPID(int camera) const {
-    // Return the current camera PID we're tracking
-    // TODO: Track separate PIDs for camera 1 and 2
+    // The new beacon protocol stores the target PID in camera data pages
+    // We need to extract it from the decoded data
+    
+    // Check if we have any camera headers with PID info
     if (!cameraHeaders.empty()) {
+        // Return the PID from the most recent camera header
         return cameraHeaders.back().pid;
     }
-    return currentCameraPID;
+    
+    // If no camera headers, check if sections have a PID
+    if (!sectionMap.empty()) {
+        // Get PID from first section (they all should have same PID)
+        return sectionMap.begin()->second.first.pid;
+    }
+    
+    // Default: no PID found
+    return 0;
 }
+#endif // USE_OLD_BEACON_PROTOCOL
 
 } // namespace Haywire

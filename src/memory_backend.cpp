@@ -135,34 +135,56 @@ bool MemoryBackend::MapMemoryBackend(const std::string& path, size_t size) {
 }
 
 bool MemoryBackend::Read(uint64_t gpa, size_t size, std::vector<uint8_t>& buffer) {
-    if (!mappedData || gpa >= mappedSize) {
+    // TEST: ARM64 guest RAM starts at 0x40000000
+    const uint64_t TEST_RAM_BASE = 0x40000000;
+    
+    // Convert physical address to file offset
+    uint64_t fileOffset = gpa;
+    if (gpa >= TEST_RAM_BASE) {
+        fileOffset = gpa - TEST_RAM_BASE;
+        static int debugCount = 0;
+        if (++debugCount <= 5) {
+            std::cerr << "MemoryBackend: PA 0x" << std::hex << gpa 
+                      << " -> file offset 0x" << fileOffset << std::dec << std::endl;
+        }
+    }
+    
+    if (!mappedData || fileOffset >= mappedSize) {
         return false;
     }
     
-    size_t available = mappedSize - gpa;
+    size_t available = mappedSize - fileOffset;
     size_t toRead = std::min(size, available);
     
     #ifdef __APPLE__
     // On macOS, try to force cache invalidation before reading
     // MS_INVALIDATE should discard any cached pages
-    msync(mappedData + gpa, toRead, MS_INVALIDATE | MS_SYNC);
+    msync(mappedData + fileOffset, toRead, MS_INVALIDATE | MS_SYNC);
     
     // Also try madvise to tell kernel we're about to read this
-    madvise(mappedData + gpa, toRead, MADV_DONTNEED);
-    madvise(mappedData + gpa, toRead, MADV_WILLNEED);
+    madvise(mappedData + fileOffset, toRead, MADV_DONTNEED);
+    madvise(mappedData + fileOffset, toRead, MADV_WILLNEED);
     #endif
     
     buffer.resize(toRead);
-    memcpy(buffer.data(), mappedData + gpa, toRead);
+    memcpy(buffer.data(), mappedData + fileOffset, toRead);
     
     return true;
 }
 
 const uint8_t* MemoryBackend::GetDirectPointer(uint64_t gpa) const {
-    if (!mappedData || gpa >= mappedSize) {
+    // TEST: ARM64 guest RAM starts at 0x40000000
+    const uint64_t TEST_RAM_BASE = 0x40000000;
+    
+    uint64_t fileOffset = gpa;
+    if (gpa >= TEST_RAM_BASE) {
+        fileOffset = gpa - TEST_RAM_BASE;
+    }
+    
+    if (!mappedData || fileOffset >= mappedSize) {
         return nullptr;
     }
-    return mappedData + gpa;
+    return mappedData + fileOffset;
 }
 
 void MemoryBackend::Unmap() {

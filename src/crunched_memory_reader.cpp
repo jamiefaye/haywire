@@ -14,21 +14,32 @@ CrunchedMemoryReader::~CrunchedMemoryReader() {
 
 size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t size, 
                                                 std::vector<uint8_t>& buffer) {
+    static bool firstCall = true;
+    
     if (!flattener) {
-        std::cerr << "CrunchedReader: No flattener!" << std::endl;
+        if (firstCall) std::cerr << "CrunchedReader: No flattener!" << std::endl;
         return 0;
     }
     if (!translator && !beaconTranslator) {
-        std::cerr << "CrunchedReader: No translator (neither viewport nor beacon)!" << std::endl;
+        if (firstCall) std::cerr << "CrunchedReader: No translator (neither viewport nor beacon)!" << std::endl;
         return 0;
     }
     if (!qemu) {
-        std::cerr << "CrunchedReader: No QEMU connection!" << std::endl;
+        if (firstCall) std::cerr << "CrunchedReader: No QEMU connection!" << std::endl;
         return 0;
     }
     if (targetPid < 0) {
-        std::cerr << "CrunchedReader: Invalid PID: " << targetPid << std::endl;
+        if (firstCall) std::cerr << "CrunchedReader: Invalid PID: " << targetPid << std::endl;
         return 0;
+    }
+    
+    if (firstCall) {
+        std::cerr << "VA Mode: Reading crunched memory for PID " << targetPid
+                  << " using " << (beaconTranslator ? "BeaconTranslator" : "ViewportTranslator") 
+                  << std::endl;
+        std::cerr << "  Flattened address space size: 0x" << std::hex 
+                  << flattener->GetFlatSize() << std::dec << " bytes\n";
+        firstCall = false;
     }
     
     buffer.clear();
@@ -48,10 +59,23 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
         if (!region) {
             // Hit unmapped space
             if (totalRead == 0) {
-                std::cerr << "CrunchedReader: No region at flat address 0x" 
-                          << std::hex << currentFlat << std::dec << std::endl;
+                static int noRegionCount = 0;
+                if (++noRegionCount <= 3) {
+                    std::cerr << "CrunchedReader: No region at flat address 0x" 
+                              << std::hex << currentFlat << std::dec 
+                              << " (requested flat 0x" << flatAddress << ")" << std::endl;
+                }
             }
             break;
+        }
+        
+        static bool showedRegion = false;
+        if (!showedRegion && totalRead == 0) {
+            std::cerr << "VA Mode: Flat 0x" << std::hex << currentFlat 
+                      << " -> Region [0x" << region->virtualStart 
+                      << "-0x" << region->virtualEnd << "] " 
+                      << region->name << std::dec << std::endl;
+            showedRegion = true;
         }
         
         // Calculate offset within this region
@@ -80,19 +104,58 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
                 physAddr = translator->TranslateAddress(targetPid, chunkVA);
             }
             
+            static int translationCount = 0;
+            if (++translationCount <= 5) {
+                std::cerr << "VA->PA: 0x" << std::hex << chunkVA << " -> ";
+                if (physAddr != 0) {
+                    std::cerr << "0x" << physAddr << std::dec << " (success)" << std::endl;
+                } else {
+                    std::cerr << "not mapped" << std::dec << std::endl;
+                }
+            }
+            
             if (physAddr == 0) {
                 // Page not present - fill with zeros
                 buffer.resize(buffer.size() + chunkSize, 0);
                 static int notPresentCount = 0;
-                if (++notPresentCount <= 10) {
+                if (++notPresentCount <= 3) {
                     std::cerr << "Page not present at VA 0x" << std::hex << chunkVA 
+                              << " in region " << region->name
                               << " (occurrence " << std::dec << notPresentCount << ")" << std::endl;
                 }
             } else {
                 // Read from physical memory
                 std::vector<uint8_t> tempBuffer;
+                
+                // Debug: Check if PA is in valid range and test offset
+                static int readCount = 0;
+                if (++readCount <= 10) {
+                    std::cerr << "Reading from PA 0x" << std::hex << physAddr;
+                    if (physAddr >= 0x40000000) {
+                        uint64_t testOffset = physAddr - 0x40000000;
+                        std::cerr << " (file offset would be 0x" << std::hex << testOffset << ")";
+                    } else {
+                        std::cerr << " (below guest RAM start 0x40000000!)";
+                    }
+                    std::cerr << std::dec << std::endl;
+                }
+                
                 if (qemu->ReadMemory(physAddr, chunkSize, tempBuffer)) {
                     buffer.insert(buffer.end(), tempBuffer.begin(), tempBuffer.end());
+                    
+                    // Debug: Check if we're getting non-zero data
+                    if (readCount <= 10) {
+                        bool hasNonZero = false;
+                        for (size_t i = 0; i < std::min<size_t>(16, tempBuffer.size()); i++) {
+                            if (tempBuffer[i] != 0) {
+                                hasNonZero = true;
+                                break;
+                            }
+                        }
+                        std::cerr << "  Got " << tempBuffer.size() << " bytes" 
+                                  << (hasNonZero ? " (has data)" : " (all zeros)") 
+                                  << std::endl;
+                    }
                 } else {
                     // Read failed - fill with zeros
                     buffer.resize(buffer.size() + chunkSize, 0);

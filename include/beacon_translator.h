@@ -3,14 +3,15 @@
 #include <cstdint>
 #include <unordered_map>
 #include <memory>
-#include "beacon_decoder.h"
 
 namespace Haywire {
+
+class BeaconReader;
 
 // Translates virtual addresses to physical addresses using beacon PTE data
 class BeaconTranslator {
 public:
-    BeaconTranslator(std::shared_ptr<BeaconDecoder> decoder);
+    BeaconTranslator(std::shared_ptr<BeaconReader> reader);
     ~BeaconTranslator();
     
     // Translate a virtual address to physical for a given PID
@@ -21,7 +22,7 @@ public:
     void UpdateFromBeacon();
     
 private:
-    std::shared_ptr<BeaconDecoder> decoder;
+    std::shared_ptr<BeaconReader> reader;
     
     // Cache of VA->PA mappings per PID
     // Map of PID -> (VA -> PA)

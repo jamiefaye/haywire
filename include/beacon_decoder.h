@@ -9,6 +9,17 @@
 
 namespace Haywire {
 
+// Section entry - still used by BeaconReader for conversion
+struct SectionEntry {
+    uint32_t type;  // ENTRY_SECTION
+    uint32_t pid;
+    uint64_t va_start;
+    uint64_t va_end;
+    uint32_t perms;
+    char path[64];
+} __attribute__((packed));
+
+#ifdef USE_OLD_BEACON_PROTOCOL
 // Match the encoder's constants
 #define PAGE_SIZE 4096
 #define BEACON_MAGIC1 0x3142FACE
@@ -66,16 +77,6 @@ struct PIDEntry {
     uint8_t padding[3];
 } __attribute__((packed));
 
-// Section entry
-struct SectionEntry {
-    uint32_t type;  // ENTRY_SECTION
-    uint32_t pid;
-    uint64_t va_start;
-    uint64_t va_end;
-    uint32_t perms;
-    char path[64];
-} __attribute__((packed));
-
 // PTE entry  
 struct PTEEntry {
     uint32_t type;  // ENTRY_PTE
@@ -94,8 +95,9 @@ struct CameraHeaderEntry {
     uint32_t pte_count;
     uint64_t capture_time;
 } __attribute__((packed));
+#endif // USE_OLD_BEACON_PROTOCOL
 
-// Decoder class
+// Decoder class - DEPRECATED: Uses old beacon protocol
 class BeaconDecoder {
 public:
     BeaconDecoder();
@@ -104,6 +106,7 @@ public:
     // Scan memory for beacon pages
     bool ScanMemory(void* memBase, size_t memSize);
     
+#ifdef USE_OLD_BEACON_PROTOCOL
     // Get PID entries from most recent scan
     const std::vector<PIDEntry>& GetPIDEntries() const { return pidEntries; }
     
@@ -112,6 +115,7 @@ public:
     
     // Get PTEs for a specific PID from camera data
     std::vector<PTEEntry> GetPTEsForPID(uint32_t pid) const;
+#endif
     
     // Check if we have recent data
     bool HasRecentData(uint64_t maxAgeNs = 5000000000ULL) const; // 5 seconds default
@@ -123,6 +127,7 @@ public:
     int GetCameraTargetPID(int camera) const;
     
 private:
+#ifdef USE_OLD_BEACON_PROTOCOL
     // Decode a single page
     bool DecodePage(const uint8_t* pageData);
     
@@ -140,6 +145,7 @@ private:
     std::map<uint64_t, std::pair<SectionEntry, uint32_t>> sectionMap;
     std::vector<PTEEntry> pteEntries;  // PTEs follow section sequence
     std::vector<CameraHeaderEntry> cameraHeaders;
+#endif
     
     // Track most recent data
     uint64_t lastTimestamp;

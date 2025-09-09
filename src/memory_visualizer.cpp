@@ -171,6 +171,19 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
             
             // Use crunched reader if in VA mode with a process
             if (useVirtualAddresses && crunchedReader && targetPid > 0) {
+                // Ensure address is within flattened space bounds
+                uint64_t maxFlat = addressFlattener ? addressFlattener->GetFlatSize() : 0;
+                if (addr >= maxFlat && maxFlat > 0) {
+                    // Address is out of bounds, wrap or clamp it
+                    static int wrapCount = 0;
+                    if (++wrapCount <= 3) {
+                        std::cerr << "VA Mode: Viewport address 0x" << std::hex << addr 
+                                  << " exceeds flat size 0x" << maxFlat 
+                                  << ", wrapping to 0x" << (addr % maxFlat) << std::dec << std::endl;
+                    }
+                    addr = addr % maxFlat;
+                    viewport.baseAddress = addr;  // Update viewport to stay in bounds
+                }
                 size_t bytesRead = crunchedReader->ReadCrunchedMemory(addr, size, buffer);
                 readSuccess = (bytesRead > 0);
                 if (!readSuccess) {
@@ -653,9 +666,46 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
         maxAddress = addressFlattener->GetFlatSize();
         currentPos = viewport.baseAddress;  // This is flat position in VA mode
         
+        // Debug: Check if viewport is out of bounds
+        if (currentPos > maxAddress && maxAddress > 0) {
+            static bool warnedSlider = false;
+            if (!warnedSlider) {
+                std::cerr << "VA Mode Slider: viewport.baseAddress (0x" << std::hex << currentPos 
+                          << ") exceeds flat size (0x" << maxAddress << ")" << std::dec << std::endl;
+                warnedSlider = true;
+            }
+            // Clamp it
+            currentPos = currentPos % maxAddress;
+            viewport.baseAddress = currentPos;
+        }
+        
         // Show current VA and region info
         uint64_t currentVA = addressFlattener->FlatToVirtual(currentPos);
         ImGui::Text("VA: 0x%llx", currentVA);
+        
+        // Show PA if we can translate it
+        if (crunchedReader && targetPid > 0) {
+            // Get beacon translator from crunched reader
+            auto translator = crunchedReader->GetBeaconTranslator();
+            if (translator) {
+                uint64_t pa = translator->TranslateAddress(targetPid, currentVA);
+                if (pa != 0) {
+                    ImGui::Text("PA:");
+                    ImGui::SameLine();
+                    char paText[32];
+                    snprintf(paText, sizeof(paText), "0x%llx", pa);
+                    ImGui::PushID("PA_nav");
+                    ImGui::InputText("##pa", paText, sizeof(paText), ImGuiInputTextFlags_ReadOnly);
+                    ImGui::PopID();
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Click to select, Ctrl+C to copy");
+                    }
+                } else {
+                    ImGui::Text("PA: (unmapped)");
+                }
+            }
+        }
+        
         ImGui::Text("Flat: %llu MB", currentPos / (1024*1024));
         
         // Show current region info
@@ -762,7 +812,38 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     // Current address display
     ImGui::Separator();
     ImGui::Text("Current:");
-    ImGui::Text("0x%llx", viewport.baseAddress);
+    
+    if (useVirtualAddresses && addressFlattener) {
+        // In VA mode, show both VA and PA
+        uint64_t flatAddr = viewport.baseAddress;
+        uint64_t va = addressFlattener->FlatToVirtual(flatAddr);
+        ImGui::Text("VA: 0x%llx", va);
+        
+        // Try to translate to PA if we have a translator
+        if (crunchedReader && targetPid > 0) {
+            auto translator = crunchedReader->GetBeaconTranslator();
+            if (translator) {
+                uint64_t pa = translator->TranslateAddress(targetPid, va);
+                if (pa != 0) {
+                    ImGui::Text("PA:");
+                    ImGui::SameLine();
+                    char paText[32];
+                    snprintf(paText, sizeof(paText), "0x%llx", pa);
+                    ImGui::PushID("PA_current");
+                    ImGui::InputText("##pa", paText, sizeof(paText), ImGuiInputTextFlags_ReadOnly);
+                    ImGui::PopID();
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Click to select, Ctrl+C to copy");
+                    }
+                } else {
+                    ImGui::Text("PA: (unmapped)");
+                }
+            }
+        }
+    } else {
+        // In PA mode, just show the physical address
+        ImGui::Text("PA: 0x%llx", viewport.baseAddress);
+    }
 }
 
 void MemoryVisualizer::DrawMemoryView() {

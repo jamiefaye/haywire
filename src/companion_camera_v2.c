@@ -222,6 +222,14 @@ int read_ptes_for_region(uint32_t pid, uint64_t start_va, uint64_t end_va,
         uint64_t present = (pagemap_entry >> 63) & 1;
         uint64_t pfn = pagemap_entry & ((1ULL << 55) - 1);
         
+        // Debug: Print what we're seeing in pagemap
+        static int debug_count = 0;
+        if (debug_count < 10) {
+            fprintf(stderr, "VA 0x%lx: pagemap_entry=0x%lx, present=%lu, pfn=0x%lx\n", 
+                    va, pagemap_entry, present, pfn);
+            debug_count++;
+        }
+        
         // Only add PTE if page is present (allocated)
         if (present && pfn != 0) {
             uint64_t pa = pfn * page_size;
