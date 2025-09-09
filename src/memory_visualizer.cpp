@@ -174,14 +174,15 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                 // Ensure address is within flattened space bounds
                 uint64_t maxFlat = addressFlattener ? addressFlattener->GetFlatSize() : 0;
                 if (addr >= maxFlat && maxFlat > 0) {
-                    // Address is out of bounds, wrap or clamp it
-                    static int wrapCount = 0;
-                    if (++wrapCount <= 3) {
+                    // Address is out of bounds, clamp to maximum valid address
+                    static int clampCount = 0;
+                    uint64_t clampedAddr = (maxFlat > size) ? (maxFlat - size) : 0;
+                    if (++clampCount <= 3) {
                         std::cerr << "VA Mode: Viewport address 0x" << std::hex << addr 
                                   << " exceeds flat size 0x" << maxFlat 
-                                  << ", wrapping to 0x" << (addr % maxFlat) << std::dec << std::endl;
+                                  << ", clamping to 0x" << clampedAddr << std::dec << std::endl;
                     }
-                    addr = addr % maxFlat;
+                    addr = clampedAddr;
                     viewport.baseAddress = addr;  // Update viewport to stay in bounds
                 }
                 size_t bytesRead = crunchedReader->ReadCrunchedMemory(addr, size, buffer);
@@ -656,8 +657,9 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
                           << ") exceeds flat size (0x" << maxAddress << ")" << std::dec << std::endl;
                 warnedSlider = true;
             }
-            // Clamp it
-            currentPos = currentPos % maxAddress;
+            // Clamp to maximum valid address instead of wrapping
+            size_t viewSize = viewport.width * viewport.height * 4;
+            currentPos = (maxAddress > viewSize) ? (maxAddress - viewSize) : 0;
             viewport.baseAddress = currentPos;
         }
         

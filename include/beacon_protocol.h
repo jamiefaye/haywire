@@ -38,7 +38,6 @@ extern "C" {
 // Process and path limits
 #define BEACON_PROCESS_NAME_LEN  16    // Same as kernel TASK_COMM_LEN
 #define BEACON_PATH_MAX_STORED   256   // Truncated path length
-#define BEACON_MAX_SECTIONS      100   // Max memory sections per process
 
 // PID entry structure (48 bytes)
 typedef struct BeaconPIDEntry {
