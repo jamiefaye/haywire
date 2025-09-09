@@ -101,10 +101,13 @@ int main(int argc, char** argv) {
         std::cout << "Beacon translator created and connected to visualizer\n";
         
         // Set callback to switch to process mode when PID is selected
-        pidSelector.SetSelectionCallback([&](uint32_t pid) {
+        pidSelector.SetSelectionCallback([&](uint32_t pid, const std::string& processName) {
             std::cout << "\n=== Main: PID Selection Callback ===\n";
-            std::cout << "Switching to process " << pid << " mode\n";
+            std::cout << "Switching to process " << pid << " (" << processName << ") mode\n";
             overview.SetProcessMode(true, pid);
+            
+            // Store process name in visualizer for display
+            visualizer.SetCurrentProcessName(processName);
             
             // First, tell the camera to focus on this PID
             beaconReader->SetCameraFocus(1, pid);

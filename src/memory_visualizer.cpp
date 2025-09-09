@@ -507,8 +507,9 @@ void MemoryVisualizer::DrawControls() {
     }
     ImGui::PopItemWidth();
     
-    ImGui::SameLine();
-    ImGui::Checkbox("Hex", &showHexOverlay);
+    // Hidden for now - hex overlay feature available but not shown in UI
+    // ImGui::SameLine();
+    // ImGui::Checkbox("Hex", &showHexOverlay);
     
     ImGui::SameLine();
     ImGui::Checkbox("Corr", &showCorrelation);
@@ -597,34 +598,6 @@ void MemoryVisualizer::DrawControls() {
         }
         ImGui::PopItemWidth();
         
-        // Load memory map button
-        ImGui::SameLine();
-        if (ImGui::Button("Load Map") && targetPid > 0 && guestAgent) {
-            // Check if we have everything needed
-            if (!viewportTranslator) {
-                std::cerr << "ERROR: No viewport translator! Guest agent may not be connected." << std::endl;
-                std::cerr << "Please ensure QEMU is connected with guest agent." << std::endl;
-            }
-            
-            std::vector<GuestMemoryRegion> regions;
-            if (guestAgent->GetMemoryMap(targetPid, regions)) {
-                LoadMemoryMap(regions);
-                
-                // Make sure crunched reader has the PID
-                SetProcessPid(targetPid);
-                
-                std::cerr << "Loaded memory map for PID " << targetPid 
-                         << " (" << regions.size() << " regions)" << std::endl;
-                
-                // Notify any listeners that we've loaded a process map
-                if (onProcessMapLoaded) {
-                    onProcessMapLoaded(targetPid, regions);
-                }
-            } else {
-                std::cerr << "Failed to load memory map for PID " << targetPid << std::endl;
-            }
-        }
-        
         // Show cache stats if available
         if (viewportTranslator) {
             auto stats = viewportTranslator->GetStats();
@@ -634,6 +607,15 @@ void MemoryVisualizer::DrawControls() {
                            stats.hitRate * 100.0f, stats.totalEntries);
             }
         }
+    }
+    
+    // Display process name if available (always show, not just in VA mode)
+    if (!currentProcessName.empty() && targetPid > 0) {
+        ImGui::SameLine();
+        ImGui::Text("Process: %s", currentProcessName.c_str());
+    } else if (targetPid > 0) {
+        ImGui::SameLine();
+        ImGui::Text("Process: PID %d", targetPid);
     }
     
     // Refresh rate is now automatic based on connection type

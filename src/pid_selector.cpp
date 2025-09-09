@@ -325,6 +325,16 @@ void PIDSelector::HandleSelection(uint32_t pid) {
     std::cout << "\n=== PIDSelector::HandleSelection ===\n";
     std::cout << "Selected PID " << pid << " for camera " << selectedCamera << "\n";
     
+    // Find the process name
+    std::string processName = "Unknown";
+    for (const auto& proc : processes) {
+        if (proc.pid == pid) {
+            processName = proc.name;
+            std::cout << "Process name: " << processName << "\n";
+            break;
+        }
+    }
+    
     // Set camera focus via beacon
     if (beaconReader) {
         std::cout << "Setting camera focus...\n";
@@ -333,10 +343,10 @@ void PIDSelector::HandleSelection(uint32_t pid) {
         std::cout << "WARNING: No beacon reader available!\n";
     }
     
-    // Call selection callback
+    // Call selection callback with PID and process name
     if (onSelection) {
         std::cout << "Calling selection callback...\n";
-        onSelection(pid);
+        onSelection(pid, processName);
     } else {
         std::cout << "WARNING: No selection callback set!\n";
     }

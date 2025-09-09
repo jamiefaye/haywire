@@ -67,6 +67,10 @@ public:
     std::unique_ptr<AddressSpaceFlattener>& GetFlattener() { return addressFlattener; }
     GuestAgent* GetGuestAgent() { return guestAgent; }
     
+    // Process name display
+    void SetCurrentProcessName(const std::string& name) { currentProcessName = name; }
+    const std::string& GetCurrentProcessName() const { return currentProcessName; }
+    
 private:
     void DrawControls();
     void DrawMemoryView();
@@ -178,6 +182,9 @@ private:
     
     std::chrono::steady_clock::time_point changeDetectedTime;
     float marchingAntsPhase;  // For animating the marching ants pattern
+    
+    // Current process information
+    std::string currentProcessName;
 };
 
 }

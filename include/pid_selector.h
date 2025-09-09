@@ -33,8 +33,8 @@ public:
     // Get selected PID
     uint32_t GetSelectedPID() const { return selectedPID; }
     
-    // Selection callback
-    using SelectionCallback = std::function<void(uint32_t pid)>;
+    // Selection callback - now includes process name
+    using SelectionCallback = std::function<void(uint32_t pid, const std::string& processName)>;
     void SetSelectionCallback(SelectionCallback cb) { onSelection = cb; }
     
 private:
