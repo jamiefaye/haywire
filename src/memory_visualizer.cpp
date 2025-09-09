@@ -530,11 +530,7 @@ void MemoryVisualizer::DrawControls() {
         ImGui::SetTooltip("Show magnifier & search tool (Press 'M' to bring to front, Ctrl+F to search)");
     }
     
-    // VA/PA translation controls
-    ImGui::SameLine();
-    ImGui::Separator();
-    ImGui::SameLine();
-    
+    // Second row: VA/PA translation controls and process info
     if (ImGui::Checkbox("VA Mode", &useVirtualAddresses)) {
         if (useVirtualAddresses) {
             // Switching to VA mode
