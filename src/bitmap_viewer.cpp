@@ -24,9 +24,9 @@ BitmapViewerManager::~BitmapViewerManager() {
 void BitmapViewerManager::CreateViewer(uint64_t address, ImVec2 anchorPos) {
     BitmapViewer viewer;
     viewer.id = nextId++;
-    // Use address as the name
+    // Use address as the name with proper space prefix (shared memory)
     std::stringstream ss;
-    ss << "0x" << std::hex << address;
+    ss << "s:" << std::hex << address;
     viewer.name = ss.str();
     viewer.memoryAddress = address;
     viewer.anchorPos = anchorPos;
@@ -243,6 +243,10 @@ void BitmapViewerManager::DrawLeaderLine(BitmapViewer& viewer) {
             // Update memory address based on new position
             // This updates where the viewer is looking in memory
             viewer.memoryAddress = ScreenToMemoryAddress(viewer.anchorPos);
+            // Update the viewer name to reflect new address with space prefix
+            std::stringstream ss;
+            ss << "s:" << std::hex << viewer.memoryAddress;
+            viewer.name = ss.str();
             viewer.needsUpdate = true;
         } else if (ImGui::IsMouseReleased(0)) {
             viewer.isDraggingAnchor = false;
