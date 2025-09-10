@@ -11,6 +11,7 @@ struct MemoryBlock {
     uint64_t address;
     std::vector<uint8_t> data;
     size_t stride;
+    std::vector<bool> unmapped;  // Track unmapped pages in VA mode
     
     MemoryBlock() : address(0), stride(0) {}
     MemoryBlock(uint64_t addr, size_t size) 
@@ -28,6 +29,8 @@ struct PixelFormat {
         RGB565,
         GRAYSCALE,
         BINARY,
+        HEX_PIXEL,  // 32-bit value as 8 hex digits (32x6 pixels)
+        CHAR_8BIT,  // 8-bit byte as character (6x8 pixels)
         CUSTOM
     };
     
@@ -45,6 +48,8 @@ struct PixelFormat {
             case RGB565: bytesPerPixel = 2; break;
             case GRAYSCALE: bytesPerPixel = 1; break;
             case BINARY: bytesPerPixel = 1; break;
+            case HEX_PIXEL: bytesPerPixel = 4; break;  // Process 32-bit values
+            case CHAR_8BIT: bytesPerPixel = 1; break;  // Process 8-bit chars
             default: bytesPerPixel = 1;
         }
     }

@@ -4,6 +4,7 @@
 #include "address_space_flattener.h"
 #include "crunched_memory_reader.h"
 #include "guest_agent.h"
+#include "font_data.h"
 #include "imgui.h"
 #include <cstring>
 #include <string.h>  // For memmem
@@ -500,8 +501,9 @@ void MemoryVisualizer::DrawControls() {
     
     ImGui::SameLine();
     const char* formats[] = { "RGB888", "RGBA8888", "BGR888", "BGRA8888", 
-                              "ARGB8888", "ABGR8888", "RGB565", "Grayscale", "Binary" };
-    ImGui::PushItemWidth(100);
+                              "ARGB8888", "ABGR8888", "RGB565", "Grayscale", "Binary",
+                              "Hex Pixel", "Char 8-bit" };
+    ImGui::PushItemWidth(120);
     if (ImGui::Combo("##Format", &pixelFormatIndex, formats, IM_ARRAYSIZE(formats))) {
         viewport.format = PixelFormat(static_cast<PixelFormat::Type>(pixelFormatIndex));
         needsUpdate = true;  // Immediate update
@@ -1846,6 +1848,20 @@ void MemoryVisualizer::UpdateTexture() {
 }
 
 std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToPixels(const MemoryBlock& memory) {
+    // For expanded formats (HEX_PIXEL, CHAR_8BIT), we need different dimensions
+    bool isExpandedFormat = (viewport.format.type == PixelFormat::HEX_PIXEL || 
+                            viewport.format.type == PixelFormat::CHAR_8BIT);
+    
+    if (isExpandedFormat) {
+        // Handle expanded formats separately
+        if (viewport.format.type == PixelFormat::HEX_PIXEL) {
+            return ConvertMemoryToHexPixels(memory);
+        } else if (viewport.format.type == PixelFormat::CHAR_8BIT) {
+            return ConvertMemoryToCharPixels(memory);
+        }
+    }
+    
+    // Original code for normal formats
     std::vector<uint32_t> pixels(viewport.width * viewport.height, 0xFF000000);
     
     if (memory.data.empty()) {
@@ -2382,6 +2398,182 @@ void MemoryVisualizer::PerformFullRangeSearch() {
     if (!searchResults.empty()) {
         ScrollToResult(searchResults[0]);
     }
+}
+
+std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToHexPixels(const MemoryBlock& memory) {
+    // For hex display, each 32-bit value becomes 8 hex digits
+    // Each digit is 4x6 pixels, so 32 pixels wide, 6 pixels tall per value
+    // With borders, we need more space
+    
+    // Calculate how many 32-bit values fit in one row
+    size_t valuesPerRow = viewport.width / 32;  // Each value is 32 pixels wide
+    if (valuesPerRow == 0) valuesPerRow = 1;
+    
+    // Calculate how many rows we need
+    size_t numValues = memory.data.size() / 4;  // 4 bytes per value
+    size_t numRows = (numValues + valuesPerRow - 1) / valuesPerRow;
+    
+    // Each row is 6 pixels tall
+    size_t totalHeight = numRows * 6;
+    
+    // Create expanded pixel buffer
+    std::vector<uint32_t> pixels(viewport.width * viewport.height, 0xFF000000);
+    
+    if (memory.data.empty()) {
+        return pixels;
+    }
+    
+    // Process each 32-bit value
+    for (size_t valueIdx = 0; valueIdx < numValues; ++valueIdx) {
+        // Calculate position
+        size_t row = valueIdx / valuesPerRow;
+        size_t col = valueIdx % valuesPerRow;
+        
+        if (row * 6 >= viewport.height) break;  // Out of viewport
+        
+        // Read 32-bit value from memory (little-endian to match memory order)
+        size_t memIdx = valueIdx * 4;
+        if (memIdx + 3 >= memory.data.size()) break;
+        
+        uint32_t value = (memory.data[memIdx] << 0) |
+                        (memory.data[memIdx + 1] << 8) |
+                        (memory.data[memIdx + 2] << 16) |
+                        (memory.data[memIdx + 3] << 24);
+        
+        // Calculate colors
+        uint32_t bgColor = PackRGBA(
+            memory.data[memIdx + 2],
+            memory.data[memIdx + 1],
+            memory.data[memIdx],
+            255
+        );
+        uint32_t fgColor = CalcHiContrastOpposite(bgColor);
+        
+        // Draw 8 hex nibbles (2 per byte)
+        for (int nibbleIdx = 7; nibbleIdx >= 0; --nibbleIdx) {
+            uint8_t nibble = (value >> (nibbleIdx * 4)) & 0xF;
+            uint16_t glyph = GetGlyph3x5Hex(nibble);
+            
+            // Position of this nibble (4 pixels wide each)
+            size_t nibbleX = col * 32 + (7 - nibbleIdx) * 4;
+            size_t nibbleY = row * 6;
+            
+            // Draw the 3x5 glyph (in a 4x6 box)
+            for (int y = 0; y < 5; ++y) {
+                for (int x = 0; x < 3; ++x) {
+                    // Extract bit from glyph - flip horizontally (mirror X-axis)
+                    int bitPos = (4 - y) * 3 + (2 - x);  // Mirror X: use (2-x) instead of x
+                    bool bit = (glyph >> bitPos) & 1;
+                    
+                    size_t pixX = nibbleX + x;
+                    size_t pixY = nibbleY + y;
+                    
+                    if (pixX < viewport.width && pixY < viewport.height) {
+                        size_t pixIdx = pixY * viewport.width + pixX;
+                        pixels[pixIdx] = bit ? fgColor : bgColor;
+                    }
+                }
+                // Fill the 4th column with background
+                size_t pixX = nibbleX + 3;
+                size_t pixY = nibbleY + y;
+                if (pixX < viewport.width && pixY < viewport.height) {
+                    size_t pixIdx = pixY * viewport.width + pixX;
+                    pixels[pixIdx] = bgColor;
+                }
+            }
+            
+            // Fill 6th row with background
+            for (int x = 0; x < 4; ++x) {
+                size_t pixX = nibbleX + x;
+                size_t pixY = nibbleY + 5;
+                if (pixX < viewport.width && pixY < viewport.height) {
+                    size_t pixIdx = pixY * viewport.width + pixX;
+                    pixels[pixIdx] = bgColor;
+                }
+            }
+        }
+    }
+    
+    return pixels;
+}
+
+std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToCharPixels(const MemoryBlock& memory) {
+    // For char display, each byte becomes a 6x8 character
+    
+    // Calculate how many characters fit in one row
+    size_t charsPerRow = viewport.width / 6;  // Each char is 6 pixels wide
+    if (charsPerRow == 0) charsPerRow = 1;
+    
+    // Calculate how many rows we need
+    size_t numChars = memory.data.size();
+    size_t numRows = (numChars + charsPerRow - 1) / charsPerRow;
+    
+    // Each row is 8 pixels tall
+    size_t totalHeight = numRows * 8;
+    
+    // Create expanded pixel buffer
+    std::vector<uint32_t> pixels(viewport.width * viewport.height, 0xFF000000);
+    
+    if (memory.data.empty()) {
+        return pixels;
+    }
+    
+    // Process each byte as a character
+    for (size_t charIdx = 0; charIdx < numChars; ++charIdx) {
+        // Calculate position
+        size_t row = charIdx / charsPerRow;
+        size_t col = charIdx % charsPerRow;
+        
+        if (row * 8 >= viewport.height) break;  // Out of viewport
+        
+        uint8_t charCode = memory.data[charIdx];
+        
+        // Find the glyph in Font5x7u array by searching for the character code
+        uint64_t glyph = 0;
+        
+        // Display null characters as blank
+        if (charCode != 0) {
+            for (size_t i = 0; i < Font5x7u_count; ++i) {
+                uint64_t entry = Font5x7u[i];
+                uint16_t glyphCode = (entry >> 48) & 0xFFFF;  // Character code in top 16 bits
+                if (glyphCode == charCode) {
+                    glyph = entry;
+                    break;
+                }
+            }
+        }
+        
+        // Simple color scheme: always white text on black background
+        uint32_t fgColor = 0xFFFFFFFF;  // White
+        uint32_t bgColor = 0xFF000000;  // Black
+        
+        // Position of this character
+        size_t charX = col * 6;
+        size_t charY = row * 8;
+        
+        // Draw the 5x7 glyph in a 6x8 box
+        // Using the pattern from the reference code:
+        // Start at bit 47 and read sequentially downward
+        uint64_t rotatingBit = 0x0000800000000000ULL;  // bit 47
+        
+        for (int y = 0; y < 8; ++y) {
+            for (int x = 0; x < 6; ++x) {
+                size_t pixX = charX + x;
+                size_t pixY = charY + y;
+                
+                if (pixX < viewport.width && pixY < viewport.height) {
+                    size_t pixIdx = pixY * viewport.width + pixX;
+                    // Check if bit is set
+                    bool bit = (glyph & rotatingBit) != 0;
+                    pixels[pixIdx] = bit ? fgColor : bgColor;
+                }
+                
+                rotatingBit >>= 1;  // Move to next bit
+            }
+        }
+    }
+    
+    return pixels;
 }
 
 }

@@ -115,7 +115,7 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
             }
             
             if (physAddr == 0) {
-                // Page not present - fill with zeros
+                // Page not present - fill with zeros but remember it's unmapped
                 buffer.resize(buffer.size() + chunkSize, 0);
                 static int notPresentCount = 0;
                 if (++notPresentCount <= 3) {
