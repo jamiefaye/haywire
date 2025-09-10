@@ -842,10 +842,7 @@ bool BeaconReader::RefreshCategoryPages() {
     static int refreshCount = 0;
     refreshCount++;
     
-    // Only print every 10th refresh to avoid spam
-    if (refreshCount % 10 == 0) {
-        std::cout << "Refreshing beacon pages from known locations (refresh #" << refreshCount << ")\n";
-    }
+    // Removed periodic refresh logging
     
     CopyPagesToArrays();
     

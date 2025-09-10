@@ -1621,13 +1621,7 @@ void MemoryVisualizer::DrawMagnifier() {
     // Log if we're drawing from negative position
     static int lastLoggedSrcX = 999999;
     static int lastLoggedSrcY = 999999;
-    if (srcX != lastLoggedSrcX || srcY != lastLoggedSrcY) {
-        if (srcX < 0 || srcY < 0) {
-            std::cerr << "DRAWING from negative src: (" << srcX << ", " << srcY << ")" << std::endl;
-        }
-        lastLoggedSrcX = srcX;
-        lastLoggedSrcY = srcY;
-    }
+    // Removed debug logging for negative coordinates
     
     // Draw each pixel magnified
     for (int dy = -halfSizeY; dy < halfSizeY; dy++) {
