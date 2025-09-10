@@ -4,6 +4,7 @@
 #include "autocorrelator.h"
 #include "guest_agent.h"  // For GuestMemoryRegion
 #include "bitmap_viewer.h"
+#include "address_parser.h"
 #include <imgui.h>
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
@@ -126,6 +127,10 @@ private:
     int heightInput;
     int strideInput;
     int pixelFormatIndex;
+    
+    // Address parsing and display
+    AddressParser addressParser;
+    AddressDisplayer addressDisplayer;
     
     float mouseX, mouseY;
     bool isDragging;

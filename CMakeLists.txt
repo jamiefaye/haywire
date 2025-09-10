@@ -99,6 +99,7 @@ add_executable(haywire
     src/beacon_translator.cpp
     src/pid_selector.cpp
     src/bitmap_viewer.cpp
+    src/address_parser.cpp
     ${IMGUI_SOURCES}
 )
 
