@@ -104,6 +104,7 @@ private:
     std::vector<uint32_t> ConvertMemoryToPixels(const MemoryBlock& memory);
     std::vector<uint32_t> ConvertMemoryToHexPixels(const MemoryBlock& memory);
     std::vector<uint32_t> ConvertMemoryToCharPixels(const MemoryBlock& memory);
+    std::vector<uint32_t> ConvertMemoryToSplitPixels(const MemoryBlock& memory);
     
     ViewportSettings viewport;
     MemoryBlock currentMemory;
@@ -122,6 +123,7 @@ private:
     bool showCorrelation;
     bool showChangeHighlight;
     bool showMagnifier;
+    bool splitComponents;  // Whether to split RGB/RGBA into separate channels
     
     char addressInput[32];
     int widthInput;

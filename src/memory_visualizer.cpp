@@ -27,6 +27,7 @@ MemoryVisualizer::MemoryVisualizer()
     : memoryTexture(0), needsUpdate(true), autoRefresh(false), autoRefreshInitialized(false),
       refreshRate(10.0f), showHexOverlay(false), showNavigator(true), showCorrelation(false),
       showChangeHighlight(true), showMagnifier(false),  // Magnifier off by default
+      splitComponents(false),  // Split components off by default
       widthInput(640), heightInput(480), strideInput(640),  // Back to reasonable video dimensions
       pixelFormatIndex(0), mouseX(0), mouseY(0), isDragging(false),
       dragStartX(0), dragStartY(0), isReading(false), readComplete(false),
@@ -647,9 +648,13 @@ void MemoryVisualizer::DrawControls() {
     }
     
     ImGui::SameLine();
+    
+    // Build format list with separator and split option
     const char* formats[] = { "RGB888", "RGBA8888", "BGR888", "BGRA8888", 
                               "ARGB8888", "ABGR8888", "RGB565", "Grayscale", "Binary",
-                              "Hex Pixel", "Char 8-bit" };
+                              "Hex Pixel", "Char 8-bit",
+                              "---",  // Separator
+                              splitComponents ? "✓ Split Components" : "  Split Components" };
     ImGui::PushItemWidth(120);
     
     // Dynamically set height to show all items based on array size
@@ -658,9 +663,31 @@ void MemoryVisualizer::DrawControls() {
     float maxHeight = itemHeight * (numFormats + 0.5f); // All items plus a bit of padding
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, maxHeight));
     
-    if (ImGui::Combo("##Format", &pixelFormatIndex, formats, numFormats)) {
-        viewport.format = PixelFormat(static_cast<PixelFormat::Type>(pixelFormatIndex));
-        needsUpdate = true;  // Immediate update
+    // Custom combo to handle the split option specially
+    if (ImGui::BeginCombo("##Format", formats[pixelFormatIndex])) {
+        for (int i = 0; i < numFormats; i++) {
+            if (i == 11) { // Separator line
+                ImGui::Separator();
+                continue;
+            }
+            
+            bool isSelected = (i == pixelFormatIndex);
+            if (ImGui::Selectable(formats[i], isSelected)) {
+                if (i == 12) { // Split Components toggle
+                    splitComponents = !splitComponents;
+                    needsUpdate = true;
+                } else if (i < 11) { // Regular format selection
+                    pixelFormatIndex = i;
+                    viewport.format = PixelFormat(static_cast<PixelFormat::Type>(pixelFormatIndex));
+                    needsUpdate = true;
+                }
+            }
+            
+            if (isSelected && i < 11) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
     }
     ImGui::PopItemWidth();
     
@@ -2075,6 +2102,18 @@ void MemoryVisualizer::UpdateTexture() {
 }
 
 std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToPixels(const MemoryBlock& memory) {
+    // Check if we should split components
+    if (splitComponents && 
+        (viewport.format.type == PixelFormat::RGB888 || 
+         viewport.format.type == PixelFormat::RGBA8888 ||
+         viewport.format.type == PixelFormat::BGR888 ||
+         viewport.format.type == PixelFormat::BGRA8888 ||
+         viewport.format.type == PixelFormat::ARGB8888 ||
+         viewport.format.type == PixelFormat::ABGR8888 ||
+         viewport.format.type == PixelFormat::RGB565)) {
+        return ConvertMemoryToSplitPixels(memory);
+    }
+    
     // For expanded formats (HEX_PIXEL, CHAR_8BIT), we need different dimensions
     bool isExpandedFormat = (viewport.format.type == PixelFormat::HEX_PIXEL || 
                             viewport.format.type == PixelFormat::CHAR_8BIT);
@@ -2796,6 +2835,127 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToCharPixels(const MemoryBl
                 }
                 
                 rotatingBit >>= 1;  // Move to next bit
+            }
+        }
+    }
+    
+    return pixels;
+}
+
+std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToSplitPixels(const MemoryBlock& memory) {
+    // For split display, each pixel expands horizontally by the number of components
+    // Components are shown in memory order with their natural colors
+    
+    int componentsPerPixel = viewport.format.bytesPerPixel;
+    int expandedWidth = viewport.width / componentsPerPixel;  // How many original pixels fit
+    
+    // Create expanded pixel buffer
+    std::vector<uint32_t> pixels(viewport.width * viewport.height, 0xFF000000);
+    
+    if (memory.data.empty()) {
+        return pixels;
+    }
+    
+    // Process each pixel
+    for (size_t y = 0; y < viewport.height; y++) {
+        for (size_t x = 0; x < (size_t)expandedWidth; x++) {
+            size_t offset = y * viewport.stride + x * componentsPerPixel;
+            
+            if (offset + componentsPerPixel > memory.data.size()) break;
+            
+            // Extract components based on format (in memory order)
+            for (int comp = 0; comp < componentsPerPixel; comp++) {
+                uint8_t value = memory.data[offset + comp];
+                uint32_t pixel = 0xFF000000; // Full alpha
+                
+                // Determine which component this is based on format and position
+                switch (viewport.format.type) {
+                    case PixelFormat::RGB888:
+                        // Memory order: R, G, B
+                        if (comp == 0) pixel |= (value << 16); // Red in red channel
+                        else if (comp == 1) pixel |= (value << 8); // Green in green channel
+                        else if (comp == 2) pixel |= value; // Blue in blue channel
+                        break;
+                        
+                    case PixelFormat::BGR888:
+                        // Memory order: B, G, R
+                        if (comp == 0) pixel |= value; // Blue in blue channel
+                        else if (comp == 1) pixel |= (value << 8); // Green in green channel
+                        else if (comp == 2) pixel |= (value << 16); // Red in red channel
+                        break;
+                        
+                    case PixelFormat::RGBA8888:
+                        // Memory order: R, G, B, A
+                        if (comp == 0) pixel |= (value << 16); // Red
+                        else if (comp == 1) pixel |= (value << 8); // Green
+                        else if (comp == 2) pixel |= value; // Blue
+                        else if (comp == 3) pixel = PackRGBA(value, value, value, 255); // Alpha as white
+                        break;
+                        
+                    case PixelFormat::BGRA8888:
+                        // Memory order: B, G, R, A
+                        if (comp == 0) pixel |= value; // Blue
+                        else if (comp == 1) pixel |= (value << 8); // Green
+                        else if (comp == 2) pixel |= (value << 16); // Red
+                        else if (comp == 3) pixel = PackRGBA(value, value, value, 255); // Alpha as white
+                        break;
+                        
+                    case PixelFormat::ARGB8888:
+                        // Memory order: A, R, G, B
+                        if (comp == 0) pixel = PackRGBA(value, value, value, 255); // Alpha as white
+                        else if (comp == 1) pixel |= (value << 16); // Red
+                        else if (comp == 2) pixel |= (value << 8); // Green
+                        else if (comp == 3) pixel |= value; // Blue
+                        break;
+                        
+                    case PixelFormat::ABGR8888:
+                        // Memory order: A, B, G, R
+                        if (comp == 0) pixel = PackRGBA(value, value, value, 255); // Alpha as white
+                        else if (comp == 1) pixel |= value; // Blue
+                        else if (comp == 2) pixel |= (value << 8); // Green
+                        else if (comp == 3) pixel |= (value << 16); // Red
+                        break;
+                        
+                    case PixelFormat::RGB565: {
+                        // Special case: need to extract from 16-bit value
+                        if (comp == 0 && offset + 1 < memory.data.size()) {
+                            uint16_t val = (memory.data[offset] << 8) | memory.data[offset + 1];
+                            uint8_t r = ((val >> 11) & 0x1F) << 3;
+                            uint8_t g = ((val >> 5) & 0x3F) << 2;
+                            uint8_t b = (val & 0x1F) << 3;
+                            
+                            // Show as 3 pixels: R, G, B
+                            size_t pixX = x * 3;
+                            size_t pixY = y;
+                            if (pixX < viewport.width && pixY < viewport.height) {
+                                pixels[pixY * viewport.width + pixX] = PackRGBA(r, 0, 0, 255);
+                            }
+                            if (pixX + 1 < viewport.width) {
+                                pixels[pixY * viewport.width + pixX + 1] = PackRGBA(0, g, 0, 255);
+                            }
+                            if (pixX + 2 < viewport.width) {
+                                pixels[pixY * viewport.width + pixX + 2] = PackRGBA(0, 0, b, 255);
+                            }
+                            comp = 1; // Skip second byte
+                            continue;
+                        }
+                        break;
+                    }
+                    
+                    default:
+                        break;
+                }
+                
+                // Place the pixel (except for RGB565 which handles itself)
+                if (viewport.format.type != PixelFormat::RGB565) {
+                    size_t pixX = x * componentsPerPixel + comp;
+                    size_t pixY = y;
+                    
+                    if (pixX < viewport.width && pixY < viewport.height) {
+                        size_t pixelIdx = pixY * viewport.width + pixX;
+                        pixels[pixelIdx] = pixel;
+                    }
+                }
             }
         }
     }
