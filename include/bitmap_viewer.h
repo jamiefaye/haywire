@@ -81,6 +81,16 @@ public:
         useVirtualAddresses = vaMode;
     }
     
+    // Set memory visualizer viewport info for coordinate conversion
+    void SetMemoryViewInfo(ImVec2 viewPos, ImVec2 viewSize, uint64_t baseAddr, int width, int height, int bytesPerPixel) {
+        memoryViewPos = viewPos;
+        memoryViewSize = viewSize;
+        viewportBaseAddress = baseAddr;
+        viewportWidth = width;
+        viewportHeight = height;
+        viewportBytesPerPixel = bytesPerPixel;
+    }
+    
     // Create a new viewer at the specified memory location
     void CreateViewer(uint64_t address, ImVec2 anchorPos);
     
@@ -129,6 +139,14 @@ private:
     std::shared_ptr<class MemoryMapper> memoryMapper;
     int currentPid = -1;
     bool useVirtualAddresses = false;
+    
+    // Memory visualizer viewport info for coordinate conversion
+    ImVec2 memoryViewPos;
+    ImVec2 memoryViewSize;
+    uint64_t viewportBaseAddress = 0;
+    int viewportWidth = 256;
+    int viewportHeight = 256;
+    int viewportBytesPerPixel = 1;
 };
 
 }  // namespace Haywire

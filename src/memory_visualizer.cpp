@@ -1032,6 +1032,17 @@ void MemoryVisualizer::DrawMemoryView() {
         memoryViewPos = imgPos;
         memoryViewSize = ImVec2(texW, texH);
         
+        // Update bitmap viewer manager with viewport info
+        if (bitmapViewerManager) {
+            bitmapViewerManager->SetMemoryViewInfo(
+                imgPos, ImVec2(texW, texH),
+                viewport.baseAddress,
+                viewport.width,
+                viewport.height,
+                viewport.format.bytesPerPixel
+            );
+        }
+        
         drawList->PushClipRect(canvasPos, 
                               ImVec2(canvasPos.x + canvasWidth, canvasPos.y + canvasHeight),
                               true);

@@ -402,14 +402,25 @@ ImVec2 BitmapViewerManager::MemoryToScreen(uint64_t address) {
 }
 
 uint64_t BitmapViewerManager::ScreenToMemoryAddress(ImVec2 screenPos) {
-    // For now, use a simple calculation based on screen position
-    // This would ideally use the main memory view's coordinate system
-    // TODO: Integrate with main memory visualizer's viewport
+    // Convert screen position to memory address based on memory visualizer's viewport
     
-    // Simple placeholder - treat each pixel as 1 byte offset
-    uint64_t baseAddr = 0x40000000;  // Default base address
-    uint64_t offset = (uint64_t)(screenPos.y * 1024 + screenPos.x);
-    return baseAddr + offset;
+    // Calculate position relative to memory view area
+    float relX = screenPos.x - memoryViewPos.x;
+    float relY = screenPos.y - memoryViewPos.y;
+    
+    // Clamp to view bounds
+    relX = std::max(0.0f, std::min(relX, memoryViewSize.x));
+    relY = std::max(0.0f, std::min(relY, memoryViewSize.y));
+    
+    // Calculate memory coordinates (which pixel in the memory buffer)
+    int memX = (int)(relX * viewportWidth / memoryViewSize.x);
+    int memY = (int)(relY * viewportHeight / memoryViewSize.y);
+    
+    // Calculate byte offset from viewport base
+    uint64_t offset = memY * viewportWidth * viewportBytesPerPixel + 
+                      memX * viewportBytesPerPixel;
+    
+    return viewportBaseAddress + offset;
 }
 
 const char* PixelFormatToString(int format) {
