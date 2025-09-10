@@ -3,6 +3,7 @@
 #include "common.h"
 #include "autocorrelator.h"
 #include "guest_agent.h"  // For GuestMemoryRegion
+#include "bitmap_viewer.h"
 #include <imgui.h>
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
@@ -70,6 +71,18 @@ public:
     // Process name display
     void SetCurrentProcessName(const std::string& name) { currentProcessName = name; }
     const std::string& GetCurrentProcessName() const { return currentProcessName; }
+    
+    // PNG export
+    bool ExportToPNG(const std::string& filename);
+    
+    // Draw bitmap viewers (floating windows)
+    void DrawBitmapViewers();
+    
+    // Set beacon reader for bitmap viewers
+    void SetBeaconReader(std::shared_ptr<class BeaconReader> reader);
+    
+    // Check if any bitmap viewer anchor is being dragged
+    bool IsBitmapAnchorDragging() const;
     
 private:
     void DrawControls();
@@ -187,6 +200,11 @@ private:
     
     // Current process information
     std::string currentProcessName;
+    
+    // Mini bitmap viewers
+    std::unique_ptr<BitmapViewerManager> bitmapViewerManager;
+    uint64_t contextMenuAddress;
+    ImVec2 contextMenuPos;
 };
 
 }

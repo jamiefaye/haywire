@@ -98,6 +98,7 @@ int main(int argc, char** argv) {
         // Create beacon translator using the reader
         beaconTranslator = std::make_shared<BeaconTranslator>(beaconReader);
         visualizer.SetBeaconTranslator(beaconTranslator);
+        visualizer.SetBeaconReader(beaconReader);  // Also set beacon reader for bitmap viewers
         std::cout << "Beacon translator created and connected to visualizer\n";
         
         // Set callback to switch to process mode when PID is selected
@@ -345,7 +346,8 @@ int main(int argc, char** argv) {
         // Main Haywire window with classic layout (draw first so connection appears on top)
         if (show_memory_view) {
             ImGui::SetNextWindowSize(ImVec2(1200, 700), ImGuiCond_FirstUseEver);
-            ImGui::Begin("Haywire Memory Visualizer", &show_memory_view, ImGuiWindowFlags_NoCollapse);
+            ImGui::Begin("Haywire Memory Visualizer", &show_memory_view, 
+                        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
             
             // Top bar with controls (full width, compact)
             ImGui::BeginChild("ControlBar", ImVec2(0, 60), true);
@@ -402,6 +404,10 @@ int main(int argc, char** argv) {
             }
             
             ImGui::End();
+            
+            // Draw bitmap viewers (they render as floating windows)
+            // This must be outside the main window context
+            visualizer.DrawBitmapViewers();
         }
         
         // QEMU Connection window (draw after main window so it appears on top)

@@ -126,6 +126,9 @@ public:
     // Get target PID for a specific camera
     int GetCameraTargetPID(int camera) const;
     
+    // Get direct memory pointer for a given guest physical address
+    const uint8_t* GetMemoryPointer(uint64_t gpa) const;
+    
 private:
 #ifdef USE_OLD_BEACON_PROTOCOL
     // Decode a single page

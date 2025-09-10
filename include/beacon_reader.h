@@ -80,6 +80,14 @@ public:
         return decoder; 
     }
     
+    // Get direct memory pointer for a given guest physical address
+    const uint8_t* GetMemoryPointer(uint64_t gpa) const {
+        if (!memBase || gpa >= memSize) {
+            return nullptr;
+        }
+        return static_cast<const uint8_t*>(memBase) + gpa;
+    }
+    
 private:
     // Memory mapping
     int memFd;

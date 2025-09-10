@@ -17,6 +17,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+// STB image write implementation
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "../lib/stb_image_write.h"
+
 namespace Haywire {
 
 MemoryVisualizer::MemoryVisualizer() 
@@ -62,6 +66,9 @@ MemoryVisualizer::MemoryVisualizer()
     }
     CreateTexture();
     lastRefresh = std::chrono::steady_clock::now();
+    
+    // Initialize bitmap viewer manager
+    bitmapViewerManager = std::make_unique<BitmapViewerManager>();
 }
 
 MemoryVisualizer::~MemoryVisualizer() {
@@ -459,6 +466,35 @@ void MemoryVisualizer::Draw(QemuConnection& qemu) {
     DrawMemoryBitmap();
     
     ImGui::Columns(1);
+    
+    // Draw bitmap viewers (they render as floating windows)
+    printf("Draw() method called, bitmapViewerManager = %p\n", bitmapViewerManager.get());
+    if (bitmapViewerManager) {
+        printf("About to call DrawViewers() with %zu viewers\n", bitmapViewerManager->GetViewerCount());
+        bitmapViewerManager->DrawViewers();
+        // TODO: Add UpdateViewers call with QemuConnection when available
+    }
+}
+
+void MemoryVisualizer::DrawBitmapViewers() {
+    if (bitmapViewerManager) {
+        bitmapViewerManager->DrawViewers();
+        // Update viewers with memory data
+        bitmapViewerManager->UpdateViewers();
+    }
+}
+
+void MemoryVisualizer::SetBeaconReader(std::shared_ptr<BeaconReader> reader) {
+    if (bitmapViewerManager) {
+        bitmapViewerManager->SetBeaconReader(reader);
+    }
+}
+
+bool MemoryVisualizer::IsBitmapAnchorDragging() const {
+    if (bitmapViewerManager) {
+        return bitmapViewerManager->IsAnyAnchorDragging();
+    }
+    return false;
 }
 
 void MemoryVisualizer::DrawControls() {
@@ -829,6 +865,22 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
 }
 
 void MemoryVisualizer::DrawMemoryView() {
+    // Handle PNG export hotkey (F12 or Ctrl+S)
+    ImGuiIO& io = ImGui::GetIO();
+    if (!io.WantTextInput) {
+        if (ImGui::IsKeyPressed(ImGuiKey_F12, false) || 
+            (ImGui::IsKeyPressed(ImGuiKey_S, false) && (io.KeyMods & ImGuiMod_Ctrl))) {
+            // Generate timestamp-based filename
+            auto now = std::chrono::system_clock::now();
+            auto time_t = std::chrono::system_clock::to_time_t(now);
+            char timeStr[100];
+            std::strftime(timeStr, sizeof(timeStr), "%Y%m%d_%H%M%S", std::localtime(&time_t));
+            
+            std::string filename = "haywire_" + std::string(timeStr) + ".png";
+            ExportToPNG(filename);
+        }
+    }
+    
     // Create a scrollable child region
     ImVec2 availSize = ImGui::GetContentRegionAvail();
     
@@ -1030,6 +1082,41 @@ void MemoryVisualizer::DrawMemoryView() {
         
         // This will be used to offset the memory view
         // For now just track it, actual implementation would update base address
+    }
+    
+    // Handle right-click context menu for creating bitmap viewers
+    if (ImGui::IsMouseClicked(1) && ImGui::IsWindowHovered()) {
+        ImVec2 mousePos = ImGui::GetMousePos();
+        ImVec2 relPos = ImVec2(mousePos.x - memoryViewPos.x, mousePos.y - memoryViewPos.y);
+        
+        // Calculate which pixel was clicked
+        int pixX = (int)(relPos.x / viewport.zoom);
+        int pixY = (int)(relPos.y / viewport.zoom);
+        
+        if (pixX >= 0 && pixX < viewport.width && pixY >= 0 && pixY < viewport.height) {
+            uint64_t clickAddress = GetAddressAt(pixX, pixY);
+            
+            ImGui::OpenPopup("BitmapViewerContext");
+            
+            // Store for use in context menu
+            contextMenuAddress = clickAddress;
+            contextMenuPos = mousePos;
+        }
+    }
+    
+    // Draw context menu
+    if (ImGui::BeginPopup("BitmapViewerContext")) {
+        if (ImGui::MenuItem("Create Bitmap Viewer Here")) {
+            printf("Creating bitmap viewer at 0x%llx, pos (%f, %f)\n", 
+                   (unsigned long long)contextMenuAddress, contextMenuPos.x, contextMenuPos.y);
+            if (bitmapViewerManager) {
+                bitmapViewerManager->CreateViewer(contextMenuAddress, contextMenuPos);
+                printf("Viewer created! Total viewers: %zu\n", bitmapViewerManager->GetViewerCount());
+            } else {
+                printf("ERROR: bitmapViewerManager is null!\n");
+            }
+        }
+        ImGui::EndPopup();
     }
     
     ImGui::EndChild();
@@ -1714,6 +1801,11 @@ void MemoryVisualizer::DrawCorrelationStripe() {
 
 void MemoryVisualizer::HandleInput() {
     ImGuiIO& io = ImGui::GetIO();
+    
+    // Don't process input if we're dragging a bitmap viewer anchor
+    if (IsBitmapAnchorDragging()) {
+        return;
+    }
     
     // Check for 'm' key to lock magnifier on current mouse position
     if (ImGui::IsKeyPressed(ImGuiKey_M) && !io.KeyShift && !io.KeyCtrl && !io.KeyAlt) {
@@ -2574,6 +2666,43 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToCharPixels(const MemoryBl
     }
     
     return pixels;
+}
+
+bool MemoryVisualizer::ExportToPNG(const std::string& filename) {
+    if (pixelBuffer.empty()) {
+        std::cerr << "No image data to export" << std::endl;
+        return false;
+    }
+    
+    // Convert RGBA to RGB for smaller file size (optional - PNG supports RGBA)
+    std::vector<uint8_t> rgbData;
+    rgbData.reserve(viewport.width * viewport.height * 3);
+    
+    for (size_t i = 0; i < pixelBuffer.size(); ++i) {
+        uint32_t pixel = pixelBuffer[i];
+        // Extract RGB components (assuming RGBA format)
+        rgbData.push_back((pixel >> 0) & 0xFF);  // R
+        rgbData.push_back((pixel >> 8) & 0xFF);  // G
+        rgbData.push_back((pixel >> 16) & 0xFF); // B
+        // Skip alpha channel
+    }
+    
+    // Write PNG file
+    int result = stbi_write_png(filename.c_str(), 
+                                viewport.width, 
+                                viewport.height,
+                                3,  // RGB components
+                                rgbData.data(),
+                                viewport.width * 3);  // Stride in bytes
+    
+    if (result) {
+        std::cout << "Exported viewport to " << filename << " (" 
+                  << viewport.width << "x" << viewport.height << ")" << std::endl;
+        return true;
+    } else {
+        std::cerr << "Failed to export PNG to " << filename << std::endl;
+        return false;
+    }
 }
 
 }
