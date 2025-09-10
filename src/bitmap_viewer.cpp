@@ -143,13 +143,17 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         ImGui::SameLine(100);
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%dx%d", viewer.memWidth, viewer.memHeight);
         
-        // Format selector
+        // Format selector with split option
         ImGui::SameLine(160);
         ImGui::SetNextItemWidth(80);
+        
+        // Build format list with separator and split option
         const char* formats[] = { 
             "RGB888", "RGBA8888", "BGR888", "BGRA8888", 
             "ARGB8888", "ABGR8888", "RGB565", "GRAYSCALE", 
-            "BINARY", "HEX", "CHAR" 
+            "BINARY", "HEX", "CHAR",
+            "---",  // Separator
+            viewer.splitComponents ? "✓ Split Components" : "  Split Components"
         };
         
         // Dynamically set height to show all items based on array size
@@ -158,28 +162,50 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         float maxHeight = itemHeight * (numFormats + 0.5f); // All items plus a bit of padding
         ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, maxHeight));
         
-        // Update format if changed
-        if (ImGui::Combo("##Format", &viewer.formatIndex, formats, numFormats)) {
-            // Map combo index to PixelFormat::Type
-            PixelFormat::Type newType;
-            switch(viewer.formatIndex) {
-                case 0: newType = PixelFormat::RGB888; break;
-                case 1: newType = PixelFormat::RGBA8888; break;
-                case 2: newType = PixelFormat::BGR888; break;
-                case 3: newType = PixelFormat::BGRA8888; break;
-                case 4: newType = PixelFormat::ARGB8888; break;
-                case 5: newType = PixelFormat::ABGR8888; break;
-                case 6: newType = PixelFormat::RGB565; break;
-                case 7: newType = PixelFormat::GRAYSCALE; break;
-                case 8: newType = PixelFormat::BINARY; break;
-                case 9: newType = PixelFormat::HEX_PIXEL; break;
-                case 10: newType = PixelFormat::CHAR_8BIT; break;
-                default: newType = PixelFormat::RGB888; break;
+        // Custom combo to handle the split option specially
+        int displayIndex = viewer.formatIndex;
+        if (ImGui::BeginCombo("##Format", formats[displayIndex])) {
+            for (int i = 0; i < numFormats; i++) {
+                if (i == 11) { // Separator line
+                    ImGui::Separator();
+                    continue;
+                }
+                
+                bool isSelected = (i == displayIndex);
+                if (ImGui::Selectable(formats[i], isSelected)) {
+                    if (i == 12) { // Split Components toggle
+                        viewer.splitComponents = !viewer.splitComponents;
+                        viewer.needsUpdate = true;
+                    } else if (i < 11) { // Regular format selection
+                        viewer.formatIndex = i;
+                        // Map combo index to PixelFormat::Type
+                        PixelFormat::Type newType;
+                        switch(i) {
+                            case 0: newType = PixelFormat::RGB888; break;
+                            case 1: newType = PixelFormat::RGBA8888; break;
+                            case 2: newType = PixelFormat::BGR888; break;
+                            case 3: newType = PixelFormat::BGRA8888; break;
+                            case 4: newType = PixelFormat::ARGB8888; break;
+                            case 5: newType = PixelFormat::ABGR8888; break;
+                            case 6: newType = PixelFormat::RGB565; break;
+                            case 7: newType = PixelFormat::GRAYSCALE; break;
+                            case 8: newType = PixelFormat::BINARY; break;
+                            case 9: newType = PixelFormat::HEX_PIXEL; break;
+                            case 10: newType = PixelFormat::CHAR_8BIT; break;
+                            default: newType = PixelFormat::RGB888; break;
+                        }
+                        viewer.format = PixelFormat(newType);
+                        // Update stride when format changes
+                        viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+                        viewer.needsUpdate = true;
+                    }
+                }
+                
+                if (isSelected && i < 11) {
+                    ImGui::SetItemDefaultFocus();
+                }
             }
-            viewer.format = PixelFormat(newType);
-            // Update stride when format changes
-            viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
-            viewer.needsUpdate = true;
+            ImGui::EndCombo();
         }
         
         // Settings and close buttons on the right
@@ -420,6 +446,19 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
     // Convert to pixels based on format
     viewer.pixels.clear();
     
+    // Check if we should split components
+    if (viewer.splitComponents && 
+        (viewer.format.type == PixelFormat::RGB888 || 
+         viewer.format.type == PixelFormat::RGBA8888 ||
+         viewer.format.type == PixelFormat::BGR888 ||
+         viewer.format.type == PixelFormat::BGRA8888 ||
+         viewer.format.type == PixelFormat::ARGB8888 ||
+         viewer.format.type == PixelFormat::ABGR8888 ||
+         viewer.format.type == PixelFormat::RGB565)) {
+        ConvertMemoryToSplitPixels(viewer, memPtr, totalBytes);
+        return;
+    }
+    
     // Handle expanded formats differently
     if (viewer.format.type == PixelFormat::HEX_PIXEL) {
         // For HEX format: each 4-byte value becomes 32x8 pixels
@@ -622,6 +661,118 @@ void BitmapViewerManager::ConvertMemoryToHexPixels(BitmapViewer& viewer, const u
                     
                     size_t pixelIdx = pixY * viewer.memWidth + pixX;
                     viewer.pixels[pixelIdx] = color;
+                }
+            }
+        }
+    }
+}
+
+void BitmapViewerManager::ConvertMemoryToSplitPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes) {
+    // For split display, each pixel expands horizontally by the number of components
+    // Components are shown in memory order with their natural colors
+    
+    int componentsPerPixel = viewer.format.bytesPerPixel;
+    int expandedWidth = viewer.memWidth / componentsPerPixel;  // How many original pixels fit
+    
+    // Calculate pixel buffer size
+    viewer.pixels.resize(viewer.memWidth * viewer.memHeight, 0xFF000000);
+    
+    // Process each pixel
+    for (int y = 0; y < viewer.memHeight; y++) {
+        for (int x = 0; x < expandedWidth; x++) {
+            size_t offset = y * viewer.stride + x * componentsPerPixel;
+            
+            if (offset + componentsPerPixel > totalBytes) break;
+            
+            // Extract components based on format (in memory order)
+            for (int comp = 0; comp < componentsPerPixel; comp++) {
+                uint8_t value = memPtr[offset + comp];
+                uint32_t pixel = 0xFF000000; // Full alpha
+                
+                // Determine which component this is based on format and position
+                switch (viewer.format.type) {
+                    case PixelFormat::RGB888:
+                        // Memory order: R, G, B
+                        if (comp == 0) pixel |= (value << 16); // Red in red channel
+                        else if (comp == 1) pixel |= (value << 8); // Green in green channel
+                        else if (comp == 2) pixel |= value; // Blue in blue channel
+                        break;
+                        
+                    case PixelFormat::BGR888:
+                        // Memory order: B, G, R
+                        if (comp == 0) pixel |= value; // Blue in blue channel
+                        else if (comp == 1) pixel |= (value << 8); // Green in green channel
+                        else if (comp == 2) pixel |= (value << 16); // Red in red channel
+                        break;
+                        
+                    case PixelFormat::RGBA8888:
+                        // Memory order: R, G, B, A
+                        if (comp == 0) pixel |= (value << 16); // Red
+                        else if (comp == 1) pixel |= (value << 8); // Green
+                        else if (comp == 2) pixel |= value; // Blue
+                        else if (comp == 3) pixel = PackRGBA(value, value, value, 255); // Alpha as white
+                        break;
+                        
+                    case PixelFormat::BGRA8888:
+                        // Memory order: B, G, R, A
+                        if (comp == 0) pixel |= value; // Blue
+                        else if (comp == 1) pixel |= (value << 8); // Green
+                        else if (comp == 2) pixel |= (value << 16); // Red
+                        else if (comp == 3) pixel = PackRGBA(value, value, value, 255); // Alpha as white
+                        break;
+                        
+                    case PixelFormat::ARGB8888:
+                        // Memory order: A, R, G, B
+                        if (comp == 0) pixel = PackRGBA(value, value, value, 255); // Alpha as white
+                        else if (comp == 1) pixel |= (value << 16); // Red
+                        else if (comp == 2) pixel |= (value << 8); // Green
+                        else if (comp == 3) pixel |= value; // Blue
+                        break;
+                        
+                    case PixelFormat::ABGR8888:
+                        // Memory order: A, B, G, R
+                        if (comp == 0) pixel = PackRGBA(value, value, value, 255); // Alpha as white
+                        else if (comp == 1) pixel |= value; // Blue
+                        else if (comp == 2) pixel |= (value << 8); // Green
+                        else if (comp == 3) pixel |= (value << 16); // Red
+                        break;
+                        
+                    case PixelFormat::RGB565: {
+                        // Special case: need to extract from 16-bit value
+                        if (comp == 0 && offset + 1 < totalBytes) {
+                            uint16_t val = (memPtr[offset] << 8) | memPtr[offset + 1];
+                            uint8_t r = ((val >> 11) & 0x1F) << 3;
+                            uint8_t g = ((val >> 5) & 0x3F) << 2;
+                            uint8_t b = (val & 0x1F) << 3;
+                            
+                            // Show as 3 pixels: R, G, B
+                            size_t pixX = x * 3;
+                            size_t pixY = y;
+                            if (pixX < (size_t)viewer.memWidth && pixY < (size_t)viewer.memHeight) {
+                                viewer.pixels[pixY * viewer.memWidth + pixX] = PackRGBA(r, 0, 0, 255);
+                            }
+                            if (pixX + 1 < (size_t)viewer.memWidth) {
+                                viewer.pixels[pixY * viewer.memWidth + pixX + 1] = PackRGBA(0, g, 0, 255);
+                            }
+                            if (pixX + 2 < (size_t)viewer.memWidth) {
+                                viewer.pixels[pixY * viewer.memWidth + pixX + 2] = PackRGBA(0, 0, b, 255);
+                            }
+                            comp = 1; // Skip second byte
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                
+                // Place the pixel (except for RGB565 which handles itself)
+                if (viewer.format.type != PixelFormat::RGB565) {
+                    size_t pixX = x * componentsPerPixel + comp;
+                    size_t pixY = y;
+                    
+                    if (pixX < (size_t)viewer.memWidth && pixY < (size_t)viewer.memHeight) {
+                        size_t pixelIdx = pixY * viewer.memWidth + pixX;
+                        viewer.pixels[pixelIdx] = pixel;
+                    }
                 }
             }
         }

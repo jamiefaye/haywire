@@ -36,6 +36,7 @@ struct BitmapViewer {
     int stride = 256;
     PixelFormat format = PixelFormat::RGB888;
     int formatIndex = 0;  // Index for combo box
+    bool splitComponents = false;  // Whether to split RGB/RGBA into separate channels
     
     // Rendering
     GLuint texture = 0;
@@ -128,6 +129,7 @@ private:
     void ExtractMemory(BitmapViewer& viewer);
     void ConvertMemoryToHexPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
     void ConvertMemoryToCharPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
+    void ConvertMemoryToSplitPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
     
     // Convert memory position to screen position
     ImVec2 MemoryToScreen(uint64_t address);
