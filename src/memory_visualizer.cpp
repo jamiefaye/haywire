@@ -429,21 +429,41 @@ void MemoryVisualizer::DrawFormulaBar() {
     ImVec2 viewPos = memoryViewPos;
     ImVec2 viewSize = memoryViewSize;
     
-    // Calculate which memory location the mouse is over
-    int mouseX = (int)((mousePos.x - viewPos.x) / viewport.zoom);
-    int mouseY = (int)((mousePos.y - viewPos.y) / viewport.zoom);
+    // Calculate which display pixel the mouse is over
+    int displayX = (int)((mousePos.x - viewPos.x) / viewport.zoom);
+    int displayY = (int)((mousePos.y - viewPos.y) / viewport.zoom);
+    
+    // Convert display coordinates to memory coordinates based on format
+    int memX = displayX;
+    int memY = displayY;
+    
+    // For HEX_PIXEL format, each displayed "cell" is 32x8 pixels showing 4 bytes
+    if (viewport.format.type == PixelFormat::HEX_PIXEL) {
+        memX = displayX / 32;  // Each hex cell is 32 pixels wide
+        memY = displayY / 8;   // Each hex cell is 8 pixels tall
+    }
+    // For CHAR_8BIT format, each displayed character is 6x8 pixels showing 1 byte
+    else if (viewport.format.type == PixelFormat::CHAR_8BIT) {
+        memX = displayX / 6;   // Each char is 6 pixels wide
+        memY = displayY / 8;   // Each char is 8 pixels tall
+    }
     
     // Clamp to viewport
-    mouseX = std::max(0, std::min(mouseX, (int)viewport.width - 1));
-    mouseY = std::max(0, std::min(mouseY, (int)viewport.height - 1));
+    memX = std::max(0, std::min(memX, (int)viewport.width - 1));
+    memY = std::max(0, std::min(memY, (int)viewport.height - 1));
     
     // Get display info from AddressDisplayer
-    AddressSpace currentSpace = useVirtualAddresses ? AddressSpace::VIRTUAL : AddressSpace::PHYSICAL;
-    uint64_t currentAddr = GetAddressAt(mouseX, mouseY);
+    // We're looking at the memory-backend-file, so use SHARED address space
+    AddressSpace currentSpace = AddressSpace::SHARED;
+    if (useVirtualAddresses) {
+        currentSpace = AddressSpace::CRUNCHED;  // In VA mode, we use crunched addresses
+    }
+    
+    uint64_t currentAddr = GetAddressAt(memX, memY);
     
     AddressDisplayer::DisplayInfo info = addressDisplayer.GetDisplay(
         currentAddr, currentSpace,
-        mouseX, mouseY,
+        memX, memY,
         viewport.stride, viewport.format.bytesPerPixel
     );
     
