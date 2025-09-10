@@ -35,6 +35,7 @@ struct BitmapViewer {
     int memHeight = 256;
     int stride = 256;
     PixelFormat format = PixelFormat::RGB888;
+    int formatIndex = 0;  // Index for combo box
     
     // Rendering
     GLuint texture = 0;

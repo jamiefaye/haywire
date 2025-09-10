@@ -31,6 +31,9 @@ void BitmapViewerManager::CreateViewer(uint64_t address, ImVec2 anchorPos) {
     viewer.memoryAddress = address;
     viewer.anchorPos = anchorPos;
     
+    // Initialize stride based on default format
+    viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+    
     // Position window offset from anchor
     viewer.windowPos = ImVec2(anchorPos.x + 100, anchorPos.y - 50);
     
@@ -101,7 +104,7 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             // Update viewer dimensions
             viewer.memWidth = std::max(16, contentWidth);
             viewer.memHeight = std::max(16, contentHeight);
-            viewer.stride = viewer.memWidth;  // Stride = width for now
+            viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;  // Stride = width * bytes per pixel
             viewer.needsUpdate = true;
             
             // Resize pixel buffer
@@ -122,10 +125,36 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         
         // Format selector
         ImGui::SameLine(160);
-        ImGui::SetNextItemWidth(60);
-        const char* formats[] = { "RGB", "RGBA", "HEX", "CHAR" };
-        int formatIndex = 0;  // TODO: Store in viewer
-        ImGui::Combo("##Format", &formatIndex, formats, IM_ARRAYSIZE(formats));
+        ImGui::SetNextItemWidth(80);
+        const char* formats[] = { 
+            "RGB888", "RGBA8888", "BGR888", "BGRA8888", 
+            "ARGB8888", "ABGR8888", "RGB565", "GRAYSCALE", 
+            "BINARY", "HEX", "CHAR" 
+        };
+        
+        // Update format if changed
+        if (ImGui::Combo("##Format", &viewer.formatIndex, formats, IM_ARRAYSIZE(formats))) {
+            // Map combo index to PixelFormat::Type
+            PixelFormat::Type newType;
+            switch(viewer.formatIndex) {
+                case 0: newType = PixelFormat::RGB888; break;
+                case 1: newType = PixelFormat::RGBA8888; break;
+                case 2: newType = PixelFormat::BGR888; break;
+                case 3: newType = PixelFormat::BGRA8888; break;
+                case 4: newType = PixelFormat::ARGB8888; break;
+                case 5: newType = PixelFormat::ABGR8888; break;
+                case 6: newType = PixelFormat::RGB565; break;
+                case 7: newType = PixelFormat::GRAYSCALE; break;
+                case 8: newType = PixelFormat::BINARY; break;
+                case 9: newType = PixelFormat::HEX_PIXEL; break;
+                case 10: newType = PixelFormat::CHAR_8BIT; break;
+                default: newType = PixelFormat::RGB888; break;
+            }
+            viewer.format = PixelFormat(newType);
+            // Update stride when format changes
+            viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+            viewer.needsUpdate = true;
+        }
         
         // Settings and close buttons on the right
         float buttonX = ImGui::GetWindowWidth() - 50;
@@ -302,7 +331,7 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
     }
     
     // Calculate bytes needed based on format
-    size_t bytesPerPixel = 3; // Default RGB888
+    size_t bytesPerPixel = viewer.format.bytesPerPixel;
     size_t totalBytes = viewer.stride * viewer.memHeight;
     
     // Start with the viewer's address
@@ -373,10 +402,64 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
             if (offset + bytesPerPixel <= totalBytes) {
                 uint32_t pixel = 0xFF000000; // Default alpha
                 
-                // Simple RGB888 for now
-                pixel |= memPtr[offset] << 16;     // R
-                pixel |= memPtr[offset + 1] << 8;  // G
-                pixel |= memPtr[offset + 2];       // B
+                switch (viewer.format.type) {
+                    case PixelFormat::RGB888:
+                        pixel = PackRGBA(memPtr[offset], memPtr[offset + 1], memPtr[offset + 2]);
+                        break;
+                        
+                    case PixelFormat::RGBA8888:
+                        pixel = PackRGBA(memPtr[offset], memPtr[offset + 1], 
+                                       memPtr[offset + 2], memPtr[offset + 3]);
+                        break;
+                        
+                    case PixelFormat::BGR888:
+                        pixel = PackRGBA(memPtr[offset + 2], memPtr[offset + 1], memPtr[offset]);
+                        break;
+                        
+                    case PixelFormat::BGRA8888:
+                        pixel = PackRGBA(memPtr[offset + 2], memPtr[offset + 1], 
+                                       memPtr[offset], memPtr[offset + 3]);
+                        break;
+                        
+                    case PixelFormat::ARGB8888:
+                        pixel = PackRGBA(memPtr[offset + 1], memPtr[offset + 2], 
+                                       memPtr[offset + 3], memPtr[offset]);
+                        break;
+                        
+                    case PixelFormat::ABGR8888:
+                        pixel = PackRGBA(memPtr[offset + 3], memPtr[offset + 2], 
+                                       memPtr[offset + 1], memPtr[offset]);
+                        break;
+                        
+                    case PixelFormat::RGB565: {
+                        uint16_t val = (memPtr[offset] << 8) | memPtr[offset + 1];
+                        uint8_t r = ((val >> 11) & 0x1F) << 3;
+                        uint8_t g = ((val >> 5) & 0x3F) << 2;
+                        uint8_t b = (val & 0x1F) << 3;
+                        pixel = PackRGBA(r, g, b);
+                        break;
+                    }
+                    
+                    case PixelFormat::GRAYSCALE:
+                        pixel = PackRGBA(memPtr[offset], memPtr[offset], memPtr[offset]);
+                        break;
+                        
+                    case PixelFormat::BINARY: {
+                        uint8_t val = (memPtr[offset] > 127) ? 255 : 0;
+                        pixel = PackRGBA(val, val, val);
+                        break;
+                    }
+                    
+                    case PixelFormat::HEX_PIXEL:
+                    case PixelFormat::CHAR_8BIT:
+                        // These need special handling - for now just show as grayscale
+                        pixel = PackRGBA(memPtr[offset], memPtr[offset], memPtr[offset]);
+                        break;
+                        
+                    default:
+                        pixel = PackRGBA(memPtr[offset], 0, 0);  // Red for unknown
+                        break;
+                }
                 
                 viewer.pixels.push_back(pixel);
             } else {
