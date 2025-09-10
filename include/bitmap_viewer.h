@@ -126,6 +126,8 @@ private:
     void DrawLeaderLine(BitmapViewer& viewer);
     void UpdateViewerTexture(BitmapViewer& viewer);
     void ExtractMemory(BitmapViewer& viewer);
+    void ConvertMemoryToHexPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
+    void ConvertMemoryToCharPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
     
     // Convert memory position to screen position
     ImVec2 MemoryToScreen(uint64_t address);

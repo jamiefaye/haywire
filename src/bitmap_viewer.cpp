@@ -3,6 +3,7 @@
 #include "beacon_reader.h"
 #include "memory_mapper.h"
 #include "qemu_connection.h"
+#include "font_data.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -393,6 +394,19 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
     
     // Convert to pixels based on format
     viewer.pixels.clear();
+    
+    // Handle expanded formats differently
+    if (viewer.format.type == PixelFormat::HEX_PIXEL) {
+        // For HEX format: each 4-byte value becomes 32x8 pixels
+        ConvertMemoryToHexPixels(viewer, memPtr, totalBytes);
+        return;
+    } else if (viewer.format.type == PixelFormat::CHAR_8BIT) {
+        // For CHAR format: each byte becomes 6x8 pixels
+        ConvertMemoryToCharPixels(viewer, memPtr, totalBytes);
+        return;
+    }
+    
+    // Normal pixel formats
     viewer.pixels.reserve(viewer.memWidth * viewer.memHeight);
     
     for (int y = 0; y < viewer.memHeight; y++) {
@@ -508,6 +522,141 @@ uint64_t BitmapViewerManager::ScreenToMemoryAddress(ImVec2 screenPos) {
 
 const char* PixelFormatToString(int format) {
     return "RGB888";  // Simple for now
+}
+
+void BitmapViewerManager::ConvertMemoryToHexPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes) {
+    // For HEX display, each 32-bit value (4 bytes) becomes a 32x8 pixel block
+    // showing 8 hex digits with color based on the value
+    
+    // Calculate how many 32-bit values fit in one row
+    size_t valuesPerRow = viewer.memWidth / 32;
+    if (valuesPerRow == 0) valuesPerRow = 1;
+    
+    // Calculate pixel buffer size
+    viewer.pixels.resize(viewer.memWidth * viewer.memHeight, 0xFF000000);
+    
+    // Process memory as 32-bit values
+    size_t numValues = totalBytes / 4;
+    
+    for (size_t valueIdx = 0; valueIdx < numValues; ++valueIdx) {
+        // Calculate position in the grid
+        size_t row = valueIdx / valuesPerRow;
+        size_t col = valueIdx % valuesPerRow;
+        
+        if (row * 8 >= (size_t)viewer.memHeight) break;  // Out of viewport
+        
+        // Read 32-bit value from memory
+        size_t memIdx = valueIdx * 4;
+        if (memIdx + 3 >= totalBytes) break;
+        
+        uint32_t value = (memPtr[memIdx] << 0) |
+                        (memPtr[memIdx + 1] << 8) |
+                        (memPtr[memIdx + 2] << 16) |
+                        (memPtr[memIdx + 3] << 24);
+        
+        // Calculate colors based on the value
+        uint32_t bgColor = PackRGBA(
+            memPtr[memIdx + 2],
+            memPtr[memIdx + 1],
+            memPtr[memIdx],
+            255
+        );
+        uint32_t fgColor = ContrastColor(bgColor);
+        
+        // Draw 8 hex nibbles (32 pixels wide, 8 pixels tall)
+        for (int nibbleIdx = 7; nibbleIdx >= 0; --nibbleIdx) {
+            uint8_t nibble = (value >> (nibbleIdx * 4)) & 0xF;
+            uint16_t glyph = GetGlyph3x5Hex(nibble);
+            
+            // Position of this nibble (4 pixels wide each)
+            size_t nibbleX = col * 32 + (7 - nibbleIdx) * 4;
+            size_t nibbleY = row * 8;
+            
+            // Draw the 3x5 glyph in a 4x8 box
+            for (int y = 0; y < 8; ++y) {
+                for (int x = 0; x < 4; ++x) {
+                    size_t pixX = nibbleX + x;
+                    size_t pixY = nibbleY + y;
+                    
+                    if (pixX >= (size_t)viewer.memWidth || pixY >= (size_t)viewer.memHeight) continue;
+                    
+                    // Default to background color
+                    uint32_t color = bgColor;
+                    
+                    // Check if we're in the glyph area (3x5 centered in 4x8)
+                    if (x < 3 && y < 5) {
+                        // Extract bit from glyph - mirror horizontally
+                        int bitPos = (4 - y) * 3 + (2 - x);
+                        if (bitPos >= 0 && bitPos < 15) {
+                            bool bit = (glyph >> bitPos) & 1;
+                            if (bit) {
+                                color = fgColor;
+                            }
+                        }
+                    }
+                    
+                    size_t pixelIdx = pixY * viewer.memWidth + pixX;
+                    viewer.pixels[pixelIdx] = color;
+                }
+            }
+        }
+    }
+}
+
+void BitmapViewerManager::ConvertMemoryToCharPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes) {
+    // For CHAR display, each byte becomes a 6x8 pixel character
+    
+    // Calculate how many characters fit in one row
+    size_t charsPerRow = viewer.memWidth / 6;
+    if (charsPerRow == 0) charsPerRow = 1;
+    
+    // Calculate pixel buffer size
+    viewer.pixels.resize(viewer.memWidth * viewer.memHeight, 0xFF000000);
+    
+    // Process each byte as a character
+    for (size_t byteIdx = 0; byteIdx < totalBytes; ++byteIdx) {
+        // Calculate position in the grid
+        size_t row = byteIdx / charsPerRow;
+        size_t col = byteIdx % charsPerRow;
+        
+        if (row * 8 >= (size_t)viewer.memHeight) break;  // Out of viewport
+        
+        uint8_t ch = memPtr[byteIdx];
+        
+        // Get colors based on the character value
+        uint32_t bgColor = PackRGBA(ch, ch, ch, 255);
+        uint32_t fgColor = ContrastColor(bgColor);
+        
+        // Get the glyph for this character
+        uint64_t glyph = 0;
+        for (size_t i = 0; i < Font5x7u_count; ++i) {
+            uint64_t entry = Font5x7u[i];
+            uint16_t glyphCode = (entry >> 48) & 0xFFFF;
+            if (glyphCode == ch) {
+                glyph = entry;
+                break;
+            }
+        }
+        
+        // Draw the character (6x8 pixels)
+        for (int y = 0; y < 8; ++y) {
+            for (int x = 0; x < 6; ++x) {
+                size_t pixX = col * 6 + x;
+                size_t pixY = row * 8 + y;
+                
+                if (pixX >= (size_t)viewer.memWidth || pixY >= (size_t)viewer.memHeight) continue;
+                
+                // Extract bit from glyph
+                int bitPos = y * 6 + x;
+                bool bit = (glyph >> bitPos) & 1;
+                
+                uint32_t color = bit ? fgColor : bgColor;
+                
+                size_t pixelIdx = pixY * viewer.memWidth + pixX;
+                viewer.pixels[pixelIdx] = color;
+            }
+        }
+    }
 }
 
 } // namespace Haywire
