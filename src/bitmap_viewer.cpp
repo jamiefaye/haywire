@@ -73,20 +73,70 @@ void BitmapViewerManager::DrawViewers() {
 }
 
 void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar;
     
     // Set window position and size
     ImGui::SetNextWindowPos(viewer.windowPos, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(viewer.windowSize, ImGuiCond_FirstUseEver);
     
-    // Create window with custom title - simplified without emoji for now
+    // Create window with custom title bar
     std::string windowTitle = viewer.name + "###BitmapViewer" + std::to_string(viewer.id);
     
     
     if (ImGui::Begin(windowTitle.c_str(), &viewer.active, flags)) {
-        // Get window position for leader line
+        // Get window position and size for leader line
         viewer.windowPos = ImGui::GetWindowPos();
-        viewer.windowSize = ImGui::GetWindowSize();
+        ImVec2 newWindowSize = ImGui::GetWindowSize();
+        
+        // Check if window was resized
+        if (newWindowSize.x != viewer.windowSize.x || newWindowSize.y != viewer.windowSize.y) {
+            // Window was resized - update memory dimensions
+            // Account for title bar height (approximately 30 pixels)
+            int contentWidth = (int)(newWindowSize.x - 10);  // Padding
+            int contentHeight = (int)(newWindowSize.y - 35); // Title bar + padding
+            
+            // Update viewer dimensions
+            viewer.memWidth = std::max(16, contentWidth);
+            viewer.memHeight = std::max(16, contentHeight);
+            viewer.stride = viewer.memWidth;  // Stride = width for now
+            viewer.needsUpdate = true;
+            
+            // Resize pixel buffer
+            viewer.pixels.resize(viewer.memWidth * viewer.memHeight);
+        }
+        viewer.windowSize = newWindowSize;
+        
+        // Custom title bar with controls
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
+        ImGui::BeginChild("TitleBar", ImVec2(0, 25), true);
+        
+        // Title on the left
+        ImGui::Text("%s", viewer.name.c_str());
+        
+        // Address in the middle
+        ImGui::SameLine(100);
+        ImGui::Text("0x%llX", viewer.memoryAddress);
+        
+        // Format selector
+        ImGui::SameLine(200);
+        ImGui::SetNextItemWidth(80);
+        const char* formats[] = { "RGB", "RGBA", "HEX", "CHAR" };
+        int formatIndex = 0;  // TODO: Store in viewer
+        ImGui::Combo("##Format", &formatIndex, formats, IM_ARRAYSIZE(formats));
+        
+        // Settings and close buttons on the right
+        float buttonX = ImGui::GetWindowWidth() - 50;
+        ImGui::SameLine(buttonX);
+        if (ImGui::SmallButton("⚙")) {
+            // TODO: Show settings popup
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X")) {
+            viewer.active = false;
+        }
+        
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
         
         // Check if window is being dragged
         if (ImGui::IsWindowFocused() && ImGui::IsMouseDragging(0)) {
@@ -100,18 +150,19 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             viewer.isDragging = false;
         }
         
-        // Draw settings button in title bar
-        ImGui::SameLine(ImGui::GetWindowWidth() - 30);
-        if (ImGui::Button("⚙")) {
-            // TODO: Show settings popup
-        }
-        
         // Display the texture and store its position
         if (viewer.texture) {
             ImVec2 imagePos = ImGui::GetCursorScreenPos();
             viewer.imageScreenPos = imagePos;  // Store for leader line
-            ImGui::Image((void*)(intptr_t)viewer.texture, 
-                        ImVec2(viewer.memWidth, viewer.memHeight));
+            
+            // Calculate available space for the image
+            ImVec2 availSize = ImGui::GetContentRegionAvail();
+            
+            // Display the image filling the available space
+            ImGui::Image((void*)(intptr_t)viewer.texture, availSize);
+        } else {
+            // Show placeholder if no texture yet
+            ImGui::Text("Loading...");
         }
         
         // Draw resize handle (birdie) in bottom-right corner
@@ -137,26 +188,17 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             }
         }
         
-        // Handle resizing
+        // Handle resizing with birdie
         if (viewer.isResizing) {
             if (ImGui::IsMouseDragging(0)) {
                 ImVec2 newSize = ImGui::GetMousePos();
                 viewer.windowSize.x = std::max(100.0f, newSize.x - viewer.windowPos.x);
                 viewer.windowSize.y = std::max(100.0f, newSize.y - viewer.windowPos.y);
-                
-                // Optionally update memory dimensions based on window size
-                // viewer.memWidth = (int)viewer.windowSize.x;
-                // viewer.memHeight = (int)viewer.windowSize.y;
-                // viewer.needsUpdate = true;
+                // The actual dimension update happens above when we detect size change
             } else {
                 viewer.isResizing = false;
             }
         }
-        
-        // Display info in status area
-        ImGui::Text("Addr: 0x%llX", viewer.memoryAddress);
-        ImGui::Text("Size: %dx%d (Stride: %d)", viewer.memWidth, viewer.memHeight, viewer.stride);
-        ImGui::Text("Format: RGB888");  // TODO: Add format string conversion
     }
     ImGui::End();
 }
@@ -216,7 +258,19 @@ void BitmapViewerManager::UpdateViewers() {
 }
 
 void BitmapViewerManager::UpdateViewerTexture(BitmapViewer& viewer) {
-    if (!viewer.texture) return;
+    if (!viewer.texture) {
+        // Create texture if it doesn't exist
+        glGenTextures(1, &viewer.texture);
+        glBindTexture(GL_TEXTURE_2D, viewer.texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+    
+    // Ensure pixels array is the right size
+    size_t expectedSize = viewer.memWidth * viewer.memHeight;
+    if (viewer.pixels.size() != expectedSize) {
+        viewer.pixels.resize(expectedSize);
+    }
     
     // Convert pixels based on format
     std::vector<uint32_t> rgba_pixels;
@@ -228,7 +282,7 @@ void BitmapViewerManager::UpdateViewerTexture(BitmapViewer& viewer) {
         rgba_pixels.push_back(pixel);
     }
     
-    // Update OpenGL texture
+    // Update OpenGL texture with new dimensions
     glBindTexture(GL_TEXTURE_2D, viewer.texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, viewer.memWidth, viewer.memHeight,
                 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba_pixels.data());
