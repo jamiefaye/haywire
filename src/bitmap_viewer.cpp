@@ -152,8 +152,14 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             "BINARY", "HEX", "CHAR" 
         };
         
+        // Dynamically set height to show all items based on array size
+        int numFormats = IM_ARRAYSIZE(formats);
+        float itemHeight = ImGui::GetTextLineHeightWithSpacing();
+        float maxHeight = itemHeight * (numFormats + 0.5f); // All items plus a bit of padding
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, maxHeight));
+        
         // Update format if changed
-        if (ImGui::Combo("##Format", &viewer.formatIndex, formats, IM_ARRAYSIZE(formats))) {
+        if (ImGui::Combo("##Format", &viewer.formatIndex, formats, numFormats)) {
             // Map combo index to PixelFormat::Type
             PixelFormat::Type newType;
             switch(viewer.formatIndex) {
