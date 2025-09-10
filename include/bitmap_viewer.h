@@ -61,6 +61,26 @@ public:
         beaconReader = reader; 
     }
     
+    // Set QemuConnection for VA->PA translation
+    void SetQemuConnection(class QemuConnection* qemu) {
+        qemuConnection = qemu;
+    }
+    
+    // Set MemoryMapper for GPA->file offset translation
+    void SetMemoryMapper(std::shared_ptr<class MemoryMapper> mapper) {
+        memoryMapper = mapper;
+    }
+    
+    // Set current PID for VA mode
+    void SetCurrentPID(int pid) {
+        currentPid = pid;
+    }
+    
+    // Set whether we're in VA mode
+    void SetVAMode(bool vaMode) {
+        useVirtualAddresses = vaMode;
+    }
+    
     // Create a new viewer at the specified memory location
     void CreateViewer(uint64_t address, ImVec2 anchorPos);
     
@@ -103,6 +123,12 @@ private:
     // Beacon reader for memory access
     std::shared_ptr<class BeaconReader> beaconReader;
     class MemoryVisualizer* memoryVisualizer = nullptr;
+    
+    // Additional dependencies for proper memory access
+    class QemuConnection* qemuConnection = nullptr;
+    std::shared_ptr<class MemoryMapper> memoryMapper;
+    int currentPid = -1;
+    bool useVirtualAddresses = false;
 };
 
 }  // namespace Haywire

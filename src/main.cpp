@@ -17,6 +17,7 @@
 #include "beacon_decoder.h"
 #include "beacon_translator.h"
 #include "pid_selector.h"
+#include "memory_mapper.h"
 
 using namespace Haywire;
 
@@ -67,8 +68,17 @@ int main(int argc, char** argv) {
     MemoryOverview overview;
     HexOverlay hexOverlay;
     
+    // Create memory mapper for address translation
+    auto memoryMapper = std::make_shared<MemoryMapper>();
+    
     // Auto-connect to QEMU first (before beacon reader)
     bool autoConnected = qemu.AutoConnect();
+    
+    // If connected, initialize memory mapper
+    if (autoConnected) {
+        memoryMapper->DiscoverMemoryMap("localhost", 4444);
+        memoryMapper->LogRegions();
+    }
     
     // Beacon reader and PID selector
     auto beaconReader = std::make_shared<BeaconReader>();
@@ -99,6 +109,8 @@ int main(int argc, char** argv) {
         beaconTranslator = std::make_shared<BeaconTranslator>(beaconReader);
         visualizer.SetBeaconTranslator(beaconTranslator);
         visualizer.SetBeaconReader(beaconReader);  // Also set beacon reader for bitmap viewers
+        visualizer.SetQemuConnection(&qemu);  // Pass QEMU connection for VA->PA translation
+        visualizer.SetMemoryMapper(memoryMapper);  // Pass memory mapper for GPA->offset translation
         std::cout << "Beacon translator created and connected to visualizer\n";
         
         // Set callback to switch to process mode when PID is selected

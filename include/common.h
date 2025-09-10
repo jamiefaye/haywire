@@ -55,8 +55,12 @@ struct PixelFormat {
     }
 };
 
+// Forward declaration for AddressSpace enum
+enum class AddressSpace;
+
 struct ViewportSettings {
     uint64_t baseAddress;
+    AddressSpace addressSpace;  // Which address space baseAddress is in
     size_t width;
     size_t height;
     size_t stride;
@@ -65,7 +69,8 @@ struct ViewportSettings {
     float panX, panY;
     
     ViewportSettings() 
-        : baseAddress(0), width(256), height(256), stride(256),
+        : baseAddress(0), addressSpace(), // Will be initialized to NONE
+          width(256), height(256), stride(256),
           format(PixelFormat::RGB888), zoom(1.0f), panX(0), panY(0) {}
 };
 

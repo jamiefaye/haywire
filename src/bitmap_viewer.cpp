@@ -1,6 +1,8 @@
 #include "bitmap_viewer.h"
 #include "memory_visualizer.h"
 #include "beacon_reader.h"
+#include "memory_mapper.h"
+#include "qemu_connection.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -242,10 +244,46 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
     size_t bytesPerPixel = 3; // Default RGB888
     size_t totalBytes = viewer.stride * viewer.memHeight;
     
+    // Start with the viewer's address
+    uint64_t targetAddress = viewer.memoryAddress;
+    
+    // If in VA mode, translate virtual to physical
+    if (useVirtualAddresses && qemuConnection && currentPid > 0) {
+        uint64_t physAddr;
+        // Try to translate VA to PA using QMP
+        if (qemuConnection->TranslateVA2PA(0, targetAddress, physAddr)) {
+            targetAddress = physAddr;
+        } else {
+            printf("Failed to translate VA 0x%llx to PA for PID %d\n", 
+                   viewer.memoryAddress, currentPid);
+        }
+    }
+    
+    // Now translate guest physical address to file offset
+    uint64_t fileOffset = targetAddress;
+    
+    if (memoryMapper) {
+        // Use MemoryMapper for proper translation
+        int64_t mappedOffset = memoryMapper->TranslateGPAToFileOffset(targetAddress);
+        if (mappedOffset >= 0) {
+            fileOffset = mappedOffset;
+        } else {
+            printf("Address 0x%llx not found in memory map\n", targetAddress);
+            // Fall back to test pattern
+            fileOffset = UINT64_MAX;  // Will fail the GetMemoryPointer call
+        }
+    } else {
+        // Fallback: hardcoded ARM64 offset (not ideal but works for testing)
+        if (targetAddress >= 0x40000000) {
+            fileOffset = targetAddress - 0x40000000;
+        }
+    }
+    
     // Get direct memory pointer from beacon reader
-    const uint8_t* memPtr = beaconReader->GetMemoryPointer(viewer.memoryAddress);
+    const uint8_t* memPtr = beaconReader->GetMemoryPointer(fileOffset);
     if (!memPtr) {
-        printf("Failed to get memory pointer for address 0x%llx\n", viewer.memoryAddress);
+        printf("Failed to get memory pointer for address 0x%llx (PA: 0x%llx, offset: 0x%llx)\n", 
+               viewer.memoryAddress, targetAddress, fileOffset);
         // Fill with test pattern instead
         viewer.pixels.clear();
         viewer.pixels.reserve(viewer.memWidth * viewer.memHeight);

@@ -104,6 +104,10 @@ void MemoryVisualizer::SetProcessPid(int pid) {
     if (crunchedReader) {
         crunchedReader->SetPID(pid);
     }
+    // Update bitmap viewer manager's PID
+    if (bitmapViewerManager) {
+        bitmapViewerManager->SetCurrentPID(pid);
+    }
 }
 
 void MemoryVisualizer::CreateTexture() {
@@ -490,6 +494,18 @@ void MemoryVisualizer::SetBeaconReader(std::shared_ptr<BeaconReader> reader) {
     }
 }
 
+void MemoryVisualizer::SetQemuConnection(QemuConnection* qemu) {
+    if (bitmapViewerManager) {
+        bitmapViewerManager->SetQemuConnection(qemu);
+    }
+}
+
+void MemoryVisualizer::SetMemoryMapper(std::shared_ptr<MemoryMapper> mapper) {
+    if (bitmapViewerManager) {
+        bitmapViewerManager->SetMemoryMapper(mapper);
+    }
+}
+
 bool MemoryVisualizer::IsBitmapAnchorDragging() const {
     if (bitmapViewerManager) {
         return bitmapViewerManager->IsAnyAnchorDragging();
@@ -570,6 +586,12 @@ void MemoryVisualizer::DrawControls() {
     
     // Second row: VA/PA translation controls and process info
     if (ImGui::Checkbox("VA Mode", &useVirtualAddresses)) {
+        // Update bitmap viewer manager's VA mode
+        if (bitmapViewerManager) {
+            bitmapViewerManager->SetVAMode(useVirtualAddresses);
+            bitmapViewerManager->SetCurrentPID(targetPid);
+        }
+        
         if (useVirtualAddresses) {
             // Switching to VA mode
             if (addressFlattener && addressFlattener->GetFlatSize() > 0) {

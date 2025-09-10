@@ -81,6 +81,12 @@ public:
     // Set beacon reader for bitmap viewers
     void SetBeaconReader(std::shared_ptr<class BeaconReader> reader);
     
+    // Set QEMU connection for bitmap viewers
+    void SetQemuConnection(class QemuConnection* qemu);
+    
+    // Set memory mapper for bitmap viewers
+    void SetMemoryMapper(std::shared_ptr<class MemoryMapper> mapper);
+    
     // Check if any bitmap viewer anchor is being dragged
     bool IsBitmapAnchorDragging() const;
     
