@@ -651,7 +651,14 @@ void MemoryVisualizer::DrawControls() {
                               "ARGB8888", "ABGR8888", "RGB565", "Grayscale", "Binary",
                               "Hex Pixel", "Char 8-bit" };
     ImGui::PushItemWidth(120);
-    if (ImGui::Combo("##Format", &pixelFormatIndex, formats, IM_ARRAYSIZE(formats))) {
+    
+    // Dynamically set height to show all items based on array size
+    int numFormats = IM_ARRAYSIZE(formats);
+    float itemHeight = ImGui::GetTextLineHeightWithSpacing();
+    float maxHeight = itemHeight * (numFormats + 0.5f); // All items plus a bit of padding
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, maxHeight));
+    
+    if (ImGui::Combo("##Format", &pixelFormatIndex, formats, numFormats)) {
         viewport.format = PixelFormat(static_cast<PixelFormat::Type>(pixelFormatIndex));
         needsUpdate = true;  // Immediate update
     }
