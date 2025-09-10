@@ -640,9 +640,9 @@ void BitmapViewerManager::ConvertMemoryToCharPixels(BitmapViewer& viewer, const 
             continue;
         }
         
-        // Get colors based on the character value
-        uint32_t bgColor = PackRGBA(ch, ch, ch, 255);
-        uint32_t fgColor = ContrastColor(bgColor);
+        // Simple color scheme: white text on black background (matching main visualizer)
+        uint32_t fgColor = 0xFFFFFFFF;  // White
+        uint32_t bgColor = 0xFF000000;  // Black
         
         // Get the glyph for this character
         uint64_t glyph = 0;
@@ -656,21 +656,27 @@ void BitmapViewerManager::ConvertMemoryToCharPixels(BitmapViewer& viewer, const 
         }
         
         // Draw the character (6x8 pixels)
+        // Using the rotating bit pattern from memory_visualizer
+        uint64_t rotatingBit = 0x0000800000000000ULL;  // bit 47
+        
         for (int y = 0; y < 8; ++y) {
             for (int x = 0; x < 6; ++x) {
                 size_t pixX = col * 6 + x;
                 size_t pixY = row * 8 + y;
                 
-                if (pixX >= (size_t)viewer.memWidth || pixY >= (size_t)viewer.memHeight) continue;
+                if (pixX >= (size_t)viewer.memWidth || pixY >= (size_t)viewer.memHeight) {
+                    rotatingBit >>= 1;  // Still need to advance the bit
+                    continue;
+                }
                 
-                // Extract bit from glyph
-                int bitPos = y * 6 + x;
-                bool bit = (glyph >> bitPos) & 1;
-                
+                // Check if bit is set
+                bool bit = (glyph & rotatingBit) != 0;
                 uint32_t color = bit ? fgColor : bgColor;
                 
                 size_t pixelIdx = pixY * viewer.memWidth + pixX;
                 viewer.pixels[pixelIdx] = color;
+                
+                rotatingBit >>= 1;  // Move to next bit
             }
         }
     }
