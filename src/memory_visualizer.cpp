@@ -422,11 +422,54 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
     
 }
 
+void MemoryVisualizer::DrawFormulaBar() {
+    // Get mouse position in memory view
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 mousePos = io.MousePos;
+    ImVec2 viewPos = memoryViewPos;
+    ImVec2 viewSize = memoryViewSize;
+    
+    // Calculate which memory location the mouse is over
+    int mouseX = (int)((mousePos.x - viewPos.x) / viewport.zoom);
+    int mouseY = (int)((mousePos.y - viewPos.y) / viewport.zoom);
+    
+    // Clamp to viewport
+    mouseX = std::max(0, std::min(mouseX, (int)viewport.width - 1));
+    mouseY = std::max(0, std::min(mouseY, (int)viewport.height - 1));
+    
+    // Get display info from AddressDisplayer
+    AddressSpace currentSpace = useVirtualAddresses ? AddressSpace::VIRTUAL : AddressSpace::PHYSICAL;
+    uint64_t currentAddr = GetAddressAt(mouseX, mouseY);
+    
+    AddressDisplayer::DisplayInfo info = addressDisplayer.GetDisplay(
+        currentAddr, currentSpace,
+        mouseX, mouseY,
+        viewport.stride, viewport.format.bytesPerPixel
+    );
+    
+    // Draw formula bar
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.1f, 0.1f, 0.15f, 0.95f));
+    ImGui::BeginChild("FormulaBar", ImVec2(0, 25), true);
+    
+    // Show the formula
+    ImGui::Text("📍 %s", info.formula.c_str());
+    
+    // Show simplified result on the right
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 200);
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "= %s", info.simplified.c_str());
+    
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
 void MemoryVisualizer::DrawMemoryBitmap() {
+    // Draw formula bar at the top
+    DrawFormulaBar();
+    
     // Get available size (already constrained by parent)
     ImVec2 availSize = ImGui::GetContentRegionAvail();
     
-    // Use full available height
+    // Use full available height (minus formula bar)
     float maxHeight = std::max(50.0f, availSize.y);
     
     // Ensure we have enough space
@@ -520,12 +563,44 @@ void MemoryVisualizer::DrawControls() {
     ImGui::PushItemWidth(120);
     if (ImGui::InputText("##Address", addressInput, sizeof(addressInput),
                         ImGuiInputTextFlags_EnterReturnsTrue)) {
-        std::stringstream ss;
-        ss << std::hex << addressInput;
-        uint64_t inputAddress;
-        ss >> inputAddress;
-        // Use NavigateToAddress to handle VA translation if needed
-        NavigateToAddress(inputAddress);
+        // Parse the input using our AddressParser
+        ParsedAddress parsed = addressParser.Parse(addressInput);
+        
+        if (parsed.isValid) {
+            // Handle different address spaces
+            uint64_t targetAddress = parsed.address;
+            
+            // Convert to appropriate address based on space
+            switch (parsed.space) {
+                case AddressSpace::SHARED:
+                    // File offset - need to convert to PA
+                    targetAddress = parsed.address + 0x40000000;  // TODO: Use MemoryMapper
+                    break;
+                case AddressSpace::PHYSICAL:
+                    // Already physical
+                    break;
+                case AddressSpace::VIRTUAL:
+                    // Will be handled by NavigateToAddress if in VA mode
+                    break;
+                case AddressSpace::CRUNCHED:
+                    // Crunched address - use directly in VA mode
+                    if (useVirtualAddresses) {
+                        viewport.baseAddress = parsed.address;
+                        needsUpdate = true;
+                        return;
+                    }
+                    break;
+                default:
+                    // No prefix - use current mode's interpretation
+                    break;
+            }
+            
+            // Use NavigateToAddress to handle VA translation if needed
+            NavigateToAddress(targetAddress);
+        } else {
+            // Show warning in status or keep current position
+            printf("Invalid address: %s (%s)\n", addressInput, parsed.warning.c_str());
+        }
     }
     ImGui::PopItemWidth();
     

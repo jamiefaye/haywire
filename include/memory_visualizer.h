@@ -96,6 +96,7 @@ private:
     void DrawMemoryView();
     void DrawNavigator();
     void DrawVerticalAddressSlider();
+    void DrawFormulaBar();
     void HandleInput();
     
     void CreateTexture();
