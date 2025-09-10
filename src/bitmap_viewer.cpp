@@ -623,6 +623,23 @@ void BitmapViewerManager::ConvertMemoryToCharPixels(BitmapViewer& viewer, const 
         
         uint8_t ch = memPtr[byteIdx];
         
+        // Skip null characters - leave them blank (black)
+        if (ch == 0) {
+            // Fill with black pixels
+            for (int y = 0; y < 8; ++y) {
+                for (int x = 0; x < 6; ++x) {
+                    size_t pixX = col * 6 + x;
+                    size_t pixY = row * 8 + y;
+                    
+                    if (pixX >= (size_t)viewer.memWidth || pixY >= (size_t)viewer.memHeight) continue;
+                    
+                    size_t pixelIdx = pixY * viewer.memWidth + pixX;
+                    viewer.pixels[pixelIdx] = 0xFF000000; // Black
+                }
+            }
+            continue;
+        }
+        
         // Get colors based on the character value
         uint32_t bgColor = PackRGBA(ch, ch, ch, 255);
         uint32_t fgColor = ContrastColor(bgColor);
