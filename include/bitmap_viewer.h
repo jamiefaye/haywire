@@ -93,7 +93,7 @@ public:
     }
     
     // Create a new viewer at the specified memory location
-    void CreateViewer(uint64_t address, ImVec2 anchorPos);
+    void CreateViewer(uint64_t address, ImVec2 anchorPos, PixelFormat format = PixelFormat::RGB888);
     
     // Remove a viewer
     void RemoveViewer(int id);
@@ -105,7 +105,7 @@ public:
     void UpdateViewers();
     
     // Handle right-click context menu
-    void HandleContextMenu(uint64_t clickAddress, ImVec2 clickPos);
+    void HandleContextMenu(uint64_t clickAddress, ImVec2 clickPos, PixelFormat format = PixelFormat::RGB888);
     
     // Get number of viewers
     size_t GetViewerCount() const { return viewers.size(); }

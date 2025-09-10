@@ -1238,7 +1238,7 @@ void MemoryVisualizer::DrawMemoryView() {
             printf("Creating bitmap viewer at 0x%llx, pos (%f, %f)\n", 
                    (unsigned long long)contextMenuAddress, contextMenuPos.x, contextMenuPos.y);
             if (bitmapViewerManager) {
-                bitmapViewerManager->CreateViewer(contextMenuAddress, contextMenuPos);
+                bitmapViewerManager->CreateViewer(contextMenuAddress, contextMenuPos, viewport.format);
                 printf("Viewer created! Total viewers: %zu\n", bitmapViewerManager->GetViewerCount());
             } else {
                 printf("ERROR: bitmapViewerManager is null!\n");

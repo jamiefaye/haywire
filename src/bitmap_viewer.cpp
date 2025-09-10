@@ -22,7 +22,7 @@ BitmapViewerManager::~BitmapViewerManager() {
     }
 }
 
-void BitmapViewerManager::CreateViewer(uint64_t address, ImVec2 anchorPos) {
+void BitmapViewerManager::CreateViewer(uint64_t address, ImVec2 anchorPos, PixelFormat format) {
     BitmapViewer viewer;
     viewer.id = nextId++;
     // Use address as the name with proper space prefix (shared memory)
@@ -32,7 +32,26 @@ void BitmapViewerManager::CreateViewer(uint64_t address, ImVec2 anchorPos) {
     viewer.memoryAddress = address;
     viewer.anchorPos = anchorPos;
     
-    // Initialize stride based on default format
+    // Use the format from the main window
+    viewer.format = format;
+    
+    // Set the format index for the combo box
+    switch(format.type) {
+        case PixelFormat::RGB888: viewer.formatIndex = 0; break;
+        case PixelFormat::RGBA8888: viewer.formatIndex = 1; break;
+        case PixelFormat::BGR888: viewer.formatIndex = 2; break;
+        case PixelFormat::BGRA8888: viewer.formatIndex = 3; break;
+        case PixelFormat::ARGB8888: viewer.formatIndex = 4; break;
+        case PixelFormat::ABGR8888: viewer.formatIndex = 5; break;
+        case PixelFormat::RGB565: viewer.formatIndex = 6; break;
+        case PixelFormat::GRAYSCALE: viewer.formatIndex = 7; break;
+        case PixelFormat::BINARY: viewer.formatIndex = 8; break;
+        case PixelFormat::HEX_PIXEL: viewer.formatIndex = 9; break;
+        case PixelFormat::CHAR_8BIT: viewer.formatIndex = 10; break;
+        default: viewer.formatIndex = 0; break;
+    }
+    
+    // Initialize stride based on the format
     viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
     
     // Position window offset from anchor
@@ -484,10 +503,10 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
     
 }
 
-void BitmapViewerManager::HandleContextMenu(uint64_t clickAddress, ImVec2 clickPos) {
+void BitmapViewerManager::HandleContextMenu(uint64_t clickAddress, ImVec2 clickPos, PixelFormat format) {
     if (ImGui::BeginPopupContextVoid("BitmapViewerContext")) {
         if (ImGui::MenuItem("Create Bitmap Viewer Here")) {
-            CreateViewer(clickAddress, clickPos);
+            CreateViewer(clickAddress, clickPos, format);
         }
         ImGui::EndPopup();
     }
