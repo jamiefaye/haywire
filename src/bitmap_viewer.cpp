@@ -24,7 +24,10 @@ BitmapViewerManager::~BitmapViewerManager() {
 void BitmapViewerManager::CreateViewer(uint64_t address, ImVec2 anchorPos) {
     BitmapViewer viewer;
     viewer.id = nextId++;
-    viewer.name = "Viewer " + std::to_string(viewer.id);
+    // Use address as the name
+    std::stringstream ss;
+    ss << "0x" << std::hex << address;
+    viewer.name = ss.str();
     viewer.memoryAddress = address;
     viewer.anchorPos = anchorPos;
     
@@ -110,16 +113,16 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
         ImGui::BeginChild("TitleBar", ImVec2(0, 25), true);
         
-        // Title on the left
+        // Address on the left (acts as title)
         ImGui::Text("%s", viewer.name.c_str());
         
-        // Address in the middle
+        // Size info
         ImGui::SameLine(100);
-        ImGui::Text("0x%llX", viewer.memoryAddress);
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%dx%d", viewer.memWidth, viewer.memHeight);
         
         // Format selector
-        ImGui::SameLine(200);
-        ImGui::SetNextItemWidth(80);
+        ImGui::SameLine(160);
+        ImGui::SetNextItemWidth(60);
         const char* formats[] = { "RGB", "RGBA", "HEX", "CHAR" };
         int formatIndex = 0;  // TODO: Store in viewer
         ImGui::Combo("##Format", &formatIndex, formats, IM_ARRAYSIZE(formats));
