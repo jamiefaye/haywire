@@ -2766,7 +2766,7 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToHexPixels(const MemoryBlo
         size_t row = valueIdx / valuesPerRow;
         size_t col = valueIdx % valuesPerRow;
         
-        if (row * 6 >= viewport.height) break;  // Out of viewport
+        if (row * 7 >= viewport.height) break;  // Out of viewport
         
         // Read 32-bit value from memory (little-endian to match memory order)
         size_t memIdx = valueIdx * 4;
@@ -2792,8 +2792,8 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToHexPixels(const MemoryBlo
             uint16_t glyph = GetGlyph3x5Hex(nibble);
             
             // Position of this nibble (4 pixels wide each)
-            size_t nibbleX = col * 32 + (7 - nibbleIdx) * 4;
-            size_t nibbleY = row * 6;
+            size_t nibbleX = col * 33 + (7 - nibbleIdx) * 4;
+            size_t nibbleY = row * 7;
             
             // Fill first column with background (left border)
             for (int y = 0; y < 6; ++y) {
@@ -2830,6 +2830,26 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToHexPixels(const MemoryBlo
                         pixels[pixIdx] = bit ? fgColor : bgColor;
                     }
                 }
+            }
+        }
+        
+        // Fill the rightmost column (33rd pixel) with background for this value
+        for (int y = 0; y < 7; ++y) {
+            size_t pixX = col * 33 + 32;  // The 33rd pixel (index 32)
+            size_t pixY = row * 7 + y;
+            if (pixX < viewport.width && pixY < viewport.height) {
+                size_t pixIdx = pixY * viewport.width + pixX;
+                pixels[pixIdx] = bgColor;
+            }
+        }
+        
+        // Fill the bottom row (7th row) with background for this value
+        for (int x = 0; x < 32; ++x) {  // Don't include the rightmost column (already filled)
+            size_t pixX = col * 33 + x;
+            size_t pixY = row * 7 + 6;  // The 7th row (index 6)
+            if (pixX < viewport.width && pixY < viewport.height) {
+                size_t pixIdx = pixY * viewport.width + pixX;
+                pixels[pixIdx] = bgColor;
             }
         }
     }

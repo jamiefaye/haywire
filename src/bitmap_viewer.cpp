@@ -774,7 +774,7 @@ void BitmapViewerManager::ConvertMemoryToHexPixels(BitmapViewer& viewer, const u
         size_t row = valueIdx / valuesPerRow;
         size_t col = valueIdx % valuesPerRow;
         
-        if (row * 8 >= (size_t)viewer.memHeight) break;  // Out of viewport
+        if (row * 7 >= (size_t)viewer.memHeight) break;  // Out of viewport
         
         // Read 32-bit value from memory
         size_t memIdx = valueIdx * 4;
@@ -794,17 +794,17 @@ void BitmapViewerManager::ConvertMemoryToHexPixels(BitmapViewer& viewer, const u
         );
         uint32_t fgColor = CalcHiContrastOpposite(bgColor);  // Use same as main viewer
         
-        // Draw 8 hex nibbles (32 pixels wide, 8 pixels tall)
+        // Draw 8 hex nibbles (33 pixels wide total, 8 pixels tall)
         for (int nibbleIdx = 7; nibbleIdx >= 0; --nibbleIdx) {
             uint8_t nibble = (value >> (nibbleIdx * 4)) & 0xF;
             uint16_t glyph = GetGlyph3x5Hex(nibble);
             
             // Position of this nibble (4 pixels wide each)
-            size_t nibbleX = col * 32 + (7 - nibbleIdx) * 4;
-            size_t nibbleY = row * 8;
+            size_t nibbleX = col * 33 + (7 - nibbleIdx) * 4;
+            size_t nibbleY = row * 7;
             
-            // Draw the 3x5 glyph in a 4x8 box with 1px border on left and top
-            for (int y = 0; y < 8; ++y) {
+            // Draw the 3x5 glyph in a 4x7 box with 1px border on left, top and bottom
+            for (int y = 0; y < 7; ++y) {
                 for (int x = 0; x < 4; ++x) {
                     size_t pixX = nibbleX + x;
                     size_t pixY = nibbleY + y;
@@ -835,6 +835,28 @@ void BitmapViewerManager::ConvertMemoryToHexPixels(BitmapViewer& viewer, const u
                     size_t pixelIdx = pixY * viewer.memWidth + pixX;
                     viewer.pixels[pixelIdx] = color;
                 }
+            }
+        }
+        
+        // Draw the rightmost border column (the 33rd column)
+        size_t borderX = col * 33 + 32;
+        if (borderX < (size_t)viewer.memWidth) {
+            for (int y = 0; y < 7; ++y) {
+                size_t pixY = row * 7 + y;
+                if (pixY < (size_t)viewer.memHeight) {
+                    size_t pixelIdx = pixY * viewer.memWidth + borderX;
+                    viewer.pixels[pixelIdx] = bgColor;
+                }
+            }
+        }
+        
+        // Fill the bottom row (7th row) with background for this value
+        for (int x = 0; x < 32; ++x) {  // Don't include the rightmost column (already filled)
+            size_t pixX = col * 33 + x;
+            size_t pixY = row * 7 + 6;  // The 7th row (index 6)
+            if (pixX < (size_t)viewer.memWidth && pixY < (size_t)viewer.memHeight) {
+                size_t pixelIdx = pixY * viewer.memWidth + pixX;
+                viewer.pixels[pixelIdx] = bgColor;
             }
         }
     }
