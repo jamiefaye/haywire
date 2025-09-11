@@ -28,7 +28,7 @@ MemoryVisualizer::MemoryVisualizer()
       refreshRate(10.0f), showHexOverlay(false), showNavigator(true), showCorrelation(false),
       showChangeHighlight(true), showMagnifier(false),  // Magnifier off by default
       splitComponents(false),  // Split components off by default
-      widthInput(640), heightInput(480), strideInput(640),  // Back to reasonable video dimensions
+      widthInput(512), heightInput(480), strideInput(512),  // Default to 512 width
       pixelFormatIndex(0), mouseX(0), mouseY(0), isDragging(false),
       dragStartX(0), dragStartY(0), isReading(false), readComplete(false),
       marchingAntsPhase(0.0f), magnifierZoom(8), magnifierLocked(false),
@@ -50,7 +50,7 @@ MemoryVisualizer::MemoryVisualizer()
         NavigateToAddress(virtualAddr);
     });
     
-    strcpy(addressInput, "0x0");  // Start at 0 where boot ROM lives
+    strcpy(addressInput, "s:0");  // Start at 0 where boot ROM lives
     viewport.baseAddress = 0x0;  // Initialize the actual address!
     viewport.width = widthInput;
     viewport.height = heightInput;
@@ -468,16 +468,50 @@ void MemoryVisualizer::DrawFormulaBar() {
         viewport.stride, viewport.format.bytesPerPixel
     );
     
-    // Draw formula bar
+    // Draw formula bar with all address spaces
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.1f, 0.1f, 0.15f, 0.95f));
     ImGui::BeginChild("FormulaBar", ImVec2(0, 25), true);
     
-    // Show the formula
-    ImGui::Text("📍 %s", info.formula.c_str());
+    // Build address display string
+    std::stringstream addrDisplay;
     
-    // Show simplified result on the right
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 200);
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "= %s", info.simplified.c_str());
+    // Show current address based on mode
+    if (useVirtualAddresses && addressFlattener && targetPid > 0) {
+        // In VA mode, show virtual address
+        uint64_t va = addressFlattener->FlatToVirtual(currentAddr);
+        addrDisplay << "v:" << std::hex << va;
+        
+        // Try to get PA if we have a translator
+        if (crunchedReader) {
+            auto translator = crunchedReader->GetBeaconTranslator();
+            if (translator) {
+                uint64_t pa = translator->TranslateAddress(targetPid, va);
+                if (pa != 0) {
+                    addrDisplay << " p:" << std::hex << pa;
+                    
+                    // Show shared memory offset
+                    addrDisplay << " s:" << std::hex << pa - 0x40000000;
+                }
+            }
+        }
+        
+        // Show crunched (flattened) address
+        addrDisplay << " c:" << std::hex << currentAddr;
+    } else {
+        // In physical mode, show shared memory offset
+        addrDisplay << "s:" << std::hex << currentAddr;
+        
+        // Add physical address (shared + base)
+        uint64_t pa = currentAddr + 0x40000000;
+        addrDisplay << " p:" << std::hex << pa;
+    }
+    
+    // Show the address display
+    ImGui::Text("📍 %s", addrDisplay.str().c_str());
+    
+    // Show mouse position info on the right
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 150);
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "(%d,%d)", memX, memY);
     
     ImGui::EndChild();
     ImGui::PopStyleColor();
@@ -654,7 +688,7 @@ void MemoryVisualizer::DrawControls() {
                               "ARGB8888", "ABGR8888", "RGB565", "Grayscale", "Binary",
                               "Hex Pixel", "Char 8-bit",
                               "---",  // Separator
-                              splitComponents ? "✓ Split Components" : "  Split Components" };
+                              splitComponents ? "[X] Split" : "[ ] Split" };
     ImGui::PushItemWidth(120);
     
     // Dynamically set height to show all items based on array size
@@ -673,7 +707,7 @@ void MemoryVisualizer::DrawControls() {
             
             bool isSelected = (i == pixelFormatIndex);
             if (ImGui::Selectable(formats[i], isSelected)) {
-                if (i == 12) { // Split Components toggle
+                if (i == 12) { // Split toggle
                     splitComponents = !splitComponents;
                     needsUpdate = true;
                 } else if (i < 11) { // Regular format selection
@@ -719,6 +753,8 @@ void MemoryVisualizer::DrawControls() {
         if (bitmapViewerManager) {
             bitmapViewerManager->SetVAMode(useVirtualAddresses);
             bitmapViewerManager->SetCurrentPID(targetPid);
+            bitmapViewerManager->SetCrunchedReader(crunchedReader.get());
+            bitmapViewerManager->SetAddressFlattener(addressFlattener.get());
         }
         
         if (useVirtualAddresses) {
@@ -743,7 +779,7 @@ void MemoryVisualizer::DrawControls() {
                 // Update address display to show first VA
                 uint64_t firstVA = addressFlattener->FlatToVirtual(viewport.baseAddress);
                 std::stringstream ss;
-                ss << "0x" << std::hex << firstVA;
+                ss << "v:" << std::hex << firstVA;  // Use VA notation
                 strcpy(addressInput, ss.str().c_str());
                 
                 std::cerr << "Switched to VA mode, flat size: " 
@@ -755,7 +791,7 @@ void MemoryVisualizer::DrawControls() {
         } else {
             // Switching back to physical mode
             viewport.baseAddress = 0;
-            strcpy(addressInput, "0x0");
+            strcpy(addressInput, "s:0");  // Use proper notation
             needsUpdate = true;
             std::cerr << "Switched to physical mode" << std::endl;
         }
@@ -920,11 +956,11 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
             if (useVirtualAddresses && addressFlattener) {
                 uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
                 std::stringstream ss;
-                ss << "0x" << std::hex << virtualAddr;
+                ss << "v:" << std::hex << virtualAddr;  // Use VA notation
                 strcpy(addressInput, ss.str().c_str());
             } else {
                 std::stringstream ss;
-                ss << "0x" << std::hex << viewport.baseAddress;
+                ss << "s:" << std::hex << viewport.baseAddress;  // Use shared notation
                 strcpy(addressInput, ss.str().c_str());
             }
             needsUpdate = true;
@@ -944,12 +980,12 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
             // Show the VA that corresponds to this flat position
             uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
             std::stringstream ss;
-            ss << "0x" << std::hex << virtualAddr;
+            ss << "v:" << std::hex << virtualAddr;  // Use VA notation
             strcpy(addressInput, ss.str().c_str());
         } else {
-            // Physical mode - show physical address
+            // Physical mode - show shared address
             std::stringstream ss;
-            ss << "0x" << std::hex << viewport.baseAddress;
+            ss << "s:" << std::hex << viewport.baseAddress;  // Use shared notation
             strcpy(addressInput, ss.str().c_str());
         }
         
@@ -965,11 +1001,11 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
             if (useVirtualAddresses && addressFlattener) {
                 uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
                 std::stringstream ss;
-                ss << "0x" << std::hex << virtualAddr;
+                ss << "v:" << std::hex << virtualAddr;  // Use VA notation
                 strcpy(addressInput, ss.str().c_str());
             } else {
                 std::stringstream ss;
-                ss << "0x" << std::hex << viewport.baseAddress;
+                ss << "s:" << std::hex << viewport.baseAddress;  // Use shared notation
                 strcpy(addressInput, ss.str().c_str());
             }
             needsUpdate = true;
@@ -2002,7 +2038,7 @@ void MemoryVisualizer::HandleInput() {
             
             // Update the address input field
             std::stringstream ss;
-            ss << "0x" << std::hex << viewport.baseAddress;
+            ss << (useVirtualAddresses ? "c:" : "s:") << std::hex << viewport.baseAddress;
             strcpy(addressInput, ss.str().c_str());
             
             needsUpdate = true;
@@ -2276,7 +2312,7 @@ void MemoryVisualizer::NavigateToAddress(uint64_t address) {
         
         // Display the actual VA in the address field
         std::stringstream ss;
-        ss << "0x" << std::hex << address;
+        ss << "v:" << std::hex << address;  // Virtual address in VA mode
         strcpy(addressInput, ss.str().c_str());
         
         std::cerr << "VA 0x" << std::hex << address 
@@ -2292,7 +2328,7 @@ void MemoryVisualizer::NavigateToAddress(uint64_t address) {
         // Original physical address mode
         viewport.baseAddress = address;
         std::stringstream ss;
-        ss << "0x" << std::hex << address;
+        ss << "v:" << std::hex << address;  // Virtual address in VA mode
         strcpy(addressInput, ss.str().c_str());
     }
     

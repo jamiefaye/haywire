@@ -83,6 +83,16 @@ public:
         useVirtualAddresses = vaMode;
     }
     
+    // Set crunched memory reader for VA mode memory access
+    void SetCrunchedReader(class CrunchedMemoryReader* reader) {
+        crunchedReader = reader;
+    }
+    
+    // Set address space flattener for VA address translation
+    void SetAddressFlattener(class AddressSpaceFlattener* flattener) {
+        addressFlattener = flattener;
+    }
+    
     // Set memory visualizer viewport info for coordinate conversion
     void SetMemoryViewInfo(ImVec2 viewPos, ImVec2 viewSize, uint64_t baseAddr, int width, int height, int bytesPerPixel) {
         memoryViewPos = viewPos;
@@ -130,6 +140,8 @@ private:
     void ConvertMemoryToHexPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
     void ConvertMemoryToCharPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
     void ConvertMemoryToSplitPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
+    void FillTestPattern(BitmapViewer& viewer);
+    void ExtractPixelsFromMemory(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
     
     // Convert memory position to screen position
     ImVec2 MemoryToScreen(uint64_t address);
@@ -144,6 +156,8 @@ private:
     std::shared_ptr<class MemoryMapper> memoryMapper;
     int currentPid = -1;
     bool useVirtualAddresses = false;
+    class CrunchedMemoryReader* crunchedReader = nullptr;
+    class AddressSpaceFlattener* addressFlattener = nullptr;
     
     // Memory visualizer viewport info for coordinate conversion
     ImVec2 memoryViewPos;

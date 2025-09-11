@@ -3,10 +3,13 @@
 #include "beacon_reader.h"
 #include "memory_mapper.h"
 #include "qemu_connection.h"
+#include "crunched_memory_reader.h"
+#include "address_space_flattener.h"
 #include "font_data.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <sstream>
 
 namespace Haywire {
 
@@ -25,9 +28,14 @@ BitmapViewerManager::~BitmapViewerManager() {
 void BitmapViewerManager::CreateViewer(uint64_t address, ImVec2 anchorPos, PixelFormat format) {
     BitmapViewer viewer;
     viewer.id = nextId++;
-    // Use address as the name with proper space prefix (shared memory)
+    // Use address as the name with proper space prefix
+    // In VA mode, show as virtual address, otherwise shared memory
     std::stringstream ss;
-    ss << "s:" << std::hex << address;
+    if (useVirtualAddresses) {
+        ss << "v:" << std::hex << address;  // Show as virtual even though internally we use physical
+    } else {
+        ss << "s:" << std::hex << address;
+    }
     viewer.name = ss.str();
     viewer.memoryAddress = address;
     viewer.anchorPos = anchorPos;
@@ -149,7 +157,7 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             "ARGB8888", "ABGR8888", "RGB565", "GRAYSCALE", 
             "BINARY", "HEX", "CHAR",
             "---",  // Separator
-            viewer.splitComponents ? "✓ Split Components" : "  Split Components"
+            viewer.splitComponents ? "[X] Split" : "[ ] Split"
         };
         
         // Dynamically set height to show all items based on array size
@@ -169,7 +177,7 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                 
                 bool isSelected = (i == displayIndex);
                 if (ImGui::Selectable(formats[i], isSelected)) {
-                    if (i == 12) { // Split Components toggle
+                    if (i == 12) { // Split toggle
                         viewer.splitComponents = !viewer.splitComponents;
                         viewer.needsUpdate = true;
                     } else if (i < 11) { // Regular format selection
@@ -212,7 +220,48 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         float buttonX = ImGui::GetWindowWidth() - 50;
         ImGui::SameLine(buttonX);
         if (ImGui::SmallButton("⚙")) {
-            // TODO: Show settings popup
+            ImGui::OpenPopup("ViewerSettings");
+        }
+        
+        // Settings popup
+        if (ImGui::BeginPopup("ViewerSettings")) {
+            ImGui::Text("Viewer Settings");
+            ImGui::Separator();
+            
+            // Address input with notation support
+            char addrBuf[64];
+            std::stringstream ss;
+            if (useVirtualAddresses) {
+                ss << "v:" << std::hex << viewer.memoryAddress;
+            } else {
+                ss << "s:" << std::hex << viewer.memoryAddress;
+            }
+            strcpy(addrBuf, ss.str().c_str());
+            
+            if (ImGui::InputText("Address", addrBuf, sizeof(addrBuf), 
+                                ImGuiInputTextFlags_EnterReturnsTrue)) {
+                // Parse using address notation
+                // TODO: Need AddressParser instance here
+                uint64_t newAddr = 0;
+                if (sscanf(addrBuf, "%llx", &newAddr) == 1 || 
+                    sscanf(addrBuf, "0x%llx", &newAddr) == 1 ||
+                    sscanf(addrBuf, "s:%llx", &newAddr) == 1 ||
+                    sscanf(addrBuf, "v:%llx", &newAddr) == 1) {
+                    viewer.memoryAddress = newAddr;
+                    viewer.needsUpdate = true;
+                    // Update name
+                    std::stringstream nameSS;
+                    nameSS << (useVirtualAddresses ? "v:" : "s:") << std::hex << newAddr;
+                    viewer.name = nameSS.str();
+                }
+            }
+            
+            // Size controls
+            ImGui::InputInt("Width", &viewer.memWidth);
+            ImGui::InputInt("Height", &viewer.memHeight);
+            ImGui::InputInt("Stride", &viewer.stride);
+            
+            ImGui::EndPopup();
         }
         ImGui::SameLine();
         if (ImGui::SmallButton("X")) {
@@ -377,69 +426,63 @@ void BitmapViewerManager::UpdateViewerTexture(BitmapViewer& viewer) {
 }
 
 void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
-    if (!beaconReader) {
-        printf("No beacon reader available for memory extraction\n");
-        return;
-    }
-    
     // Calculate bytes needed based on format
     size_t bytesPerPixel = viewer.format.bytesPerPixel;
     size_t totalBytes = viewer.stride * viewer.memHeight;
     
-    // Start with the viewer's address
-    uint64_t targetAddress = viewer.memoryAddress;
-    
-    // If in VA mode, translate virtual to physical
-    if (useVirtualAddresses && qemuConnection && currentPid > 0) {
-        uint64_t physAddr;
-        // Try to translate VA to PA using QMP
-        if (qemuConnection->TranslateVA2PA(0, targetAddress, physAddr)) {
-            targetAddress = physAddr;
-        } else {
-            printf("Failed to translate VA 0x%llx to PA for PID %d\n", 
-                   viewer.memoryAddress, currentPid);
+    // In VA mode, use crunched reader to get memory
+    if (useVirtualAddresses && crunchedReader && currentPid > 0) {
+        // Allocate buffer for memory
+        std::vector<uint8_t> buffer(totalBytes);
+        
+        // Read memory using crunched reader (handles all VA->PA translation)
+        size_t bytesRead = crunchedReader->ReadCrunchedMemory(
+            viewer.memoryAddress, totalBytes, buffer);
+        
+        if (bytesRead > 0) {
+            // Convert to pixels based on format
+            viewer.pixels.clear();
+            
+            // Check if we should split components
+            if (viewer.splitComponents && 
+                (viewer.format.type == PixelFormat::RGB888 || 
+                 viewer.format.type == PixelFormat::RGBA8888 ||
+                 viewer.format.type == PixelFormat::BGR888 || 
+                 viewer.format.type == PixelFormat::BGRA8888 ||
+                 viewer.format.type == PixelFormat::ARGB8888 || 
+                 viewer.format.type == PixelFormat::ABGR8888)) {
+                ConvertMemoryToSplitPixels(viewer, buffer.data(), bytesRead);
+            } else if (viewer.format.type == PixelFormat::HEX_PIXEL) {
+                ConvertMemoryToHexPixels(viewer, buffer.data(), bytesRead);
+            } else if (viewer.format.type == PixelFormat::CHAR_8BIT) {
+                ConvertMemoryToCharPixels(viewer, buffer.data(), bytesRead);
+            } else {
+                // Normal pixel format conversion
+                ExtractPixelsFromMemory(viewer, buffer.data(), bytesRead);
+            }
+            return;
         }
+        
+        // Fall back to test pattern if read failed
+        printf("CrunchedReader failed for address 0x%llx\n", viewer.memoryAddress);
     }
     
-    // Now translate guest physical address to file offset
-    uint64_t fileOffset = targetAddress;
-    
-    if (memoryMapper) {
-        // Use MemoryMapper for proper translation
-        int64_t mappedOffset = memoryMapper->TranslateGPAToFileOffset(targetAddress);
-        if (mappedOffset >= 0) {
-            fileOffset = mappedOffset;
-        } else {
-            printf("Address 0x%llx not found in memory map\n", targetAddress);
-            // Fall back to test pattern
-            fileOffset = UINT64_MAX;  // Will fail the GetMemoryPointer call
-        }
-    } else {
-        // Fallback: hardcoded ARM64 offset (not ideal but works for testing)
-        if (targetAddress >= 0x40000000) {
-            fileOffset = targetAddress - 0x40000000;
-        }
+    // Physical address mode - use beacon reader directly
+    if (!beaconReader) {
+        printf("No beacon reader available for memory extraction\n");
+        // Fill with test pattern
+        FillTestPattern(viewer);
+        return;
     }
+    
+    uint64_t fileOffset = viewer.memoryAddress;
     
     // Get direct memory pointer from beacon reader
     const uint8_t* memPtr = beaconReader->GetMemoryPointer(fileOffset);
     if (!memPtr) {
-        printf("Failed to get memory pointer for address 0x%llx (PA: 0x%llx, offset: 0x%llx)\n", 
-               viewer.memoryAddress, targetAddress, fileOffset);
+        printf("Failed to get memory pointer for address 0x%llx\n", viewer.memoryAddress);
         // Fill with test pattern instead
-        viewer.pixels.clear();
-        viewer.pixels.reserve(viewer.memWidth * viewer.memHeight);
-        
-        for (int y = 0; y < viewer.memHeight; y++) {
-            for (int x = 0; x < viewer.memWidth; x++) {
-                // Create a test pattern
-                uint32_t pixel = 0xFF000000; // Alpha
-                pixel |= ((x * 255 / viewer.memWidth) & 0xFF) << 16; // R gradient
-                pixel |= ((y * 255 / viewer.memHeight) & 0xFF) << 8; // G gradient
-                pixel |= ((x ^ y) & 0xFF); // B pattern
-                viewer.pixels.push_back(pixel);
-            }
-        }
+        FillTestPattern(viewer);
         return;
     }
     
@@ -470,7 +513,29 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
         return;
     }
     
+    // Extract pixels using the existing logic
+    ExtractPixelsFromMemory(viewer, memPtr, totalBytes);
+}
+
+void BitmapViewerManager::FillTestPattern(BitmapViewer& viewer) {
+    viewer.pixels.clear();
+    viewer.pixels.reserve(viewer.memWidth * viewer.memHeight);
+    
+    for (int y = 0; y < viewer.memHeight; y++) {
+        for (int x = 0; x < viewer.memWidth; x++) {
+            // Create a test pattern
+            uint32_t pixel = 0xFF000000; // Alpha
+            pixel |= ((x * 255 / viewer.memWidth) & 0xFF) << 16; // R gradient
+            pixel |= ((y * 255 / viewer.memHeight) & 0xFF) << 8; // G gradient
+            pixel |= ((x ^ y) & 0xFF); // B pattern
+            viewer.pixels.push_back(pixel);
+        }
+    }
+}
+
+void BitmapViewerManager::ExtractPixelsFromMemory(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes) {
     // Normal pixel formats
+    size_t bytesPerPixel = viewer.format.bytesPerPixel;
     viewer.pixels.reserve(viewer.memWidth * viewer.memHeight);
     
     for (int y = 0; y < viewer.memHeight; y++) {

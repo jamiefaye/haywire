@@ -117,7 +117,37 @@ response = json.loads(sock.recv(4096).decode())
 7. **Page alignment critical** - Beacons must be on 4KB boundaries
 8. **Zero page optimization** - memset(0) doesn't allocate physical pages
 
-## Recent Progress (December 2024)
+## Recent Progress (September 2025)
+
+### Address Notation System
+- Unified notation for specifying addresses across memory spaces
+- Four address spaces: `s:` (shared), `p:` (physical), `v:` (virtual), `c:` (crunched/flattened)
+- Expression support with arithmetic: `s:1000+200`, `p:40000000-0x100`
+- Full documentation in `docs/address_notation.md`
+- Status bar now displays addresses in all relevant spaces
+
+### Mini Bitmap Viewers
+- Floating bitmap viewer windows that can be spawned from main memory view
+- Right-click context menu to create viewers at any memory location
+- Leader lines connect viewers to their source location in main memory
+- Full pixel format support (11 formats including new ones below)
+- Dynamic address updates when anchors are dragged
+- VA mode support with proper address translation via CrunchedMemoryReader
+
+### New Display Formats
+- **Hex Pixel**: 4-byte chunks displayed as 8 hex digits in 32x8 pixel cells
+- **Char 8-bit**: Single bytes displayed as character glyphs using 6x8 pixel font
+- **Split Components**: RGB/RGBA pixels split into individual color channels
+  - Shows components in memory order with natural colors
+  - Available in both main visualizer and mini viewers
+  - Toggled via "Split" option in format selector
+
+### UI Improvements
+- Default width changed from 640 to 1024 pixels
+- Compact "Split" label instead of "Split Components" 
+- Dynamic combo box height to show all format options
+- Format selector moved left in mini viewers for narrow window access
+- Address-based labels for bitmap viewers (e.g., "s:0x1000" instead of "Viewer 1")
 
 ### New Beacon Encoder/Decoder Architecture
 - Simplified beacon protocol with page-based encoding (no entries span pages)
@@ -147,8 +177,7 @@ response = json.loads(sock.recv(4096).decode())
 - Companion checks control page for torn reads before processing commands
 
 ### Current Companion Processes
-- `companion_pid_scanner` - Scans /proc and writes PID list (working)
-- `companion_camera_v2` - Monitors specific process memory maps (in progress)
+- `companion_camera_v2` - Monitors specific process memory maps (working)
 
 ### SSH Setup
 - Primary user: `ubuntu` (passwordless via SSH key)
@@ -158,12 +187,24 @@ response = json.loads(sock.recv(4096).decode())
 
 ## TODO/Future Work
 
-1. Fix companion_camera_v2 to properly initialize page 0 as h2g beacon page
-2. Fix Haywire's SetCameraFocus to find and write to camera control page
-3. Implement proper tear detection in companion's check_camera_control
-4. Implement real PTE reading from /proc/pid/pagemap
-5. Add Windows EPROCESS support
-6. Future: Additional h2g control pages for buffer resizing, etc.
+### Immediate Tasks
+- Performance optimization for large memory regions
+- Fix remaining switch warnings for HEX_PIXEL and CHAR_8BIT formats
+- Add export functionality for bitmap viewers
+- Implement bookmarks/saved locations
+
+### Medium-term Goals  
+- Windows guest support via EPROCESS structures
+- Additional h2g control pages for dynamic buffer resizing
+- Search history and persistent settings
+- Memory diff/comparison between snapshots
+
+### Long-term Vision
+- Multi-VM support with synchronized views
+- Plugin architecture for custom visualizations
+- Recording and playback of memory access patterns
+- Integration with debugging tools (GDB, LLDB)
+
 
 ## Debugging Tips
 
