@@ -625,28 +625,7 @@ void MemoryVisualizer::DrawControls() {
     }
     ImGui::PopItemWidth();
     
-    ImGui::SameLine();
-    ImGui::Text("W:");
-    ImGui::SameLine();
-    ImGui::PushItemWidth(80);  // Bigger width field
-    if (ImGui::InputInt("##Width", &widthInput)) {
-        viewport.width = std::max(1, widthInput);
-        viewport.stride = viewport.width;
-        strideInput = viewport.stride;
-        needsUpdate = true;  // Immediate update
-    }
-    ImGui::PopItemWidth();
-    
-    ImGui::SameLine();
-    ImGui::Text("H:");
-    ImGui::SameLine();
-    ImGui::PushItemWidth(80);  // Shows visible window height
-    ImGui::Text("%d", heightInput);  // Display only, not editable
-    ImGui::PopItemWidth();
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Visible window height in pixels");
-    }
-    
+    // Format selector first for narrow window accessibility
     ImGui::SameLine();
     
     // Build format list with separator and split option
@@ -690,6 +669,29 @@ void MemoryVisualizer::DrawControls() {
         ImGui::EndCombo();
     }
     ImGui::PopItemWidth();
+    
+    // Width and Height controls after format selector
+    ImGui::SameLine();
+    ImGui::Text("W:");
+    ImGui::SameLine();
+    ImGui::PushItemWidth(80);  // Bigger width field
+    if (ImGui::InputInt("##Width", &widthInput)) {
+        viewport.width = std::max(1, widthInput);
+        viewport.stride = viewport.width;
+        strideInput = viewport.stride;
+        needsUpdate = true;  // Immediate update
+    }
+    ImGui::PopItemWidth();
+    
+    ImGui::SameLine();
+    ImGui::Text("H:");
+    ImGui::SameLine();
+    ImGui::PushItemWidth(80);  // Shows visible window height
+    ImGui::Text("%d", heightInput);  // Display only, not editable
+    ImGui::PopItemWidth();
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Visible window height in pixels");
+    }
     
     // Hidden for now - hex overlay feature available but not shown in UI
     // ImGui::SameLine();
