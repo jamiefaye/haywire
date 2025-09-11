@@ -83,6 +83,7 @@ add_executable(haywire
     src/mmap_reader.cpp
     src/memory_backend.cpp
     src/memory_mapper.cpp
+    src/memory_utils.cpp
     src/guest_agent.cpp
     src/viewport_translator.cpp
     src/process_memory_map.cpp

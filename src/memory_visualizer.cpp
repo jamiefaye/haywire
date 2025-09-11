@@ -819,9 +819,7 @@ void MemoryVisualizer::DrawControls() {
                 
                 // Update address display to show first VA
                 uint64_t firstVA = addressFlattener->FlatToVirtual(viewport.baseAddress);
-                std::stringstream ss;
-                ss << "v:" << std::hex << firstVA;  // Use VA notation
-                strcpy(addressInput, ss.str().c_str());
+                strcpy(addressInput, AddressParser::Format(firstVA, AddressSpace::VIRTUAL).c_str());
                 
                 std::cerr << "Switched to VA mode, flat size: " 
                           << addressFlattener->GetFlatSize() / (1024*1024) << " MB"
@@ -840,9 +838,7 @@ void MemoryVisualizer::DrawControls() {
                 }
             }
             viewport.baseAddress = ramBase;
-            std::stringstream ss;
-            ss << "p:" << std::hex << ramBase;
-            strcpy(addressInput, ss.str().c_str());
+            strcpy(addressInput, AddressParser::Format(ramBase, AddressSpace::PHYSICAL).c_str());
             needsUpdate = true;
             std::cerr << "Switched to physical mode" << std::endl;
         }
@@ -1006,13 +1002,9 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
             
             if (useVirtualAddresses && addressFlattener) {
                 uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
-                std::stringstream ss;
-                ss << "v:" << std::hex << virtualAddr;  // Use VA notation
-                strcpy(addressInput, ss.str().c_str());
+                strcpy(addressInput, AddressParser::Format(virtualAddr, AddressSpace::VIRTUAL).c_str());
             } else {
-                std::stringstream ss;
-                ss << "p:" << std::hex << viewport.baseAddress;  // Use physical notation since it's a PA
-                strcpy(addressInput, ss.str().c_str());
+                strcpy(addressInput, AddressParser::Format(viewport.baseAddress, AddressSpace::PHYSICAL).c_str());
             }
             needsUpdate = true;
         }
@@ -1030,14 +1022,10 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
         if (useVirtualAddresses && addressFlattener) {
             // Show the VA that corresponds to this flat position
             uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
-            std::stringstream ss;
-            ss << "v:" << std::hex << virtualAddr;  // Use VA notation
-            strcpy(addressInput, ss.str().c_str());
+            strcpy(addressInput, AddressParser::Format(virtualAddr, AddressSpace::VIRTUAL).c_str());
         } else {
             // Physical mode - viewport.baseAddress is a physical address
-            std::stringstream ss;
-            ss << "p:" << std::hex << viewport.baseAddress;  // Use physical notation since it's a PA
-            strcpy(addressInput, ss.str().c_str());
+            strcpy(addressInput, AddressParser::Format(viewport.baseAddress, AddressSpace::PHYSICAL).c_str());
         }
         
         needsUpdate = true;
@@ -1051,13 +1039,9 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
             
             if (useVirtualAddresses && addressFlattener) {
                 uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
-                std::stringstream ss;
-                ss << "v:" << std::hex << virtualAddr;  // Use VA notation
-                strcpy(addressInput, ss.str().c_str());
+                strcpy(addressInput, AddressParser::Format(virtualAddr, AddressSpace::VIRTUAL).c_str());
             } else {
-                std::stringstream ss;
-                ss << "p:" << std::hex << viewport.baseAddress;  // Use physical notation since it's a PA
-                strcpy(addressInput, ss.str().c_str());
+                strcpy(addressInput, AddressParser::Format(viewport.baseAddress, AddressSpace::PHYSICAL).c_str());
             }
             needsUpdate = true;
         }
@@ -2097,9 +2081,8 @@ void MemoryVisualizer::HandleInput() {
             viewport.baseAddress = (uint64_t)newAddress;
             
             // Update the address input field
-            std::stringstream ss;
-            ss << (useVirtualAddresses ? "c:" : "s:") << std::hex << viewport.baseAddress;
-            strcpy(addressInput, ss.str().c_str());
+            AddressSpace space = useVirtualAddresses ? AddressSpace::CRUNCHED : AddressSpace::SHARED;
+            strcpy(addressInput, AddressParser::Format(viewport.baseAddress, space).c_str());
             
             needsUpdate = true;
         }
@@ -2134,6 +2117,7 @@ void MemoryVisualizer::HandleInput() {
                 viewport.baseAddress = (uint64_t)newAddress;
                 
                 // Update the address input field
+                // Plain hex without prefix (legacy)
                 std::stringstream ss;
                 ss << "0x" << std::hex << viewport.baseAddress;
                 strcpy(addressInput, ss.str().c_str());
@@ -2371,9 +2355,7 @@ void MemoryVisualizer::NavigateToAddress(uint64_t address) {
         viewport.baseAddress = flatPos;
         
         // Display the actual VA in the address field
-        std::stringstream ss;
-        ss << "v:" << std::hex << address;  // Virtual address in VA mode
-        strcpy(addressInput, ss.str().c_str());
+        strcpy(addressInput, AddressParser::Format(address, AddressSpace::VIRTUAL).c_str());
         
         std::cerr << "VA 0x" << std::hex << address 
                   << " -> Flat position 0x" << flatPos << std::dec 
@@ -2387,9 +2369,7 @@ void MemoryVisualizer::NavigateToAddress(uint64_t address) {
     } else {
         // Original physical address mode
         viewport.baseAddress = address;
-        std::stringstream ss;
-        ss << "v:" << std::hex << address;  // Virtual address in VA mode
-        strcpy(addressInput, ss.str().c_str());
+        strcpy(addressInput, AddressParser::Format(address, AddressSpace::VIRTUAL).c_str());
     }
     
     needsUpdate = true;

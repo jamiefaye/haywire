@@ -41,6 +41,11 @@ public:
 
     // Log all discovered regions
     void LogRegions() const;
+    
+    // Helper to get first RAM region (commonly needed)
+    const MemoryRegion* GetFirstRAMRegion() const {
+        return regions_.empty() ? nullptr : &regions_[0];
+    }
 
 private:
     std::vector<MemoryRegion> regions_;

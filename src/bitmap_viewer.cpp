@@ -29,23 +29,7 @@ void BitmapViewerManager::CreateViewer(TypedAddress address, ImVec2 anchorPos, P
     BitmapViewer viewer;
     viewer.id = nextId++;
     // Use address as the name with proper space prefix
-    std::stringstream ss;
-    switch (address.space) {
-        case AddressSpace::VIRTUAL:
-            ss << "v:" << std::hex << address.value;
-            break;
-        case AddressSpace::CRUNCHED:
-            ss << "c:" << std::hex << address.value;
-            break;
-        case AddressSpace::PHYSICAL:
-            ss << "p:" << std::hex << address.value;
-            break;
-        case AddressSpace::SHARED:
-        default:
-            ss << "s:" << std::hex << address.value;
-            break;
-    }
-    viewer.name = ss.str();
+    viewer.name = AddressParser::Format(address);
     viewer.memoryAddress = address;
     viewer.anchorPos = anchorPos;
     
@@ -399,23 +383,7 @@ void BitmapViewerManager::DrawLeaderLine(BitmapViewer& viewer) {
             // This updates where the viewer is looking in memory
             viewer.memoryAddress = ScreenToMemoryAddress(viewer.anchorPos);
             // Update the viewer name to reflect new address with space prefix
-            std::stringstream ss;
-            switch (viewer.memoryAddress.space) {
-                case AddressSpace::VIRTUAL:
-                    ss << "v:" << std::hex << viewer.memoryAddress.value;
-                    break;
-                case AddressSpace::CRUNCHED:
-                    ss << "c:" << std::hex << viewer.memoryAddress.value;
-                    break;
-                case AddressSpace::PHYSICAL:
-                    ss << "p:" << std::hex << viewer.memoryAddress.value;
-                    break;
-                case AddressSpace::SHARED:
-                default:
-                    ss << "s:" << std::hex << viewer.memoryAddress.value;
-                    break;
-            }
-            viewer.name = ss.str();
+            viewer.name = AddressParser::Format(viewer.memoryAddress);
             viewer.needsUpdate = true;
         } else if (ImGui::IsMouseReleased(0)) {
             viewer.isDraggingAnchor = false;

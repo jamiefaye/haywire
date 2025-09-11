@@ -77,6 +77,11 @@ public:
     // Format an address with appropriate prefix
     static std::string Format(uint64_t address, AddressSpace space);
     
+    // Format a TypedAddress to string (convenience overload)
+    static std::string Format(const TypedAddress& addr) {
+        return Format(addr.value, addr.space);
+    }
+    
 private:
     // Parse different number formats
     bool ParseHexNumber(const std::string& str, uint64_t& value);
