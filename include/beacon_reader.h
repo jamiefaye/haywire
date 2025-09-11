@@ -88,6 +88,9 @@ public:
         return static_cast<const uint8_t*>(memBase) + gpa;
     }
     
+    // Get the size of the memory-backend-file
+    size_t GetMemorySize() const { return memSize; }
+    
 private:
     // Memory mapping
     int memFd;

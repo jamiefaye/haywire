@@ -15,6 +15,25 @@ enum class AddressSpace {
     CRUNCHED   // c: Crunched/flattened address space
 };
 
+// Lightweight struct to pair an address with its type
+// This avoids creating lots of small objects while keeping type info
+struct TypedAddress {
+    uint64_t value;
+    AddressSpace space;
+    
+    TypedAddress() : value(0), space(AddressSpace::NONE) {}
+    TypedAddress(uint64_t v, AddressSpace s) : value(v), space(s) {}
+    
+    // Convenience constructors for common cases
+    static TypedAddress Shared(uint64_t v) { return TypedAddress(v, AddressSpace::SHARED); }
+    static TypedAddress Physical(uint64_t v) { return TypedAddress(v, AddressSpace::PHYSICAL); }
+    static TypedAddress Virtual(uint64_t v) { return TypedAddress(v, AddressSpace::VIRTUAL); }
+    static TypedAddress Crunched(uint64_t v) { return TypedAddress(v, AddressSpace::CRUNCHED); }
+    
+    // Check if this is a valid address (has a space assigned)
+    bool isValid() const { return space != AddressSpace::NONE; }
+};
+
 // Result of parsing an address expression
 struct ParsedAddress {
     uint64_t address;          // The parsed address value

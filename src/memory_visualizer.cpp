@@ -320,6 +320,29 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                 lastRefresh = now;
                 
                 // std::cerr << "Direct read and texture update at " << std::hex << addr << std::dec << "\n";
+            } else {
+                // Failed to read - clear the display to show invalid memory
+                // Fill with a pattern to indicate unreadable memory
+                size_t size = viewport.stride * viewport.height;
+                std::vector<uint8_t> invalidPattern(size);
+                
+                // Create a checkerboard pattern to indicate invalid memory
+                for (size_t i = 0; i < size; i++) {
+                    int x = (i % viewport.stride) / viewport.format.bytesPerPixel;
+                    int y = i / viewport.stride;
+                    // Checkerboard pattern
+                    invalidPattern[i] = ((x / 8) + (y / 8)) % 2 ? 0x40 : 0x20;
+                }
+                
+                currentMemory.address = addr;
+                currentMemory.data = std::move(invalidPattern);
+                currentMemory.stride = viewport.stride;
+                
+                // Clear change history since we have no valid data
+                changeHistory.clear();
+                
+                UpdateTexture();  // Update to show the invalid pattern
+                lastRefresh = now;
             }
         }
     }
@@ -1308,7 +1331,16 @@ void MemoryVisualizer::DrawMemoryView() {
             printf("Creating bitmap viewer at 0x%llx, pos (%f, %f)\n", 
                    (unsigned long long)contextMenuAddress, contextMenuPos.x, contextMenuPos.y);
             if (bitmapViewerManager) {
-                bitmapViewerManager->CreateViewer(contextMenuAddress, contextMenuPos, viewport.format);
+                // Create typed address based on current mode
+                TypedAddress typedAddr;
+                if (useVirtualAddresses) {
+                    // In VA mode, GetAddressAt returns a crunched address
+                    typedAddr = TypedAddress::Crunched(contextMenuAddress);
+                } else {
+                    // In physical mode, it's a shared memory offset
+                    typedAddr = TypedAddress::Shared(contextMenuAddress);
+                }
+                bitmapViewerManager->CreateViewer(typedAddr, contextMenuPos, viewport.format);
                 printf("Viewer created! Total viewers: %zu\n", bitmapViewerManager->GetViewerCount());
             } else {
                 printf("ERROR: bitmapViewerManager is null!\n");

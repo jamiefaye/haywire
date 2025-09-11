@@ -25,16 +25,25 @@ BitmapViewerManager::~BitmapViewerManager() {
     }
 }
 
-void BitmapViewerManager::CreateViewer(uint64_t address, ImVec2 anchorPos, PixelFormat format) {
+void BitmapViewerManager::CreateViewer(TypedAddress address, ImVec2 anchorPos, PixelFormat format) {
     BitmapViewer viewer;
     viewer.id = nextId++;
     // Use address as the name with proper space prefix
-    // In VA mode, show as virtual address, otherwise shared memory
     std::stringstream ss;
-    if (useVirtualAddresses) {
-        ss << "v:" << std::hex << address;  // Show as virtual even though internally we use physical
-    } else {
-        ss << "s:" << std::hex << address;
+    switch (address.space) {
+        case AddressSpace::VIRTUAL:
+            ss << "v:" << std::hex << address.value;
+            break;
+        case AddressSpace::CRUNCHED:
+            ss << "c:" << std::hex << address.value;
+            break;
+        case AddressSpace::PHYSICAL:
+            ss << "p:" << std::hex << address.value;
+            break;
+        case AddressSpace::SHARED:
+        default:
+            ss << "s:" << std::hex << address.value;
+            break;
     }
     viewer.name = ss.str();
     viewer.memoryAddress = address;
@@ -231,28 +240,44 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             // Address input with notation support
             char addrBuf[64];
             std::stringstream ss;
-            if (useVirtualAddresses) {
-                ss << "v:" << std::hex << viewer.memoryAddress;
-            } else {
-                ss << "s:" << std::hex << viewer.memoryAddress;
+            switch (viewer.memoryAddress.space) {
+                case AddressSpace::VIRTUAL: ss << "v:"; break;
+                case AddressSpace::CRUNCHED: ss << "c:"; break;
+                case AddressSpace::PHYSICAL: ss << "p:"; break;
+                case AddressSpace::SHARED: default: ss << "s:"; break;
             }
+            ss << std::hex << viewer.memoryAddress.value;
             strcpy(addrBuf, ss.str().c_str());
             
             if (ImGui::InputText("Address", addrBuf, sizeof(addrBuf), 
                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
-                // Parse using address notation
-                // TODO: Need AddressParser instance here
+                // Parse using basic notation (TODO: use AddressParser)
                 uint64_t newAddr = 0;
-                if (sscanf(addrBuf, "%llx", &newAddr) == 1 || 
-                    sscanf(addrBuf, "0x%llx", &newAddr) == 1 ||
-                    sscanf(addrBuf, "s:%llx", &newAddr) == 1 ||
-                    sscanf(addrBuf, "v:%llx", &newAddr) == 1) {
-                    viewer.memoryAddress = newAddr;
+                AddressSpace newSpace = viewer.memoryAddress.space;
+                
+                // Simple parsing for now
+                if (strncmp(addrBuf, "s:", 2) == 0) {
+                    newSpace = AddressSpace::SHARED;
+                    sscanf(addrBuf + 2, "%llx", &newAddr);
+                } else if (strncmp(addrBuf, "p:", 2) == 0) {
+                    newSpace = AddressSpace::PHYSICAL;
+                    sscanf(addrBuf + 2, "%llx", &newAddr);
+                } else if (strncmp(addrBuf, "v:", 2) == 0) {
+                    newSpace = AddressSpace::VIRTUAL;
+                    sscanf(addrBuf + 2, "%llx", &newAddr);
+                } else if (strncmp(addrBuf, "c:", 2) == 0) {
+                    newSpace = AddressSpace::CRUNCHED;
+                    sscanf(addrBuf + 2, "%llx", &newAddr);
+                } else {
+                    // No prefix, assume hex
+                    sscanf(addrBuf, "%llx", &newAddr);
+                }
+                
+                if (newAddr != 0) {
+                    viewer.memoryAddress = TypedAddress(newAddr, newSpace);
                     viewer.needsUpdate = true;
                     // Update name
-                    std::stringstream nameSS;
-                    nameSS << (useVirtualAddresses ? "v:" : "s:") << std::hex << newAddr;
-                    viewer.name = nameSS.str();
+                    viewer.name = addrBuf;
                 }
             }
             
@@ -375,7 +400,21 @@ void BitmapViewerManager::DrawLeaderLine(BitmapViewer& viewer) {
             viewer.memoryAddress = ScreenToMemoryAddress(viewer.anchorPos);
             // Update the viewer name to reflect new address with space prefix
             std::stringstream ss;
-            ss << "s:" << std::hex << viewer.memoryAddress;
+            switch (viewer.memoryAddress.space) {
+                case AddressSpace::VIRTUAL:
+                    ss << "v:" << std::hex << viewer.memoryAddress.value;
+                    break;
+                case AddressSpace::CRUNCHED:
+                    ss << "c:" << std::hex << viewer.memoryAddress.value;
+                    break;
+                case AddressSpace::PHYSICAL:
+                    ss << "p:" << std::hex << viewer.memoryAddress.value;
+                    break;
+                case AddressSpace::SHARED:
+                default:
+                    ss << "s:" << std::hex << viewer.memoryAddress.value;
+                    break;
+            }
             viewer.name = ss.str();
             viewer.needsUpdate = true;
         } else if (ImGui::IsMouseReleased(0)) {
@@ -430,14 +469,15 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
     size_t bytesPerPixel = viewer.format.bytesPerPixel;
     size_t totalBytes = viewer.stride * viewer.memHeight;
     
-    // In VA mode, use crunched reader to get memory
-    if (useVirtualAddresses && crunchedReader && currentPid > 0) {
+    // If the address is in crunched space and we have a crunched reader, use it
+    if (viewer.memoryAddress.space == AddressSpace::CRUNCHED && 
+        crunchedReader && currentPid > 0) {
         // Allocate buffer for memory
         std::vector<uint8_t> buffer(totalBytes);
         
         // Read memory using crunched reader (handles all VA->PA translation)
         size_t bytesRead = crunchedReader->ReadCrunchedMemory(
-            viewer.memoryAddress, totalBytes, buffer);
+            viewer.memoryAddress.value, totalBytes, buffer);
         
         if (bytesRead > 0) {
             // Convert to pixels based on format
@@ -464,10 +504,11 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
         }
         
         // Fall back to test pattern if read failed
-        printf("CrunchedReader failed for address 0x%llx\n", viewer.memoryAddress);
+        printf("CrunchedReader failed for crunched address c:0x%llx (pid: %d, bytes: %zu)\n", 
+               viewer.memoryAddress.value, currentPid, totalBytes);
     }
     
-    // Physical address mode - use beacon reader directly
+    // For shared memory addresses - use beacon reader directly
     if (!beaconReader) {
         printf("No beacon reader available for memory extraction\n");
         // Fill with test pattern
@@ -475,12 +516,60 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
         return;
     }
     
-    uint64_t fileOffset = viewer.memoryAddress;
+    // Get the file offset based on address space
+    uint64_t fileOffset = 0;
+    if (viewer.memoryAddress.space == AddressSpace::SHARED) {
+        fileOffset = viewer.memoryAddress.value;  // Already a file offset
+    } else if (viewer.memoryAddress.space == AddressSpace::PHYSICAL) {
+        // Convert physical to file offset (subtract RAM base)
+        const uint64_t RAM_BASE = 0x40000000;
+        if (viewer.memoryAddress.value >= RAM_BASE) {
+            fileOffset = viewer.memoryAddress.value - RAM_BASE;
+        } else {
+            printf("Physical address 0x%llx is below RAM base\n", viewer.memoryAddress.value);
+            FillTestPattern(viewer);
+            return;
+        }
+    } else {
+        const char* spaceStr = "unknown";
+        switch (viewer.memoryAddress.space) {
+            case AddressSpace::VIRTUAL: spaceStr = "virtual"; break;
+            case AddressSpace::NONE: spaceStr = "NONE (uninitialized?)"; break;
+            default: spaceStr = "unknown"; break;
+        }
+        printf("Cannot directly access address 0x%llx in %s space without translation\n",
+               viewer.memoryAddress.value, spaceStr);
+        FillTestPattern(viewer);
+        return;
+    }
+    
+    // Validate the offset is within beacon reader's range
+    if (beaconReader) {
+        // Get the memory size from beacon reader (this is the mmap'd file size)
+        size_t memSize = beaconReader->GetMemorySize();
+        if (fileOffset >= memSize) {
+            printf("File offset 0x%llx exceeds memory size 0x%llx for %s:0x%llx\n",
+                   fileOffset, memSize,
+                   viewer.memoryAddress.space == AddressSpace::SHARED ? "s" : "?",
+                   viewer.memoryAddress.value);
+            FillTestPattern(viewer);
+            return;
+        }
+    }
     
     // Get direct memory pointer from beacon reader
     const uint8_t* memPtr = beaconReader->GetMemoryPointer(fileOffset);
     if (!memPtr) {
-        printf("Failed to get memory pointer for address 0x%llx\n", viewer.memoryAddress);
+        const char* spaceStr = "";
+        switch (viewer.memoryAddress.space) {
+            case AddressSpace::SHARED: spaceStr = "s:"; break;
+            case AddressSpace::PHYSICAL: spaceStr = "p:"; break;
+            case AddressSpace::VIRTUAL: spaceStr = "v:"; break;
+            case AddressSpace::CRUNCHED: spaceStr = "c:"; break;
+            default: break;
+        }
+        printf("Failed to get memory pointer for address %s0x%llx (offset: 0x%llx, beacon=%p)\n", 
+               spaceStr, viewer.memoryAddress.value, fileOffset, beaconReader.get());
         // Fill with test pattern instead
         FillTestPattern(viewer);
         return;
@@ -616,7 +705,10 @@ void BitmapViewerManager::ExtractPixelsFromMemory(BitmapViewer& viewer, const ui
 void BitmapViewerManager::HandleContextMenu(uint64_t clickAddress, ImVec2 clickPos, PixelFormat format) {
     if (ImGui::BeginPopupContextVoid("BitmapViewerContext")) {
         if (ImGui::MenuItem("Create Bitmap Viewer Here")) {
-            CreateViewer(clickAddress, clickPos, format);
+            // Create typed address - assume shared memory for now
+            // (This function seems unused - the real context menu is in memory_visualizer)
+            TypedAddress typedAddr = TypedAddress::Shared(clickAddress);
+            CreateViewer(typedAddr, clickPos, format);
         }
         ImGui::EndPopup();
     }
@@ -627,7 +719,7 @@ ImVec2 BitmapViewerManager::MemoryToScreen(uint64_t address) {
     return ImVec2(100, 100);
 }
 
-uint64_t BitmapViewerManager::ScreenToMemoryAddress(ImVec2 screenPos) {
+TypedAddress BitmapViewerManager::ScreenToMemoryAddress(ImVec2 screenPos) {
     // Convert screen position to memory address based on memory visualizer's viewport
     
     // Calculate position relative to memory view area
@@ -646,7 +738,25 @@ uint64_t BitmapViewerManager::ScreenToMemoryAddress(ImVec2 screenPos) {
     uint64_t offset = memY * viewportWidth * viewportBytesPerPixel + 
                       memX * viewportBytesPerPixel;
     
-    return viewportBaseAddress + offset;
+    uint64_t address = viewportBaseAddress + offset;
+    
+    // Determine the address space based on current mode
+    if (useVirtualAddresses && addressFlattener) {
+        // In VA mode, the viewport base is in crunched space
+        // But check if the address is reasonable for crunched space
+        uint64_t maxFlat = addressFlattener->GetFlatSize();
+        if (address < maxFlat) {
+            return TypedAddress::Crunched(address);
+        } else {
+            printf("Warning: Address 0x%llx exceeds crunched space size (0x%llx)\n", 
+                   address, maxFlat);
+            // Fall back to shared memory interpretation
+            return TypedAddress::Shared(address);
+        }
+    } else {
+        // In physical mode, it's a shared memory offset
+        return TypedAddress::Shared(address);
+    }
 }
 
 const char* PixelFormatToString(int format) {

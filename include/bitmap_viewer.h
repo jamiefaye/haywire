@@ -4,6 +4,7 @@
 #include <string>
 #include "imgui.h"
 #include "common.h"
+#include "address_parser.h"  // For TypedAddress
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
 #else
@@ -30,7 +31,7 @@ struct BitmapViewer {
     bool showLeader = true;
     
     // Memory configuration
-    uint64_t memoryAddress = 0;
+    TypedAddress memoryAddress;  // Address with its space type
     int memWidth = 256;
     int memHeight = 256;
     int stride = 256;
@@ -104,7 +105,7 @@ public:
     }
     
     // Create a new viewer at the specified memory location
-    void CreateViewer(uint64_t address, ImVec2 anchorPos, PixelFormat format = PixelFormat::RGB888);
+    void CreateViewer(TypedAddress address, ImVec2 anchorPos, PixelFormat format = PixelFormat::RGB888);
     
     // Remove a viewer
     void RemoveViewer(int id);
@@ -145,7 +146,7 @@ private:
     
     // Convert memory position to screen position
     ImVec2 MemoryToScreen(uint64_t address);
-    uint64_t ScreenToMemoryAddress(ImVec2 screenPos);
+    TypedAddress ScreenToMemoryAddress(ImVec2 screenPos);
     
     // Beacon reader for memory access
     std::shared_ptr<class BeaconReader> beaconReader;
