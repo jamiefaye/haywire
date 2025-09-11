@@ -50,8 +50,8 @@ MemoryVisualizer::MemoryVisualizer()
         NavigateToAddress(virtualAddr);
     });
     
-    strcpy(addressInput, "s:0");  // Start at 0 where boot ROM lives
-    viewport.baseAddress = 0x0;  // Initialize the actual address!
+    strcpy(addressInput, "p:0");  // Start at physical 0 where boot ROM lives
+    viewport.baseAddress = 0x0;  // Initialize with physical address 0
     viewport.width = widthInput;
     viewport.height = heightInput;
     viewport.stride = strideInput;
@@ -622,6 +622,7 @@ void MemoryVisualizer::SetQemuConnection(QemuConnection* qemu) {
 }
 
 void MemoryVisualizer::SetMemoryMapper(std::shared_ptr<MemoryMapper> mapper) {
+    memoryMapper = mapper;  // Store it for our own use
     if (bitmapViewerManager) {
         bitmapViewerManager->SetMemoryMapper(mapper);
     }
@@ -651,8 +652,25 @@ void MemoryVisualizer::DrawControls() {
             // Convert to appropriate address based on space
             switch (parsed.space) {
                 case AddressSpace::SHARED:
-                    // File offset - need to convert to PA
-                    targetAddress = parsed.address + 0x40000000;  // TODO: Use MemoryMapper
+                    // SHARED is a file offset - convert to physical address
+                    // by finding which region contains this offset
+                    if (memoryMapper) {
+                        const auto& regions = memoryMapper->GetRegions();
+                        uint64_t accumOffset = 0;
+                        for (const auto& region : regions) {
+                            if (parsed.address >= accumOffset && 
+                                parsed.address < accumOffset + region.size) {
+                                // Found the region - convert offset to GPA
+                                uint64_t offsetInRegion = parsed.address - accumOffset;
+                                targetAddress = region.gpa_start + offsetInRegion;
+                                break;
+                            }
+                            accumOffset += region.size;
+                        }
+                    } else {
+                        // Fallback if no mapper available (shouldn't happen)
+                        targetAddress = parsed.address;
+                    }
                     break;
                 case AddressSpace::PHYSICAL:
                     // Already physical
@@ -813,8 +831,18 @@ void MemoryVisualizer::DrawControls() {
             }
         } else {
             // Switching back to physical mode
-            viewport.baseAddress = 0;
-            strcpy(addressInput, "s:0");  // Use proper notation
+            // Get the first RAM region from MemoryMapper if available
+            uint64_t ramBase = 0;
+            if (memoryMapper) {
+                const auto& regions = memoryMapper->GetRegions();
+                if (!regions.empty()) {
+                    ramBase = regions[0].gpa_start;  // Use first region's start
+                }
+            }
+            viewport.baseAddress = ramBase;
+            std::stringstream ss;
+            ss << "p:" << std::hex << ramBase;
+            strcpy(addressInput, ss.str().c_str());
             needsUpdate = true;
             std::cerr << "Switched to physical mode" << std::endl;
         }
@@ -983,7 +1011,7 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
                 strcpy(addressInput, ss.str().c_str());
             } else {
                 std::stringstream ss;
-                ss << "s:" << std::hex << viewport.baseAddress;  // Use shared notation
+                ss << "p:" << std::hex << viewport.baseAddress;  // Use physical notation since it's a PA
                 strcpy(addressInput, ss.str().c_str());
             }
             needsUpdate = true;
@@ -1006,9 +1034,9 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
             ss << "v:" << std::hex << virtualAddr;  // Use VA notation
             strcpy(addressInput, ss.str().c_str());
         } else {
-            // Physical mode - show shared address
+            // Physical mode - viewport.baseAddress is a physical address
             std::stringstream ss;
-            ss << "s:" << std::hex << viewport.baseAddress;  // Use shared notation
+            ss << "p:" << std::hex << viewport.baseAddress;  // Use physical notation since it's a PA
             strcpy(addressInput, ss.str().c_str());
         }
         
@@ -1028,7 +1056,7 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
                 strcpy(addressInput, ss.str().c_str());
             } else {
                 std::stringstream ss;
-                ss << "s:" << std::hex << viewport.baseAddress;  // Use shared notation
+                ss << "p:" << std::hex << viewport.baseAddress;  // Use physical notation since it's a PA
                 strcpy(addressInput, ss.str().c_str());
             }
             needsUpdate = true;

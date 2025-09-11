@@ -521,14 +521,27 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
     if (viewer.memoryAddress.space == AddressSpace::SHARED) {
         fileOffset = viewer.memoryAddress.value;  // Already a file offset
     } else if (viewer.memoryAddress.space == AddressSpace::PHYSICAL) {
-        // Convert physical to file offset (subtract RAM base)
-        const uint64_t RAM_BASE = 0x40000000;
-        if (viewer.memoryAddress.value >= RAM_BASE) {
-            fileOffset = viewer.memoryAddress.value - RAM_BASE;
+        // Convert physical to file offset using MemoryMapper
+        if (memoryMapper) {
+            int64_t mappedOffset = memoryMapper->TranslateGPAToFileOffset(viewer.memoryAddress.value);
+            if (mappedOffset >= 0) {
+                fileOffset = mappedOffset;
+            } else {
+                printf("Physical address 0x%llx not found in memory regions\n", viewer.memoryAddress.value);
+                FillTestPattern(viewer);
+                return;
+            }
         } else {
-            printf("Physical address 0x%llx is below RAM base\n", viewer.memoryAddress.value);
-            FillTestPattern(viewer);
-            return;
+            // Fallback: hardcoded ARM64 RAM base (not ideal)
+            const uint64_t RAM_BASE = 0x40000000;
+            if (viewer.memoryAddress.value >= RAM_BASE) {
+                fileOffset = viewer.memoryAddress.value - RAM_BASE;
+            } else {
+                printf("Physical address 0x%llx is below RAM base (no MemoryMapper available)\n", 
+                       viewer.memoryAddress.value);
+                FillTestPattern(viewer);
+                return;
+            }
         }
     } else {
         const char* spaceStr = "unknown";
@@ -754,7 +767,18 @@ TypedAddress BitmapViewerManager::ScreenToMemoryAddress(ImVec2 screenPos) {
             return TypedAddress::Shared(address);
         }
     } else {
-        // In physical mode, it's a shared memory offset
+        // In physical mode, viewportBaseAddress is actually a physical address
+        // We need to convert it to a file offset for shared memory access
+        
+        // Use MemoryMapper if available to properly translate GPA to file offset
+        if (memoryMapper) {
+            int64_t fileOffset = memoryMapper->TranslateGPAToFileOffset(address);
+            if (fileOffset >= 0) {
+                return TypedAddress::Shared(fileOffset);
+            }
+        }
+        
+        // Fallback: assume it's already a file offset (for backward compatibility)
         return TypedAddress::Shared(address);
     }
 }

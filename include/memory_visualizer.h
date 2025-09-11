@@ -5,6 +5,7 @@
 #include "guest_agent.h"  // For GuestMemoryRegion
 #include "bitmap_viewer.h"
 #include "address_parser.h"
+#include "memory_mapper.h"
 #include <imgui.h>
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
@@ -219,6 +220,9 @@ private:
     std::unique_ptr<BitmapViewerManager> bitmapViewerManager;
     uint64_t contextMenuAddress;
     ImVec2 contextMenuPos;
+    
+    // Memory mapper for GPA to file offset translation
+    std::shared_ptr<MemoryMapper> memoryMapper;
 };
 
 }
