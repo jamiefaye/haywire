@@ -1349,8 +1349,9 @@ void MemoryVisualizer::DrawMemoryView() {
                     // In VA mode, GetAddressAt returns a crunched address
                     typedAddr = TypedAddress::Crunched(contextMenuAddress);
                 } else {
-                    // In physical mode, it's a shared memory offset
-                    typedAddr = TypedAddress::Shared(contextMenuAddress);
+                    // In physical mode, contextMenuAddress is a physical address
+                    // (viewport.baseAddress is physical, GetAddressAt adds to it)
+                    typedAddr = TypedAddress::Physical(contextMenuAddress);
                 }
                 bitmapViewerManager->CreateViewer(typedAddr, contextMenuPos, viewport.format);
                 printf("Viewer created! Total viewers: %zu\n", bitmapViewerManager->GetViewerCount());
@@ -2081,7 +2082,7 @@ void MemoryVisualizer::HandleInput() {
             viewport.baseAddress = (uint64_t)newAddress;
             
             // Update the address input field
-            AddressSpace space = useVirtualAddresses ? AddressSpace::CRUNCHED : AddressSpace::SHARED;
+            AddressSpace space = useVirtualAddresses ? AddressSpace::CRUNCHED : AddressSpace::PHYSICAL;
             strcpy(addressInput, AddressParser::Format(viewport.baseAddress, space).c_str());
             
             needsUpdate = true;
@@ -2369,7 +2370,7 @@ void MemoryVisualizer::NavigateToAddress(uint64_t address) {
     } else {
         // Original physical address mode
         viewport.baseAddress = address;
-        strcpy(addressInput, AddressParser::Format(address, AddressSpace::VIRTUAL).c_str());
+        strcpy(addressInput, AddressParser::Format(address, AddressSpace::PHYSICAL).c_str());
     }
     
     needsUpdate = true;
