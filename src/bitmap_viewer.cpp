@@ -139,12 +139,8 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         // Address on the left (acts as title)
         ImGui::Text("%s", viewer.name.c_str());
         
-        // Size info
+        // Format selector first for narrow window accessibility
         ImGui::SameLine(100);
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%dx%d", viewer.memWidth, viewer.memHeight);
-        
-        // Format selector with split option
-        ImGui::SameLine(160);
         ImGui::SetNextItemWidth(80);
         
         // Build format list with separator and split option
@@ -207,6 +203,10 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             }
             ImGui::EndCombo();
         }
+        
+        // Size info after format selector
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%dx%d", viewer.memWidth, viewer.memHeight);
         
         // Settings and close buttons on the right
         float buttonX = ImGui::GetWindowWidth() - 50;
