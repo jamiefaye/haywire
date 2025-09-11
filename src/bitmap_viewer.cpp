@@ -792,7 +792,7 @@ void BitmapViewerManager::ConvertMemoryToHexPixels(BitmapViewer& viewer, const u
             memPtr[memIdx],
             255
         );
-        uint32_t fgColor = ContrastColor(bgColor);
+        uint32_t fgColor = CalcHiContrastOpposite(bgColor);  // Use same as main viewer
         
         // Draw 8 hex nibbles (32 pixels wide, 8 pixels tall)
         for (int nibbleIdx = 7; nibbleIdx >= 0; --nibbleIdx) {
@@ -803,7 +803,7 @@ void BitmapViewerManager::ConvertMemoryToHexPixels(BitmapViewer& viewer, const u
             size_t nibbleX = col * 32 + (7 - nibbleIdx) * 4;
             size_t nibbleY = row * 8;
             
-            // Draw the 3x5 glyph in a 4x8 box
+            // Draw the 3x5 glyph in a 4x8 box with 1px border on left and top
             for (int y = 0; y < 8; ++y) {
                 for (int x = 0; x < 4; ++x) {
                     size_t pixX = nibbleX + x;
@@ -814,14 +814,20 @@ void BitmapViewerManager::ConvertMemoryToHexPixels(BitmapViewer& viewer, const u
                     // Default to background color
                     uint32_t color = bgColor;
                     
-                    // Check if we're in the glyph area (3x5 centered in 4x8)
-                    if (x < 3 && y < 5) {
-                        // Extract bit from glyph - mirror horizontally
-                        int bitPos = (4 - y) * 3 + (2 - x);
-                        if (bitPos >= 0 && bitPos < 15) {
-                            bool bit = (glyph >> bitPos) & 1;
-                            if (bit) {
-                                color = fgColor;
+                    // Check if we're in the glyph area (3x5 shifted by 1,1 for borders)
+                    if (x > 0 && x < 4 && y > 0 && y < 6) {
+                        // Adjust coordinates for the shifted glyph
+                        int glyphX = x - 1;
+                        int glyphY = y - 1;
+                        
+                        if (glyphX < 3 && glyphY < 5) {
+                            // Extract bit from glyph - mirror horizontally
+                            int bitPos = (4 - glyphY) * 3 + (2 - glyphX);
+                            if (bitPos >= 0 && bitPos < 15) {
+                                bool bit = (glyph >> bitPos) & 1;
+                                if (bit) {
+                                    color = fgColor;
+                                }
                             }
                         }
                     }

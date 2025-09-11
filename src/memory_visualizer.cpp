@@ -2795,23 +2795,9 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToHexPixels(const MemoryBlo
             size_t nibbleX = col * 32 + (7 - nibbleIdx) * 4;
             size_t nibbleY = row * 6;
             
-            // Draw the 3x5 glyph (in a 4x6 box)
-            for (int y = 0; y < 5; ++y) {
-                for (int x = 0; x < 3; ++x) {
-                    // Extract bit from glyph - flip horizontally (mirror X-axis)
-                    int bitPos = (4 - y) * 3 + (2 - x);  // Mirror X: use (2-x) instead of x
-                    bool bit = (glyph >> bitPos) & 1;
-                    
-                    size_t pixX = nibbleX + x;
-                    size_t pixY = nibbleY + y;
-                    
-                    if (pixX < viewport.width && pixY < viewport.height) {
-                        size_t pixIdx = pixY * viewport.width + pixX;
-                        pixels[pixIdx] = bit ? fgColor : bgColor;
-                    }
-                }
-                // Fill the 4th column with background
-                size_t pixX = nibbleX + 3;
+            // Fill first column with background (left border)
+            for (int y = 0; y < 6; ++y) {
+                size_t pixX = nibbleX;
                 size_t pixY = nibbleY + y;
                 if (pixX < viewport.width && pixY < viewport.height) {
                     size_t pixIdx = pixY * viewport.width + pixX;
@@ -2819,13 +2805,30 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToHexPixels(const MemoryBlo
                 }
             }
             
-            // Fill 6th row with background
+            // Fill first row with background (top border)
             for (int x = 0; x < 4; ++x) {
                 size_t pixX = nibbleX + x;
-                size_t pixY = nibbleY + 5;
+                size_t pixY = nibbleY;
                 if (pixX < viewport.width && pixY < viewport.height) {
                     size_t pixIdx = pixY * viewport.width + pixX;
                     pixels[pixIdx] = bgColor;
+                }
+            }
+            
+            // Draw the 3x5 glyph shifted by 1,1 (now in a 4x6 box with borders)
+            for (int y = 0; y < 5; ++y) {
+                for (int x = 0; x < 3; ++x) {
+                    // Extract bit from glyph - flip horizontally (mirror X-axis)
+                    int bitPos = (4 - y) * 3 + (2 - x);  // Mirror X: use (2-x) instead of x
+                    bool bit = (glyph >> bitPos) & 1;
+                    
+                    size_t pixX = nibbleX + x + 1;  // Shift right by 1 for left border
+                    size_t pixY = nibbleY + y + 1;  // Shift down by 1 for top border
+                    
+                    if (pixX < viewport.width && pixY < viewport.height) {
+                        size_t pixIdx = pixY * viewport.width + pixX;
+                        pixels[pixIdx] = bit ? fgColor : bgColor;
+                    }
                 }
             }
         }
