@@ -977,8 +977,8 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     
     // Vertical slider
     ImVec2 availSize = ImGui::GetContentRegionAvail();
-    // Make the slider half height to fit better
-    float sliderHeight = std::max(100.0f, availSize.y * 0.5f);
+    // Make the slider use most of available height
+    float sliderHeight = std::max(100.0f, availSize.y - 70.0f);  // Leave room for buttons
     
     // Debug output
     static int sliderFrameCount = 0;
