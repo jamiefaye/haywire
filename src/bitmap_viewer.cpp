@@ -510,16 +510,19 @@ void BitmapViewerManager::DrawLeaderLine(BitmapViewer& viewer) {
         // Anchor follows a specific memory address as the view scrolls
         if (viewer.anchorAddress.value != 0) {
             // Always update anchor position to track the address
-            // This makes the anchor move with scrolling
+            // This makes the anchor move with scrolling and can go off-screen
             ImVec2 newPos = MemoryToScreen(viewer.anchorAddress.value);
             viewer.anchorPos = newPos;
-            
-            // The constrain below will keep it within bounds
+            // Don't constrain - let it scroll off screen
         }
     } else {
         // ANCHOR_TO_POSITION: Anchor stays at relative position in view
         viewer.anchorPos.x = memoryViewPos.x + viewer.anchorRelativePos.x * memoryViewSize.x;
         viewer.anchorPos.y = memoryViewPos.y + viewer.anchorRelativePos.y * memoryViewSize.y;
+        
+        // Constrain to view bounds in relative mode
+        viewer.anchorPos.x = std::max(memoryViewPos.x, std::min(memoryViewPos.x + memoryViewSize.x, viewer.anchorPos.x));
+        viewer.anchorPos.y = std::max(memoryViewPos.y, std::min(memoryViewPos.y + memoryViewSize.y, viewer.anchorPos.y));
         
         // Update the memory address to match what's at this relative position
         // This ensures the mini viewer shows the memory at the current anchor position
@@ -531,34 +534,51 @@ void BitmapViewerManager::DrawLeaderLine(BitmapViewer& viewer) {
         }
     }
     
-    // Constrain anchor to main view bounds
-    viewer.anchorPos.x = std::max(memoryViewPos.x, std::min(memoryViewPos.x + memoryViewSize.x, viewer.anchorPos.x));
-    viewer.anchorPos.y = std::max(memoryViewPos.y, std::min(memoryViewPos.y + memoryViewSize.y, viewer.anchorPos.y));
-    
     // Calculate line endpoints - connect to upper-left of image
     ImVec2 imageTopLeft = viewer.imageScreenPos;
+    
+    // Set up clipping rectangle for the main view area
+    drawList->PushClipRect(memoryViewPos, 
+                           ImVec2(memoryViewPos.x + memoryViewSize.x, memoryViewPos.y + memoryViewSize.y), 
+                           true);
     
     // Draw line from image top-left to anchor
     ImU32 lineColor = viewer.isPinned ? IM_COL32(255, 0, 0, 128) : IM_COL32(255, 255, 0, 128);
     drawList->AddLine(imageTopLeft, viewer.anchorPos, lineColor, 2.0f);
     
-    // Draw anchor point
-    drawList->AddCircleFilled(viewer.anchorPos, 6, IM_COL32(255, 255, 0, 255));
-    drawList->AddCircle(viewer.anchorPos, 8, IM_COL32(0, 0, 0, 255), 12, 2);
+    // Draw anchor point only if it's within the view bounds
+    bool anchorInView = viewer.anchorPos.x >= memoryViewPos.x && 
+                       viewer.anchorPos.x <= memoryViewPos.x + memoryViewSize.x &&
+                       viewer.anchorPos.y >= memoryViewPos.y && 
+                       viewer.anchorPos.y <= memoryViewPos.y + memoryViewSize.y;
     
-    // Check for anchor dragging
-    ImVec2 mousePos = ImGui::GetMousePos();
-    float dist = std::sqrt(std::pow(mousePos.x - viewer.anchorPos.x, 2) + 
-                          std::pow(mousePos.y - viewer.anchorPos.y, 2));
+    if (anchorInView) {
+        drawList->AddCircleFilled(viewer.anchorPos, 6, IM_COL32(255, 255, 0, 255));
+        drawList->AddCircle(viewer.anchorPos, 8, IM_COL32(0, 0, 0, 255), 12, 2);
+    }
     
-    if (dist < 10) {
-        // Hover effect
-        drawList->AddCircle(viewer.anchorPos, 10, IM_COL32(255, 255, 255, 255), 12, 2);
+    // Pop the clipping rectangle
+    drawList->PopClipRect();
+    
+    // Check for anchor dragging (only if anchor is visible)
+    if (anchorInView) {
+        ImVec2 mousePos = ImGui::GetMousePos();
+        float dist = std::sqrt(std::pow(mousePos.x - viewer.anchorPos.x, 2) + 
+                              std::pow(mousePos.y - viewer.anchorPos.y, 2));
         
-        // Handle anchor dragging - check for click on the anchor itself
-        if (ImGui::IsMouseClicked(0)) {
-            // Start dragging this anchor
-            viewer.isDraggingAnchor = true;
+        if (dist < 10) {
+            // Hover effect - draw within clipped area
+            drawList->PushClipRect(memoryViewPos, 
+                                   ImVec2(memoryViewPos.x + memoryViewSize.x, memoryViewPos.y + memoryViewSize.y), 
+                                   true);
+            drawList->AddCircle(viewer.anchorPos, 10, IM_COL32(255, 255, 255, 255), 12, 2);
+            drawList->PopClipRect();
+            
+            // Handle anchor dragging - check for click on the anchor itself
+            if (ImGui::IsMouseClicked(0)) {
+                // Start dragging this anchor
+                viewer.isDraggingAnchor = true;
+            }
         }
     }
     
@@ -567,9 +587,13 @@ void BitmapViewerManager::DrawLeaderLine(BitmapViewer& viewer) {
         if (ImGui::IsMouseDragging(0)) {
             ImVec2 newPos = ImGui::GetMousePos();
             
-            // Constrain to main view bounds
-            newPos.x = std::max(memoryViewPos.x, std::min(memoryViewPos.x + memoryViewSize.x, newPos.x));
-            newPos.y = std::max(memoryViewPos.y, std::min(memoryViewPos.y + memoryViewSize.y, newPos.y));
+            // Only constrain in relative position mode
+            if (viewer.anchorMode == BitmapViewer::ANCHOR_TO_POSITION) {
+                // Constrain to main view bounds
+                newPos.x = std::max(memoryViewPos.x, std::min(memoryViewPos.x + memoryViewSize.x, newPos.x));
+                newPos.y = std::max(memoryViewPos.y, std::min(memoryViewPos.y + memoryViewSize.y, newPos.y));
+            }
+            // In address mode, allow dragging anywhere (will update the address)
             
             viewer.anchorPos = newPos;
             
