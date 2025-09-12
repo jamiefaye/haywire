@@ -6,6 +6,7 @@
 #include "guest_agent.h"
 #include "font_data.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 #include <cstring>
 #include <string.h>  // For memmem
 #include <algorithm>
@@ -1002,7 +1003,76 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
         }
     }
     
-    // Vertical slider
+    // Draw memory map visualization behind the slider
+    ImVec2 sliderPos = ImGui::GetCursorScreenPos();
+    
+    // Draw memory regions in the slider background BEFORE the slider
+    // First, let's draw a checkerboard pattern to verify position
+    
+    // Use the window draw list for testing
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    
+    // First draw a solid dark background for the entire slider area
+    drawList->AddRectFilled(
+        ImVec2(sliderPos.x, sliderPos.y),
+        ImVec2(sliderPos.x + 180, sliderPos.y + sliderHeight),
+        IM_COL32(20, 20, 20, 255)  // Very dark background
+    );
+    // Draw memory regions with STRONG colors
+    if (useVirtualAddresses && addressFlattener) {
+        // In VA mode, show flattened memory regions
+        const auto& regions = addressFlattener->GetRegions();
+        for (const auto& region : regions) {
+            float startY = sliderPos.y + ((maxSliderValue - region.flatEnd/sliderUnit) / (float)maxSliderValue) * sliderHeight;
+            float endY = sliderPos.y + ((maxSliderValue - region.flatStart/sliderUnit) / (float)maxSliderValue) * sliderHeight;
+            
+            // Much stronger, more vibrant colors
+            uint32_t color;
+            if (region.name.find("[heap]") != std::string::npos) {
+                color = IM_COL32(0, 255, 0, 255);  // Bright green for heap
+            } else if (region.name.find("[stack]") != std::string::npos) {
+                color = IM_COL32(255, 255, 0, 255);  // Bright yellow for stack
+            } else if (region.name.find(".so") != std::string::npos || 
+                       region.name.find(".dylib") != std::string::npos) {
+                color = IM_COL32(255, 0, 255, 255);  // Bright magenta for libraries
+            } else if (region.name.find("/bin/") != std::string::npos ||
+                       region.name.find("/usr/") != std::string::npos) {
+                color = IM_COL32(255, 128, 0, 255);  // Orange for executables
+            } else {
+                color = IM_COL32(100, 100, 100, 255);  // Medium gray for other regions
+            }
+            
+            drawList->AddRectFilled(
+                ImVec2(sliderPos.x + 1, startY),
+                ImVec2(sliderPos.x + 179, endY),
+                color
+            );
+        }
+    } else if (memoryMapper) {
+        // In PA mode, show physical memory regions - strong orange color
+        auto regions = memoryMapper->GetRegions();
+        for (const auto& region : regions) {
+            // Convert addresses to slider positions (inverted - 0 at bottom)
+            float startY = sliderPos.y + ((maxSliderValue - region.gpa_start/sliderUnit) / (float)maxSliderValue) * sliderHeight;
+            float endY = sliderPos.y + ((maxSliderValue - (region.gpa_start + region.size)/sliderUnit) / (float)maxSliderValue) * sliderHeight;
+            
+            // Bright orange for physical memory
+            drawList->AddRectFilled(
+                ImVec2(sliderPos.x + 1, startY),
+                ImVec2(sliderPos.x + 179, endY),
+                IM_COL32(255, 140, 0, 255)  // Bright orange for physical memory
+            );
+        }
+    }
+    
+    // Disable hover and active colors for the slider to prevent brightness changes
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0, 0, 0, 0));  // Transparent when hovered
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0, 0, 0, 0));   // Transparent when active
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));         // Transparent background
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));  // Gray handle
+    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));  // Lighter gray when active
+    
+    // Vertical slider (draw on top of memory map)
     uint64_t minSliderValue = 0;
     if (ImGui::VSliderScalar("##VAddr", ImVec2(180, sliderHeight), 
                             ImGuiDataType_U64, &sliderValue,
@@ -1022,6 +1092,9 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
         
         needsUpdate = true;
     }
+    
+    // Pop the style colors we pushed before the slider
+    ImGui::PopStyleColor(5);  // Pop all 5 style colors
     
     // + button  
     const char* plusLabel = useVirtualAddresses ? "+Page" : "+64K";
@@ -1355,9 +1428,6 @@ void MemoryVisualizer::DrawMemoryView() {
     }
     
     ImGui::EndChild();
-    
-    // Draw memory map overlay on scrollbar
-    DrawScrollbarMemoryMap();
     
     // Draw correlation stripe at bottom if enabled
     if (showCorrelation && !currentMemory.data.empty()) {
@@ -1962,21 +2032,36 @@ void MemoryVisualizer::DrawMagnifier() {
     ImGui::End();
 }
 
+// No longer used - memory map is now drawn in DrawVerticalAddressSlider
+#if 0
 void MemoryVisualizer::DrawScrollbarMemoryMap() {
     // Draw memory map visualization on the scrollbar area
-    ImVec2 scrollAreaPos = memoryViewPos;
-    ImVec2 scrollAreaSize = memoryViewSize;
+    // We're now being called from inside the child window context
     
-    // Don't draw if the view hasn't been initialized
-    if (scrollAreaSize.x <= 0 || scrollAreaSize.y <= 0) {
-        return;
+    // Get the current window (MemoryScrollRegion)
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (!window) return;
+    
+    // Check if window actually has a vertical scrollbar
+    if (!window->ScrollbarY) return;
+    
+    // Get the actual scrollbar rectangle from ImGui internals
+    ImRect scrollbarRect = ImGui::GetWindowScrollbarRect(window, ImGuiAxis_Y);
+    
+    float scrollbarX = scrollbarRect.Min.x;
+    float scrollbarY = scrollbarRect.Min.y;
+    float scrollbarWidth = scrollbarRect.GetWidth();
+    float scrollbarHeight = scrollbarRect.GetHeight();
+    
+    // Debug output to check if we're getting valid values
+    static int debugCounter = 0;
+    if (debugCounter++ % 60 == 0) {  // Print every 60 frames (roughly once per second)
+        printf("Scrollbar rect: X=%.1f Y=%.1f W=%.1f H=%.1f\n", 
+               scrollbarX, scrollbarY, scrollbarWidth, scrollbarHeight);
     }
     
-    // Calculate scrollbar position (overlay on actual ImGui scrollbar)
-    float scrollbarX = scrollAreaPos.x + scrollAreaSize.x - 18; // ImGui scrollbar is ~18px wide
-    float scrollbarY = scrollAreaPos.y;
-    float scrollbarWidth = 16; // Leave 2px margin
-    float scrollbarHeight = scrollAreaSize.y;
+    // Don't draw if scrollbar is too small
+    if (scrollbarHeight < 50) return;
     
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     
@@ -2005,10 +2090,17 @@ void MemoryVisualizer::DrawScrollbarMemoryMap() {
                           ImVec2(scrollbarX + scrollbarWidth, scrollbarY + scrollbarHeight), 
                           false);
     
-    // Draw background for unmapped regions (darker, semi-transparent)
+    // Draw a bright test rectangle to see if we're in the right place
     drawList->AddRectFilled(
         ImVec2(scrollbarX, scrollbarY),
         ImVec2(scrollbarX + scrollbarWidth, scrollbarY + scrollbarHeight),
+        IM_COL32(255, 0, 0, 100)  // Red semi-transparent for testing
+    );
+    
+    // Draw background for unmapped regions (darker, semi-transparent)
+    drawList->AddRectFilled(
+        ImVec2(scrollbarX + 1, scrollbarY + 1),
+        ImVec2(scrollbarX + scrollbarWidth - 1, scrollbarY + scrollbarHeight - 1),
         IM_COL32(25, 25, 35, 200)
     );
     
@@ -2125,6 +2217,7 @@ void MemoryVisualizer::DrawScrollbarMemoryMap() {
     // Restore clipping
     drawList->PopClipRect();
 }
+#endif
 
 void MemoryVisualizer::DrawCorrelationStripe() {
     ImVec2 pos = ImGui::GetCursorScreenPos();
