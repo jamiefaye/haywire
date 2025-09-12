@@ -1406,6 +1406,31 @@ void BitmapViewerManager::HandleKeyboardInput() {
     ImGuiIO& io = ImGui::GetIO();
     bool shiftPressed = io.KeyShift;
     bool ctrlPressed = io.KeyCtrl || io.KeySuper;  // Cmd key on macOS
+    bool altPressed = io.KeyAlt;
+    
+    // Alt+Arrow keys move the anchor point
+    if (altPressed) {
+        float step = shiftPressed ? 10.0f : 1.0f;  // Shift for larger steps
+        
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
+            focusedViewer->anchorPos.x -= step;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
+            focusedViewer->anchorPos.x += step;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+            focusedViewer->anchorPos.y -= step;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+            focusedViewer->anchorPos.y += step;
+        }
+        
+        // Update the anchor address based on new position
+        // This will need the ScreenToMemoryAddress function from manager
+        focusedViewer->anchorAddress = ScreenToMemoryAddress(focusedViewer->anchorPos);
+        focusedViewer->anchorMode = BitmapViewer::ANCHOR_TO_ADDRESS;
+        return;  // Don't process other shortcuts
+    }
     
     // Ctrl+Arrow keys adjust width/height
     if (ctrlPressed) {
