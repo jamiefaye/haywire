@@ -166,18 +166,22 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         
         // Settings button first so it's always accessible
         if (ImGui::SmallButton("⚙")) {
-            // Position popup to the left of the viewer (or right if no space on left)
-            ImVec2 popupPos = viewer.windowPos;
-            const float popupWidth = 300;
+            // Position popup to the left of the viewer to avoid obscuring content
+            const float popupWidth = 350;  // Estimated popup width
             
-            if (viewer.windowPos.x >= popupWidth + 10) {
-                // Place to the left if there's room
-                popupPos.x -= popupWidth + 10;
-            } else {
-                // Otherwise place to the right
-                popupPos.x += viewer.windowSize.x + 10;
+            // Get current window position (more accurate than stored position)
+            ImVec2 currentWindowPos = ImGui::GetWindowPos();
+            ImVec2 currentWindowSize = ImGui::GetWindowSize();
+            
+            // Calculate position to the left of viewer
+            ImVec2 popupPos;
+            popupPos.x = currentWindowPos.x - popupWidth - 10;
+            popupPos.y = currentWindowPos.y + 30;  // Below the title bar
+            
+            // If that would go off-screen, place to the right instead
+            if (popupPos.x < 0) {
+                popupPos.x = currentWindowPos.x + currentWindowSize.x + 10;
             }
-            popupPos.y += 30;  // Below the title bar
             
             ImGui::SetNextWindowPos(popupPos, ImGuiCond_Appearing);
             ImGui::OpenPopup("ViewerSettings");
