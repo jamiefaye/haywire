@@ -292,61 +292,70 @@ uint32_t MemoryOverview::StateToColor(PageState state) const {
 }
 
 void MemoryOverview::DrawCompact() {
-    // Compact view without window chrome
+    // Memory sections view - no graphic map (scrollbar handles that now)
+    
+    ImGui::Text("Memory Sections");
+    ImGui::Separator();
     
     // Switch between physical and process mode
     if (processMode) {
         DrawProcessMap();
     } else {
-        // Show detected regions
+        // Show detected regions as a list
         if (!regions.empty()) {
-            ImGui::Text("Memory Regions:");
+            // Column headers
+            ImGui::Columns(3, "RegionColumns", false);
+            ImGui::SetColumnWidth(0, 140);
+            ImGui::SetColumnWidth(1, 80);
+            ImGui::Text("Name");
+            ImGui::NextColumn();
+            ImGui::Text("Size");
+            ImGui::NextColumn();
+            ImGui::Text("Address");
+            ImGui::NextColumn();
             ImGui::Separator();
+            
             for (const auto& region : regions) {
-                if (ImGui::Selectable(region.name.c_str())) {
+                // Make the entire row selectable
+                if (ImGui::Selectable(region.name.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
                     // TODO: Jump to this region in main view
                 }
-                ImGui::Text("  0x%llx (%.1f MB)", 
-                           region.base, 
-                           region.size / (1024.0 * 1024.0));
+                ImGui::NextColumn();
+                
+                // Size in appropriate units
+                float sizeMB = region.size / (1024.0f * 1024.0f);
+                if (sizeMB >= 1024.0f) {
+                    ImGui::Text("%.1f GB", sizeMB / 1024.0f);
+                } else {
+                    ImGui::Text("%.1f MB", sizeMB);
+                }
+                ImGui::NextColumn();
+                
+                // Address
+                ImGui::Text("0x%llx", region.base);
+                ImGui::NextColumn();
             }
+            
+            ImGui::Columns(1);
             ImGui::Separator();
-        }
-        
-        // Memory map visualization
-        if (!pixelBuffer.empty()) {
-        int width = pixelsPerRow;
-        int height = (pageStates.size() + pixelsPerRow - 1) / pixelsPerRow;
-        
-        glBindTexture(GL_TEXTURE_2D, textureID);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, 
-                     GL_RGBA, GL_UNSIGNED_BYTE, pixelBuffer.data());
-        
-        // Display the texture
-        ImVec2 size(width * 1.5, height * 1.5);  // Slightly smaller scale
-        ImGui::Image((ImTextureID)(intptr_t)textureID, size);
-        
-        // Handle clicks
-        if (ImGui::IsItemHovered()) {
-            ImVec2 mousePos = ImGui::GetMousePos();
-            ImVec2 itemPos = ImGui::GetItemRectMin();
             
-            int x = (mousePos.x - itemPos.x) / 1.5;
-            int y = (mousePos.y - itemPos.y) / 1.5;
-            
-            if (x >= 0 && x < width && y >= 0 && y < height) {
-                uint64_t address = GetAddressAt(x, y);
-                ImGui::SetTooltip("Address: 0x%llx", address);
+            // Summary
+            size_t totalSize = 0;
+            for (const auto& region : regions) {
+                totalSize += region.size;
             }
-        }
+            ImGui::Text("Total: %zu regions, %.1f GB", 
+                       regions.size(), 
+                       totalSize / (1024.0 * 1024.0 * 1024.0));
         } else {
-            ImGui::Text("No memory scanned yet");
+            ImGui::Text("No memory regions detected");
+            ImGui::Text("Connect to QEMU to scan");
         }
     }  // End of else block (physical mode)
 }
 
 void MemoryOverview::Draw() {
-    ImGui::Begin("Memory Overview");
+    ImGui::Begin("Memory Sections");
     
     // Switch between physical and process mode
     if (processMode) {
@@ -579,158 +588,52 @@ void MemoryOverview::DrawProcessMap() {
     // Show sections list if available
     if (!processSections.empty()) {
         if (ImGui::CollapsingHeader("Memory Sections", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::BeginChild("SectionsList", ImVec2(0, 150), true, 
-                            ImGuiWindowFlags_HorizontalScrollbar);
+            ImGui::BeginChild("SectionsList", ImVec2(0, 250), true, 
+                            ImGuiWindowFlags_AlwaysVerticalScrollbar);
             
-            // Table with columns for address range, permissions, size, and name
-            if (ImGui::BeginTable("Sections", 4, 
-                                ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | 
-                                ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY)) {
-                ImGui::TableSetupColumn("Address Range", ImGuiTableColumnFlags_WidthFixed, 250);
-                ImGui::TableSetupColumn("Perms", ImGuiTableColumnFlags_WidthFixed, 60);
-                ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 100);
-                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableHeadersRow();
-                
-                for (const auto& section : processSections) {
-                    ImGui::TableNextRow();
-                    
-                    // Make the entire row selectable
-                    ImGui::TableSetColumnIndex(0);
-                    char label[64];
-                    snprintf(label, sizeof(label), "##section_%llx", section.start);
-                    if (ImGui::Selectable(label, false, ImGuiSelectableFlags_SpanAllColumns)) {
-                        if (navCallback) {
-                            navCallback(section.start);
-                        }
+            // Simple list without table - address on first line, name on second
+            for (const auto& section : processSections) {
+                // Make the section selectable
+                char label[64];
+                snprintf(label, sizeof(label), "##section_%llx", section.start);
+                if (ImGui::Selectable(label, false, ImGuiSelectableFlags_AllowItemOverlap, 
+                                     ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 2))) {
+                    if (navCallback) {
+                        navCallback(section.start);
                     }
-                    
-                    // Draw the actual content
-                    ImGui::SameLine();
-                    ImGui::Text("0x%llx-0x%llx", section.start, section.end);
-                    
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::Text("%s", section.permissions.c_str());
-                    
-                    ImGui::TableSetColumnIndex(2);
-                    uint64_t size = section.end - section.start;
-                    if (size >= 1024*1024) {
-                        ImGui::Text("%.1f MB", size / (1024.0 * 1024.0));
-                    } else if (size >= 1024) {
-                        ImGui::Text("%.1f KB", size / 1024.0);
-                    } else {
-                        ImGui::Text("%llu B", size);
-                    }
-                    
-                    ImGui::TableSetColumnIndex(3);
-                    ImGui::Text("%s", section.name.c_str());
                 }
                 
-                ImGui::EndTable();
+                // Draw the content on top of the selectable
+                ImGui::SameLine();
+                ImGui::BeginGroup();
+                
+                // First line: Address range
+                ImGui::Text("0x%llx-0x%llx", section.start, section.end);
+                
+                // Second line: Name (indented, truncated from left if too long)
+                std::string displayName = section.name;
+                const size_t maxChars = 35;  // Maximum characters to show
+                if (displayName.length() > maxChars) {
+                    // Show the last N characters with ellipsis at start
+                    displayName = "..." + displayName.substr(displayName.length() - (maxChars - 3));
+                }
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "  %s", displayName.c_str());
+                
+                // Show full path in tooltip if truncated
+                if (section.name.length() > maxChars && ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", section.name.c_str());
+                }
+                
+                ImGui::EndGroup();
+                
+                ImGui::Separator();
             }
             
             ImGui::EndChild();
         }
-        
-        ImGui::Separator();
-        ImGui::Text("Crunched Address Space View:");
     }
     
-    if (!flattener) {
-        ImGui::Text("No address space flattener available");
-        return;
-    }
-    
-    // Show stats
-    uint64_t totalMapped = flattener->GetMappedSize();
-    float compression = 1.0f / flattener->GetCompressionRatio();
-    ImGui::Text("Total Mapped: %.2f MB", totalMapped / (1024.0 * 1024.0));
-    ImGui::Text("Compression: %.1f:1", compression);
-    ImGui::Separator();
-    
-    // Draw the crunched memory map
-    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
-    ImVec2 canvasSize = ImGui::GetContentRegionAvail();
-    
-    if (canvasSize.x < 100) canvasSize.x = 250;  // Min width
-    if (canvasSize.y < 200) canvasSize.y = 400;  // Min height
-    
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    
-    // Background
-    drawList->AddRectFilled(canvasPos, 
-                           ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y),
-                           IM_COL32(20, 20, 20, 255));
-    
-    // Draw regions as horizontal bars
-    const auto& regions = flattener->GetRegions();
-    uint64_t totalFlat = flattener->GetFlatSize();
-    
-    if (totalFlat > 0) {
-        for (const auto& region : regions) {
-            // Calculate position in canvas
-            float y1 = canvasPos.y + (region.flatStart / (float)totalFlat) * canvasSize.y;
-            float y2 = canvasPos.y + (region.flatEnd / (float)totalFlat) * canvasSize.y;
-            
-            // Minimum height for visibility
-            if (y2 - y1 < 1.0f) y2 = y1 + 1.0f;
-            
-            // Color based on region name
-            uint32_t color = IM_COL32(100, 100, 100, 255);  // Default gray
-            if (region.name.find("stack") != std::string::npos) {
-                color = IM_COL32(255, 100, 255, 255);  // Magenta for stack
-            } else if (region.name.find("heap") != std::string::npos) {
-                color = IM_COL32(255, 255, 100, 255);  // Yellow for heap
-            } else if (region.name.find(".so") != std::string::npos) {
-                color = IM_COL32(100, 255, 255, 255);  // Cyan for libraries
-            } else if (region.name[0] == '/' && region.name.find("bin") != std::string::npos) {
-                color = IM_COL32(100, 100, 255, 255);  // Blue for executables
-            } else if (region.name.empty() || region.name[0] == '[') {
-                color = IM_COL32(150, 150, 150, 255);  // Light gray for anonymous
-            }
-            
-            // Draw the region bar
-            drawList->AddRectFilled(ImVec2(canvasPos.x + 10, y1),
-                                   ImVec2(canvasPos.x + canvasSize.x - 10, y2),
-                                   color);
-            
-            // Hover detection
-            if (ImGui::IsMouseHoveringRect(ImVec2(canvasPos.x, y1), 
-                                         ImVec2(canvasPos.x + canvasSize.x, y2))) {
-                // Highlight
-                drawList->AddRect(ImVec2(canvasPos.x + 10, y1),
-                                ImVec2(canvasPos.x + canvasSize.x - 10, y2),
-                                IM_COL32(255, 255, 255, 255), 0, 0, 2);
-                
-                // Tooltip
-                ImGui::BeginTooltip();
-                ImGui::Text("VA: 0x%llx - 0x%llx", region.virtualStart, region.virtualEnd);
-                ImGui::Text("Size: %.2f MB", region.Size() / (1024.0 * 1024.0));
-                if (!region.name.empty()) {
-                    ImGui::Text("Name: %s", region.name.c_str());
-                }
-                ImGui::Text("Position in flat space: %llu MB", 
-                           region.flatStart / (1024 * 1024));
-                ImGui::EndTooltip();
-                
-                // Click to navigate
-                if (ImGui::IsMouseClicked(0) && navCallback) {
-                    navCallback(region.virtualStart);
-                }
-            }
-        }
-    }
-    
-    // Make the canvas interactive
-    ImGui::InvisibleButton("ProcessMapCanvas", canvasSize);
-    
-    // Legend
-    ImGui::Separator();
-    ImGui::Text("Legend:");
-    ImGui::SameLine(); ImGui::TextColored(ImVec4(0.4f, 0.4f, 1.0f, 1), "Executable");
-    ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1), "Heap");
-    ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.4f, 1.0f, 1), "Stack");
-    ImGui::SameLine(); ImGui::TextColored(ImVec4(0.4f, 1.0f, 1.0f, 1), "Libraries");
+    // End of process map - no crunched view
 }
 
 }

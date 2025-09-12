@@ -339,7 +339,7 @@ int main(int argc, char** argv) {
                 ImGui::MenuItem("QEMU Connection", nullptr, &show_connection_window);
                 ImGui::Separator();
                 ImGui::MenuItem("Memory Visualizer", nullptr, &show_memory_view);
-                ImGui::MenuItem("Memory Overview", nullptr, &show_overview);
+                ImGui::MenuItem("Memory Sections", nullptr, &show_overview);
                 ImGui::Separator();
                 if (ImGui::MenuItem("Process Selector", "P")) {
                     pidSelector.Show();
@@ -385,8 +385,8 @@ int main(int argc, char** argv) {
             float availableHeight = ImGui::GetContentRegionAvail().y;
             
             if (show_overview) {
-                // Left pane: Overview
-                ImGui::BeginChild("OverviewPane", ImVec2(300, availableHeight), true);
+                // Left pane: Memory Sections
+                ImGui::BeginChild("SectionsPane", ImVec2(300, availableHeight), true);
                 overview.DrawCompact();
                 ImGui::EndChild();
                 
