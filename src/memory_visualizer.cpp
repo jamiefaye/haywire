@@ -2292,21 +2292,23 @@ void MemoryVisualizer::HandleInput() {
         return;
     }
     
-    // Check if mini-viewers have focus and handle their input
-    if (bitmapViewerManager && bitmapViewerManager->HasFocus()) {
-        bitmapViewerManager->HandleKeyboardInput();
-        return;  // Mini-viewer handles input, don't process for main view
-    }
-    
     bool shiftPressed = io.KeyShift;
     bool ctrlPressed = io.KeyCtrl;
     bool altPressed = io.KeyAlt;
     
-    // Arrow key navigation (global, not just magnifier)
-    bool leftKey = ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true);
-    bool rightKey = ImGui::IsKeyPressed(ImGuiKey_RightArrow, true);
-    bool upKey = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
-    bool downKey = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+    // Check if mini-viewers have focus and handle their KEYBOARD input only
+    // Don't block mouse input processing
+    bool miniViewerHasFocus = bitmapViewerManager && bitmapViewerManager->HasFocus();
+    if (miniViewerHasFocus) {
+        bitmapViewerManager->HandleKeyboardInput();
+        // Continue processing mouse events but skip keyboard navigation below
+    }
+    
+    // Arrow key navigation (global, not just magnifier) - skip if mini-viewer has focus
+    bool leftKey = !miniViewerHasFocus && ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true);
+    bool rightKey = !miniViewerHasFocus && ImGui::IsKeyPressed(ImGuiKey_RightArrow, true);
+    bool upKey = !miniViewerHasFocus && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
+    bool downKey = !miniViewerHasFocus && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
     
     if (leftKey || rightKey || upKey || downKey) {
         int stepX = 0, stepY = 0;
@@ -2331,30 +2333,30 @@ void MemoryVisualizer::HandleInput() {
         needsUpdate = true;
     }
     
-    // Page Up/Down navigation
-    if (ImGui::IsKeyPressed(ImGuiKey_PageUp)) {
+    // Page Up/Down navigation (skip if mini-viewer has focus)
+    if (!miniViewerHasFocus && ImGui::IsKeyPressed(ImGuiKey_PageUp)) {
         viewport.baseAddress -= viewport.height * viewport.stride;
         needsUpdate = true;
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_PageDown)) {
+    if (!miniViewerHasFocus && ImGui::IsKeyPressed(ImGuiKey_PageDown)) {
         viewport.baseAddress += viewport.height * viewport.stride;
         needsUpdate = true;
     }
     
-    // Home/End - start/end of row
-    if (ImGui::IsKeyPressed(ImGuiKey_Home)) {
+    // Home/End - start/end of row (skip if mini-viewer has focus)
+    if (!miniViewerHasFocus && ImGui::IsKeyPressed(ImGuiKey_Home)) {
         uint64_t currentRow = viewport.baseAddress / viewport.stride;
         viewport.baseAddress = currentRow * viewport.stride;
         needsUpdate = true;
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_End)) {
+    if (!miniViewerHasFocus && ImGui::IsKeyPressed(ImGuiKey_End)) {
         uint64_t currentRow = viewport.baseAddress / viewport.stride;
         viewport.baseAddress = currentRow * viewport.stride + viewport.stride - viewport.format.bytesPerPixel;
         needsUpdate = true;
     }
     
-    // Tab - cycle through pixel formats
-    if (ImGui::IsKeyPressed(ImGuiKey_Tab) && !shiftPressed && !ctrlPressed) {
+    // Tab - cycle through pixel formats (skip if mini-viewer has focus)
+    if (!miniViewerHasFocus && ImGui::IsKeyPressed(ImGuiKey_Tab) && !shiftPressed && !ctrlPressed) {
         pixelFormatIndex = (pixelFormatIndex + 1) % 11;  // Cycle through formats
         viewport.format = PixelFormat(static_cast<PixelFormat::Type>(pixelFormatIndex));
         needsUpdate = true;
@@ -2485,6 +2487,11 @@ void MemoryVisualizer::HandleInput() {
             isDragging = true;
             dragStartX = io.MousePos.x - viewport.panX;
             dragStartY = io.MousePos.y - viewport.panY;
+            
+            // Clear mini-viewer focus when clicking in main view
+            if (bitmapViewerManager) {
+                bitmapViewerManager->ClearFocus();
+            }
         }
     }
     

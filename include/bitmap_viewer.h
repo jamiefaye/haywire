@@ -149,6 +149,9 @@ public:
     // Handle keyboard input for focused viewer
     void HandleKeyboardInput();
     
+    // Clear focus from all mini-viewers
+    void ClearFocus() { focusedViewerID = -1; }
+    
 private:
     int focusedViewerID = -1;  // ID of viewer with keyboard focus
     std::vector<BitmapViewer> viewers;
