@@ -1356,6 +1356,9 @@ void MemoryVisualizer::DrawMemoryView() {
     
     ImGui::EndChild();
     
+    // Draw memory map overlay on scrollbar
+    DrawScrollbarMemoryMap();
+    
     // Draw correlation stripe at bottom if enabled
     if (showCorrelation && !currentMemory.data.empty()) {
         DrawCorrelationStripe();
@@ -1957,6 +1960,170 @@ void MemoryVisualizer::DrawMagnifier() {
     ImGui::TextDisabled("Tips: M = bring to front, Ctrl+F = search, F3/Shift+F3 = next/prev");
     
     ImGui::End();
+}
+
+void MemoryVisualizer::DrawScrollbarMemoryMap() {
+    // Draw memory map visualization on the scrollbar area
+    ImVec2 scrollAreaPos = memoryViewPos;
+    ImVec2 scrollAreaSize = memoryViewSize;
+    
+    // Don't draw if the view hasn't been initialized
+    if (scrollAreaSize.x <= 0 || scrollAreaSize.y <= 0) {
+        return;
+    }
+    
+    // Calculate scrollbar position (overlay on actual ImGui scrollbar)
+    float scrollbarX = scrollAreaPos.x + scrollAreaSize.x - 18; // ImGui scrollbar is ~18px wide
+    float scrollbarY = scrollAreaPos.y;
+    float scrollbarWidth = 16; // Leave 2px margin
+    float scrollbarHeight = scrollAreaSize.y;
+    
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    
+    // Calculate total memory range based on mode
+    uint64_t totalMemoryRange;
+    if (useVirtualAddresses && addressFlattener) {
+        totalMemoryRange = addressFlattener->GetFlatSize();
+    } else if (memoryMapper) {
+        // Find the highest mapped address
+        totalMemoryRange = 0;
+        auto regions = memoryMapper->GetRegions();
+        for (const auto& region : regions) {
+            uint64_t end = region.gpa_start + region.size;
+            if (end > totalMemoryRange) {
+                totalMemoryRange = end;
+            }
+        }
+        // Add some padding and round up
+        totalMemoryRange = (totalMemoryRange + 0x10000000) & ~0xFFFFFFF; // Round up to 256MB
+    } else {
+        totalMemoryRange = 0x100000000ULL; // Default 4GB
+    }
+    
+    // Save current clipping and set our own
+    drawList->PushClipRect(ImVec2(scrollbarX, scrollbarY), 
+                          ImVec2(scrollbarX + scrollbarWidth, scrollbarY + scrollbarHeight), 
+                          false);
+    
+    // Draw background for unmapped regions (darker, semi-transparent)
+    drawList->AddRectFilled(
+        ImVec2(scrollbarX, scrollbarY),
+        ImVec2(scrollbarX + scrollbarWidth, scrollbarY + scrollbarHeight),
+        IM_COL32(25, 25, 35, 200)
+    );
+    
+    // Draw memory regions
+    if (useVirtualAddresses && addressFlattener) {
+        // In VA mode, show flattened memory regions
+        const auto& regions = addressFlattener->GetRegions();
+        for (const auto& region : regions) {
+            float startY = scrollbarY + (region.flatStart / (float)totalMemoryRange) * scrollbarHeight;
+            float endY = scrollbarY + (region.flatEnd / (float)totalMemoryRange) * scrollbarHeight;
+            
+            // Choose color based on region name (heuristic)
+            uint32_t color;
+            if (region.name.find("[heap]") != std::string::npos) {
+                color = IM_COL32(60, 80, 60, 200);  // Greenish for heap
+            } else if (region.name.find("[stack]") != std::string::npos) {
+                color = IM_COL32(80, 80, 60, 200);  // Yellowish for stack
+            } else if (region.name.find(".so") != std::string::npos || 
+                       region.name.find(".dylib") != std::string::npos) {
+                color = IM_COL32(60, 60, 80, 200);  // Bluish for libraries
+            } else if (region.name.find("/bin/") != std::string::npos ||
+                       region.name.find("/usr/") != std::string::npos) {
+                color = IM_COL32(80, 60, 60, 200);  // Reddish for executables
+            } else {
+                color = IM_COL32(70, 70, 70, 200);  // Gray for other regions
+            }
+            
+            drawList->AddRectFilled(
+                ImVec2(scrollbarX + 1, startY),
+                ImVec2(scrollbarX + scrollbarWidth - 1, endY),
+                color
+            );
+        }
+    } else if (memoryMapper) {
+        // In PA mode, show physical memory regions from QEMU
+        auto regions = memoryMapper->GetRegions();
+        for (const auto& region : regions) {
+            float startY = scrollbarY + (region.gpa_start / (float)totalMemoryRange) * scrollbarHeight;
+            float endY = scrollbarY + ((region.gpa_start + region.size) / (float)totalMemoryRange) * scrollbarHeight;
+            
+            // Draw mapped region in bluish color
+            drawList->AddRectFilled(
+                ImVec2(scrollbarX + 1, startY),
+                ImVec2(scrollbarX + scrollbarWidth - 1, endY),
+                IM_COL32(50, 60, 90, 200)
+            );
+        }
+    }
+    // No fallback with hardcoded RAM_BASE - as requested
+    
+    // Draw changed regions if change tracking is enabled
+    if (showChangeHighlight && !changeHistory.empty()) {
+        // Accumulate all changed regions from history
+        for (const auto& frame : changeHistory) {
+            for (const auto& region : frame) {
+                // Calculate the memory address of this change
+                uint64_t changeAddr = viewport.baseAddress + 
+                                     (region.y * viewport.stride + region.x) * viewport.format.bytesPerPixel;
+                uint64_t changeSize = region.height * viewport.stride * viewport.format.bytesPerPixel;
+                
+                // Map to scrollbar position
+                float startY = scrollbarY + (changeAddr / (float)totalMemoryRange) * scrollbarHeight;
+                float endY = scrollbarY + ((changeAddr + changeSize) / (float)totalMemoryRange) * scrollbarHeight;
+                
+                // Draw change indicator - orange/yellow for recent changes
+                auto now = std::chrono::steady_clock::now();
+                auto age = std::chrono::duration<float>(now - region.detectedTime).count();
+                uint8_t alpha = (uint8_t)(255 * std::max(0.0f, 1.0f - age / 3.0f)); // Fade over 3 seconds
+                
+                if (alpha > 0) {
+                    drawList->AddRectFilled(
+                        ImVec2(scrollbarX + scrollbarWidth - 4, startY),
+                        ImVec2(scrollbarX + scrollbarWidth - 1, endY),
+                        IM_COL32(255, 200, 0, alpha)
+                    );
+                }
+            }
+        }
+    }
+    
+    // Draw current viewport position indicator (on top)
+    float viewportStartY = scrollbarY + (viewport.baseAddress / (float)totalMemoryRange) * scrollbarHeight;
+    float viewportSizeBytes = viewport.height * viewport.stride * viewport.format.bytesPerPixel;
+    float viewportHeightPx = (viewportSizeBytes / (float)totalMemoryRange) * scrollbarHeight;
+    viewportHeightPx = std::max(2.0f, viewportHeightPx); // Minimum visible size
+    
+    // Draw viewport outline
+    drawList->AddRect(
+        ImVec2(scrollbarX, viewportStartY),
+        ImVec2(scrollbarX + scrollbarWidth, viewportStartY + viewportHeightPx),
+        IM_COL32(200, 200, 255, 255), 0.0f, 0, 1.5f
+    );
+    
+    // Draw viewport fill (semi-transparent)
+    drawList->AddRectFilled(
+        ImVec2(scrollbarX + 1, viewportStartY + 1),
+        ImVec2(scrollbarX + scrollbarWidth - 1, viewportStartY + viewportHeightPx - 1),
+        IM_COL32(100, 150, 255, 60)
+    );
+    
+    // Add tick marks for major boundaries (every GB in PA mode)
+    if (!useVirtualAddresses) {
+        uint64_t tickInterval = 0x40000000; // 1GB
+        for (uint64_t addr = 0; addr < totalMemoryRange; addr += tickInterval) {
+            float y = scrollbarY + (addr / (float)totalMemoryRange) * scrollbarHeight;
+            drawList->AddLine(
+                ImVec2(scrollbarX - 2, y),
+                ImVec2(scrollbarX, y),
+                IM_COL32(150, 150, 150, 200)
+            );
+        }
+    }
+    
+    // Restore clipping
+    drawList->PopClipRect();
 }
 
 void MemoryVisualizer::DrawCorrelationStripe() {

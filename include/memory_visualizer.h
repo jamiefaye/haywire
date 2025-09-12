@@ -152,6 +152,9 @@ private:
     Autocorrelator correlator;
     void DrawCorrelationStripe();
     
+    // Scrollbar memory map
+    void DrawScrollbarMemoryMap();
+    
     // Magnifier
     void DrawMagnifier();
     int magnifierZoom;  // Magnification level (2, 4, 8, etc.)
