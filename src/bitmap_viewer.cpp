@@ -34,6 +34,18 @@ void BitmapViewerManager::CreateViewer(TypedAddress address, ImVec2 anchorPos, P
     viewer.memoryAddress = address;
     viewer.anchorPos = anchorPos;
     
+    // Initialize anchor address to the clicked memory address
+    viewer.anchorAddress = address;
+    
+    // Calculate relative position in view
+    if (memoryViewSize.x > 0 && memoryViewSize.y > 0) {
+        viewer.anchorRelativePos.x = (anchorPos.x - memoryViewPos.x) / memoryViewSize.x;
+        viewer.anchorRelativePos.y = (anchorPos.y - memoryViewPos.y) / memoryViewSize.y;
+        // Clamp to 0-1 range
+        viewer.anchorRelativePos.x = std::max(0.0f, std::min(1.0f, viewer.anchorRelativePos.x));
+        viewer.anchorRelativePos.y = std::max(0.0f, std::min(1.0f, viewer.anchorRelativePos.y));
+    }
+    
     // Use the format from the main window
     viewer.format = format;
     
@@ -328,6 +340,16 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             }
             
             ImGui::Separator();
+            // Anchor settings
+            ImGui::Text("Anchor Mode:");
+            ImGui::RadioButton("Stick to Address", (int*)&viewer.anchorMode, BitmapViewer::ANCHOR_TO_ADDRESS);
+            ImGui::RadioButton("Stick to Position", (int*)&viewer.anchorMode, BitmapViewer::ANCHOR_TO_POSITION);
+            
+            if (ImGui::Checkbox("Show Leader Line", &viewer.showLeader)) {
+                // Just toggle the visibility
+            }
+            
+            ImGui::Separator();
             // Size controls
             if (ImGui::InputInt("Width", &viewer.memWidth)) {
                 viewer.memWidth = std::max(16, viewer.memWidth);
@@ -431,6 +453,28 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
 void BitmapViewerManager::DrawLeaderLine(BitmapViewer& viewer) {
     ImDrawList* drawList = ImGui::GetForegroundDrawList();
     
+    // Update anchor position based on mode
+    if (viewer.anchorMode == BitmapViewer::ANCHOR_TO_ADDRESS) {
+        // Anchor follows a specific memory address as the view scrolls
+        if (viewer.anchorAddress.value != 0) {
+            // Convert memory address to screen position
+            ImVec2 newPos = MemoryToScreen(viewer.anchorAddress.value);
+            // Only update if within view bounds
+            if (newPos.x >= memoryViewPos.x && newPos.x <= memoryViewPos.x + memoryViewSize.x &&
+                newPos.y >= memoryViewPos.y && newPos.y <= memoryViewPos.y + memoryViewSize.y) {
+                viewer.anchorPos = newPos;
+            }
+        }
+    } else {
+        // ANCHOR_TO_POSITION: Anchor stays at relative position in view
+        viewer.anchorPos.x = memoryViewPos.x + viewer.anchorRelativePos.x * memoryViewSize.x;
+        viewer.anchorPos.y = memoryViewPos.y + viewer.anchorRelativePos.y * memoryViewSize.y;
+    }
+    
+    // Constrain anchor to main view bounds
+    viewer.anchorPos.x = std::max(memoryViewPos.x, std::min(memoryViewPos.x + memoryViewSize.x, viewer.anchorPos.x));
+    viewer.anchorPos.y = std::max(memoryViewPos.y, std::min(memoryViewPos.y + memoryViewSize.y, viewer.anchorPos.y));
+    
     // Calculate line endpoints - connect to upper-left of image
     ImVec2 imageTopLeft = viewer.imageScreenPos;
     
@@ -461,13 +505,34 @@ void BitmapViewerManager::DrawLeaderLine(BitmapViewer& viewer) {
     // Handle anchor dragging for this viewer
     if (viewer.isDraggingAnchor) {
         if (ImGui::IsMouseDragging(0)) {
-            viewer.anchorPos = ImGui::GetMousePos();
-            // Update memory address based on new position
-            // This updates where the viewer is looking in memory
-            viewer.memoryAddress = ScreenToMemoryAddress(viewer.anchorPos);
-            // Update the viewer name to reflect new address with space prefix
-            viewer.name = AddressParser::Format(viewer.memoryAddress);
-            viewer.needsUpdate = true;
+            ImVec2 newPos = ImGui::GetMousePos();
+            
+            // Constrain to main view bounds
+            newPos.x = std::max(memoryViewPos.x, std::min(memoryViewPos.x + memoryViewSize.x, newPos.x));
+            newPos.y = std::max(memoryViewPos.y, std::min(memoryViewPos.y + memoryViewSize.y, newPos.y));
+            
+            viewer.anchorPos = newPos;
+            
+            // Update based on anchor mode
+            if (viewer.anchorMode == BitmapViewer::ANCHOR_TO_ADDRESS) {
+                // Update memory address based on new position
+                viewer.anchorAddress = ScreenToMemoryAddress(viewer.anchorPos);
+                viewer.memoryAddress = viewer.anchorAddress;
+                viewer.name = AddressParser::Format(viewer.memoryAddress);
+                viewer.needsUpdate = true;
+            } else {
+                // Update relative position
+                viewer.anchorRelativePos.x = (viewer.anchorPos.x - memoryViewPos.x) / memoryViewSize.x;
+                viewer.anchorRelativePos.y = (viewer.anchorPos.y - memoryViewPos.y) / memoryViewSize.y;
+                // Clamp to 0-1 range
+                viewer.anchorRelativePos.x = std::max(0.0f, std::min(1.0f, viewer.anchorRelativePos.x));
+                viewer.anchorRelativePos.y = std::max(0.0f, std::min(1.0f, viewer.anchorRelativePos.y));
+                
+                // Also update memory address from current position
+                viewer.memoryAddress = ScreenToMemoryAddress(viewer.anchorPos);
+                viewer.name = AddressParser::Format(viewer.memoryAddress);
+                viewer.needsUpdate = true;
+            }
         } else if (ImGui::IsMouseReleased(0)) {
             viewer.isDraggingAnchor = false;
         }

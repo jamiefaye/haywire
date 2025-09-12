@@ -26,6 +26,15 @@ struct BitmapViewer {
     // Leader line anchor point (in main memory view)
     ImVec2 anchorPos = ImVec2(0, 0);
     
+    // Anchor mode
+    enum AnchorMode {
+        ANCHOR_TO_ADDRESS,    // Stick to memory address (anchor moves as view scrolls)
+        ANCHOR_TO_POSITION    // Stick to relative position in view
+    };
+    AnchorMode anchorMode = ANCHOR_TO_ADDRESS;
+    TypedAddress anchorAddress;  // The memory address the anchor is attached to
+    ImVec2 anchorRelativePos = ImVec2(0.5f, 0.5f);  // Relative position (0-1) in view
+    
     // Screen position of the image in the window
     ImVec2 imageScreenPos = ImVec2(0, 0);
     bool showLeader = true;
