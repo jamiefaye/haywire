@@ -2287,8 +2287,115 @@ void MemoryVisualizer::HandleInput() {
         return;
     }
     
-    // Check for 'm' key to lock magnifier on current mouse position
-    if (ImGui::IsKeyPressed(ImGuiKey_M) && !io.KeyShift && !io.KeyCtrl && !io.KeyAlt) {
+    // Don't process if typing in a text field
+    if (ImGui::GetIO().WantTextInput) {
+        return;
+    }
+    
+    // Check if mini-viewers have focus and handle their input
+    if (bitmapViewerManager && bitmapViewerManager->HasFocus()) {
+        bitmapViewerManager->HandleKeyboardInput();
+        return;  // Mini-viewer handles input, don't process for main view
+    }
+    
+    bool shiftPressed = io.KeyShift;
+    bool ctrlPressed = io.KeyCtrl;
+    bool altPressed = io.KeyAlt;
+    
+    // Arrow key navigation (global, not just magnifier)
+    bool leftKey = ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true);
+    bool rightKey = ImGui::IsKeyPressed(ImGuiKey_RightArrow, true);
+    bool upKey = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
+    bool downKey = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+    
+    if (leftKey || rightKey || upKey || downKey) {
+        int stepX = 0, stepY = 0;
+        int pixelStep = shiftPressed ? 4 : 1;  // Shift for 4-byte alignment
+        
+        if (leftKey) stepX = -pixelStep;
+        if (rightKey) stepX = pixelStep;
+        if (upKey) stepY = -1;
+        if (downKey) stepY = 1;
+        
+        // Move viewport
+        uint64_t newAddr = viewport.baseAddress;
+        newAddr += stepY * viewport.stride;
+        newAddr += stepX * viewport.format.bytesPerPixel;
+        
+        // Apply alignment if shift is held
+        if (shiftPressed && stepX != 0) {
+            newAddr = (newAddr / 4) * 4;  // Align to 4 bytes
+        }
+        
+        viewport.baseAddress = newAddr;
+        needsUpdate = true;
+    }
+    
+    // Page Up/Down navigation
+    if (ImGui::IsKeyPressed(ImGuiKey_PageUp)) {
+        viewport.baseAddress -= viewport.height * viewport.stride;
+        needsUpdate = true;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_PageDown)) {
+        viewport.baseAddress += viewport.height * viewport.stride;
+        needsUpdate = true;
+    }
+    
+    // Home/End - start/end of row
+    if (ImGui::IsKeyPressed(ImGuiKey_Home)) {
+        uint64_t currentRow = viewport.baseAddress / viewport.stride;
+        viewport.baseAddress = currentRow * viewport.stride;
+        needsUpdate = true;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_End)) {
+        uint64_t currentRow = viewport.baseAddress / viewport.stride;
+        viewport.baseAddress = currentRow * viewport.stride + viewport.stride - viewport.format.bytesPerPixel;
+        needsUpdate = true;
+    }
+    
+    // Tab - cycle through pixel formats
+    if (ImGui::IsKeyPressed(ImGuiKey_Tab) && !shiftPressed && !ctrlPressed) {
+        pixelFormatIndex = (pixelFormatIndex + 1) % 11;  // Cycle through formats
+        viewport.format = PixelFormat(static_cast<PixelFormat::Type>(pixelFormatIndex));
+        needsUpdate = true;
+    }
+    
+    // H - toggle hex overlay
+    if (ImGui::IsKeyPressed(ImGuiKey_H) && !shiftPressed && !ctrlPressed && !altPressed) {
+        // We'll need to add hex overlay toggle here
+        // showHexOverlay = !showHexOverlay;
+    }
+    
+    // V - toggle VA/PA mode
+    if (ImGui::IsKeyPressed(ImGuiKey_V) && !shiftPressed && !ctrlPressed && !altPressed) {
+        useVirtualAddresses = !useVirtualAddresses;
+        needsUpdate = true;
+    }
+    
+    // P - open PID selector
+    if (ImGui::IsKeyPressed(ImGuiKey_P) && !shiftPressed && !ctrlPressed && !altPressed) {
+        // We'll need to trigger PID selector here
+        // pidSelector.Show();
+    }
+    
+    // R - refresh memory
+    if (ImGui::IsKeyPressed(ImGuiKey_R) && !shiftPressed && !ctrlPressed && !altPressed) {
+        needsUpdate = true;
+    }
+    
+    // F12 - snapshot main view
+    if (ImGui::IsKeyPressed(ImGuiKey_F12)) {
+        if (ctrlPressed) {
+            // Ctrl+F12 - full window snapshot
+            // TODO: Implement full window capture
+        } else {
+            // F12 - main view only
+            ExportToPNG("haywire_snapshot.png");
+        }
+    }
+    
+    // M key - lock magnifier (existing code)
+    if (ImGui::IsKeyPressed(ImGuiKey_M) && !shiftPressed && !ctrlPressed && !altPressed) {
         if (ImGui::IsItemHovered()) {
             // Get current mouse position relative to memory view
             ImVec2 mousePos = ImGui::GetMousePos();

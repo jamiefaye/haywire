@@ -457,6 +457,11 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         ImGui::EndChild();
         ImGui::PopStyleColor();
         
+        // Track focus for keyboard input
+        if (ImGui::IsWindowFocused()) {
+            focusedViewerID = viewer.id;
+        }
+        
         // Check if window is being dragged
         if (ImGui::IsWindowFocused() && ImGui::IsMouseDragging(0)) {
             if (!viewer.isDragging && ImGui::IsWindowHovered()) {
@@ -1352,6 +1357,109 @@ void BitmapViewerManager::ConvertMemoryToCharPixels(BitmapViewer& viewer, const 
                 rotatingBit >>= 1;  // Move to next bit
             }
         }
+    }
+}
+
+bool BitmapViewerManager::HasFocus() const {
+    return focusedViewerID != -1;
+}
+
+void BitmapViewerManager::HandleKeyboardInput() {
+    if (focusedViewerID == -1) return;
+    
+    // Find the focused viewer
+    BitmapViewer* focusedViewer = nullptr;
+    for (auto& viewer : viewers) {
+        if (viewer.id == focusedViewerID) {
+            focusedViewer = &viewer;
+            break;
+        }
+    }
+    
+    if (!focusedViewer || !focusedViewer->active) {
+        focusedViewerID = -1;
+        return;
+    }
+    
+    // Handle keyboard navigation for the focused mini-viewer
+    ImGuiIO& io = ImGui::GetIO();
+    bool shiftPressed = io.KeyShift;
+    
+    // Calculate movement based on viewer's pixel format
+    int moveX = 1;
+    int moveY = 1;
+    
+    if (shiftPressed) {
+        // Shift for 4-byte alignment
+        moveX = 4;
+        moveY = focusedViewer->stride;  // Move by full row
+    } else {
+        // Normal movement by pixel size
+        moveX = focusedViewer->format.bytesPerPixel;
+        moveY = focusedViewer->stride;
+    }
+    
+    bool needsUpdate = false;
+    uint64_t oldAddr = focusedViewer->memoryAddress.value;
+    
+    // Arrow keys
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
+        if (focusedViewer->memoryAddress.value >= moveX) {
+            focusedViewer->memoryAddress.value -= moveX;
+            needsUpdate = true;
+        }
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
+        focusedViewer->memoryAddress.value += moveX;
+        needsUpdate = true;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+        if (focusedViewer->memoryAddress.value >= moveY) {
+            focusedViewer->memoryAddress.value -= moveY;
+            needsUpdate = true;
+        }
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+        focusedViewer->memoryAddress.value += moveY;
+        needsUpdate = true;
+    }
+    
+    // Page Up/Down
+    int pageSize = focusedViewer->memHeight * focusedViewer->stride;
+    if (ImGui::IsKeyPressed(ImGuiKey_PageUp)) {
+        if (focusedViewer->memoryAddress.value >= pageSize) {
+            focusedViewer->memoryAddress.value -= pageSize;
+            needsUpdate = true;
+        }
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_PageDown)) {
+        focusedViewer->memoryAddress.value += pageSize;
+        needsUpdate = true;
+    }
+    
+    // Home/End keys - move to start/end of current row
+    if (ImGui::IsKeyPressed(ImGuiKey_Home)) {
+        // Move to start of row
+        uint64_t rowStart = (focusedViewer->memoryAddress.value / focusedViewer->stride) * focusedViewer->stride;
+        if (focusedViewer->memoryAddress.value != rowStart) {
+            focusedViewer->memoryAddress.value = rowStart;
+            needsUpdate = true;
+        }
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_End)) {
+        // Move to end of row
+        uint64_t rowStart = (focusedViewer->memoryAddress.value / focusedViewer->stride) * focusedViewer->stride;
+        uint64_t rowEnd = rowStart + focusedViewer->stride - focusedViewer->format.bytesPerPixel;
+        if (focusedViewer->memoryAddress.value != rowEnd) {
+            focusedViewer->memoryAddress.value = rowEnd;
+            needsUpdate = true;
+        }
+    }
+    
+    if (needsUpdate) {
+        // Update the viewer name with new address
+        focusedViewer->name = AddressParser::Format(focusedViewer->memoryAddress);
+        focusedViewer->needsUpdate = true;
     }
 }
 

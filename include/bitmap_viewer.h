@@ -140,7 +140,17 @@ public:
         return false;
     }
     
+    // Check if any viewer has keyboard focus
+    bool HasFocus() const;
+    
+    // Get the focused viewer ID (-1 if none)
+    int GetFocusedViewerID() const { return focusedViewerID; }
+    
+    // Handle keyboard input for focused viewer
+    void HandleKeyboardInput();
+    
 private:
+    int focusedViewerID = -1;  // ID of viewer with keyboard focus
     std::vector<BitmapViewer> viewers;
     int nextId = 1;
     
