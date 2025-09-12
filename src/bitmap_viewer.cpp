@@ -429,8 +429,9 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                 viewer.needsUpdate = true;
                 // Resize pixel buffer
                 viewer.pixels.resize(viewer.memWidth * viewer.memHeight);
-                // Update window size to match
-                viewer.windowSize.x = viewer.memWidth + 10;  // Add padding
+                // Update window size to match (minimal padding for small sizes)
+                int padX = viewer.memWidth < 50 ? 5 : 10;
+                viewer.windowSize.x = viewer.memWidth + padX;
                 viewer.forceResize = true;  // Force window resize on next frame
             }
             ImGui::SetNextItemWidth(90);
@@ -439,8 +440,9 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                 viewer.needsUpdate = true;
                 // Resize pixel buffer  
                 viewer.pixels.resize(viewer.memWidth * viewer.memHeight);
-                // Update window size to match
-                viewer.windowSize.y = viewer.memHeight + 35;  // Add title bar + padding
+                // Update window size to match (minimal padding for small sizes)
+                int padY = viewer.memHeight < 50 ? 25 : 35;  // Need room for title bar
+                viewer.windowSize.y = viewer.memHeight + padY;
                 viewer.forceResize = true;  // Force window resize on next frame
             }
             
@@ -516,8 +518,8 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         if (viewer.isResizing) {
             if (ImGui::IsMouseDragging(0)) {
                 ImVec2 newSize = ImGui::GetMousePos();
-                viewer.windowSize.x = std::max(100.0f, newSize.x - viewer.windowPos.x);
-                viewer.windowSize.y = std::max(100.0f, newSize.y - viewer.windowPos.y);
+                viewer.windowSize.x = std::max(40.0f, newSize.x - viewer.windowPos.x);  // Allow smaller windows
+                viewer.windowSize.y = std::max(40.0f, newSize.y - viewer.windowPos.y);  // Minimum for title bar
                 // The actual dimension update happens above when we detect size change
             } else {
                 viewer.isResizing = false;
@@ -1437,9 +1439,11 @@ void BitmapViewerManager::HandleKeyboardInput() {
             focusedViewer->pixels.resize(focusedViewer->memWidth * focusedViewer->memHeight);
             // Mark for texture update
             focusedViewer->needsUpdate = true;
-            // Update window size to match
-            focusedViewer->windowSize.x = focusedViewer->memWidth + 10;
-            focusedViewer->windowSize.y = focusedViewer->memHeight + 35;
+            // Update window size to match (minimal padding for small sizes)
+            int padX = focusedViewer->memWidth < 50 ? 5 : 10;
+            int padY = focusedViewer->memHeight < 50 ? 25 : 35;  // Need room for title bar
+            focusedViewer->windowSize.x = focusedViewer->memWidth + padX;
+            focusedViewer->windowSize.y = focusedViewer->memHeight + padY;
             focusedViewer->forceResize = true;
         }
         return;  // Don't process normal navigation when Ctrl is held
