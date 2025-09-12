@@ -153,23 +153,26 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         // Check if window was resized by dragging
         if (newWindowSize.x != viewer.windowSize.x || newWindowSize.y != viewer.windowSize.y) {
             // Window was resized - update memory dimensions to match
-            int contentWidth = (int)(newWindowSize.x - 10);  // Padding
-            int contentHeight = (int)(newWindowSize.y - 35); // Title bar + padding
-            
-            // Update viewer dimensions
-            viewer.memWidth = std::max(16, contentWidth);
-            viewer.memHeight = std::max(16, contentHeight);
-            
-            // Update stride based on format
-            if (viewer.format.type == PixelFormat::BINARY) {
-                viewer.stride = (viewer.memWidth + 7) / 8;  // Binary: bits to bytes
-            } else {
-                viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+            // For very small windows, don't resize the memory dimensions
+            if (newWindowSize.x > 50 && newWindowSize.y > 50) {
+                int contentWidth = (int)(newWindowSize.x - 10);  // Padding
+                int contentHeight = (int)(newWindowSize.y - 35); // Title bar + padding
+                
+                // Update viewer dimensions (allow down to 1 pixel)
+                viewer.memWidth = std::max(1, contentWidth);
+                viewer.memHeight = std::max(1, contentHeight);
+                
+                // Update stride based on format
+                if (viewer.format.type == PixelFormat::BINARY) {
+                    viewer.stride = (viewer.memWidth + 7) / 8;  // Binary: bits to bytes
+                } else {
+                    viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+                }
+                viewer.needsUpdate = true;
+                
+                // Resize pixel buffer
+                viewer.pixels.resize(viewer.memWidth * viewer.memHeight);
             }
-            viewer.needsUpdate = true;
-            
-            // Resize pixel buffer
-            viewer.pixels.resize(viewer.memWidth * viewer.memHeight);
         }
         viewer.windowSize = newWindowSize;
         
