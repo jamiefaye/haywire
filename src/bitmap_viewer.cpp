@@ -29,13 +29,26 @@ BitmapViewerManager::~BitmapViewerManager() {
 void BitmapViewerManager::CreateViewer(TypedAddress address, ImVec2 anchorPos, PixelFormat format) {
     BitmapViewer viewer;
     viewer.id = nextId++;
-    // Use address as the name with proper space prefix
-    viewer.name = AddressParser::Format(address);
-    viewer.memoryAddress = address;
-    viewer.anchorPos = anchorPos;
     
     // Initialize anchor address to the clicked memory address
     viewer.anchorAddress = address;
+    viewer.anchorPos = anchorPos;
+    
+    // Center the viewer around the clicked point
+    // Calculate offset to center the anchor in the viewer
+    int centerOffsetX = viewer.memWidth / 2;
+    int centerOffsetY = viewer.memHeight / 2;
+    int centerOffset = centerOffsetY * viewer.stride + centerOffsetX * format.bytesPerPixel;
+    
+    // Adjust the viewer's base address to center on the anchor
+    uint64_t viewerBaseAddr = address.value;
+    if (viewerBaseAddr >= centerOffset) {
+        viewerBaseAddr -= centerOffset;
+    }
+    viewer.memoryAddress = TypedAddress(viewerBaseAddr, address.space);
+    
+    // Use adjusted address as the name with proper space prefix
+    viewer.name = AddressParser::Format(viewer.memoryAddress);
     
     // Calculate relative position in view
     if (memoryViewSize.x > 0 && memoryViewSize.y > 0) {
