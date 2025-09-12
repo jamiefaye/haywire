@@ -252,6 +252,8 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         float buttonX = ImGui::GetWindowWidth() - 25;
         
         // Settings popup
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(200, 0), ImVec2(220, FLT_MAX));
         if (ImGui::BeginPopup("ViewerSettings")) {
             ImGui::Text("Viewer Settings");
             ImGui::Separator();
@@ -268,6 +270,7 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             ss << std::hex << viewer.memoryAddress.value;
             strcpy(addrBuf, ss.str().c_str());
             
+            ImGui::SetNextItemWidth(150);
             if (ImGui::InputText("Address", addrBuf, sizeof(addrBuf), 
                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
                 // Parse using basic notation (TODO: use AddressParser)
@@ -381,6 +384,7 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             
             ImGui::Separator();
             // Size controls
+            ImGui::SetNextItemWidth(100);
             if (ImGui::InputInt("Width", &viewer.memWidth)) {
                 viewer.memWidth = std::max(16, viewer.memWidth);
                 // Update stride based on format
@@ -396,6 +400,7 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                 viewer.windowSize.x = viewer.memWidth + 10;  // Add padding
                 viewer.forceResize = true;  // Force window resize on next frame
             }
+            ImGui::SetNextItemWidth(100);
             if (ImGui::InputInt("Height", &viewer.memHeight)) {
                 viewer.memHeight = std::max(16, viewer.memHeight);
                 viewer.needsUpdate = true;
@@ -408,6 +413,7 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             
             ImGui::EndPopup();
         }
+        ImGui::PopStyleVar();  // Pop WindowPadding
         
         // Close button on the right
         ImGui::SameLine(buttonX);
