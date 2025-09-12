@@ -1431,22 +1431,16 @@ void BitmapViewerManager::HandleKeyboardInput() {
         }
         
         if (moved) {
-            // Update the anchor address based on new position
+            // Calculate the current offset between anchor and viewer base BEFORE updating
+            int64_t currentOffset = focusedViewer->anchorAddress.value - focusedViewer->memoryAddress.value;
+            
+            // Now update the anchor address based on new position
             focusedViewer->anchorAddress = ScreenToMemoryAddress(focusedViewer->anchorPos);
             focusedViewer->anchorMode = BitmapViewer::ANCHOR_TO_ADDRESS;
             
-            // Update the viewer's memory address to center on the new anchor
-            // Calculate offset to center the anchor in the viewer
-            int centerOffsetX = focusedViewer->memWidth / 2;
-            int centerOffsetY = focusedViewer->memHeight / 2;
-            int centerOffset = centerOffsetY * focusedViewer->stride + centerOffsetX * focusedViewer->format.bytesPerPixel;
-            
-            // Set viewer base address centered on anchor
-            uint64_t viewerBaseAddr = focusedViewer->anchorAddress.value;
-            if (viewerBaseAddr >= centerOffset) {
-                viewerBaseAddr -= centerOffset;
-            }
-            focusedViewer->memoryAddress = TypedAddress(viewerBaseAddr, focusedViewer->anchorAddress.space);
+            // Apply the same offset to maintain relative position
+            uint64_t newViewerAddr = focusedViewer->anchorAddress.value - currentOffset;
+            focusedViewer->memoryAddress = TypedAddress(newViewerAddr, focusedViewer->anchorAddress.space);
             focusedViewer->name = AddressParser::Format(focusedViewer->memoryAddress);
             focusedViewer->needsUpdate = true;  // This will trigger texture update
             
