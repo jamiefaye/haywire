@@ -358,7 +358,8 @@ int main(int argc, char** argv) {
         
         // Main Haywire window with classic layout (draw first so connection appears on top)
         if (show_memory_view) {
-            ImGui::SetNextWindowSize(ImVec2(1200, 700), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(1200, 800), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowPos(ImVec2(50, 50), ImGuiCond_FirstUseEver);
             ImGui::Begin("Haywire Memory Visualizer", &show_memory_view, 
                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
             
@@ -384,6 +385,8 @@ int main(int argc, char** argv) {
             
             // Bottom section with two panes
             float availableHeight = ImGui::GetContentRegionAvail().y;
+            // Ensure minimum height to prevent overflow on first frame
+            availableHeight = std::max(100.0f, availableHeight);
             
             if (show_overview) {
                 // Left pane: Memory Sections
