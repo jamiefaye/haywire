@@ -175,7 +175,7 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         
         // Custom title bar with controls
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
-        ImGui::BeginChild("TitleBar", ImVec2(0, 25), true);
+        ImGui::BeginChild("TitleBar", ImVec2(0, 25), true, ImGuiWindowFlags_NoScrollbar);
         
         // Settings button first so it's always accessible
         if (ImGui::SmallButton("⚙")) {
