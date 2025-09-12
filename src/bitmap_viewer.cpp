@@ -1411,24 +1411,38 @@ void BitmapViewerManager::HandleKeyboardInput() {
     // Alt+Arrow keys move the anchor point
     if (altPressed) {
         float step = shiftPressed ? 10.0f : 1.0f;  // Shift for larger steps
+        bool moved = false;
         
         if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
             focusedViewer->anchorPos.x -= step;
+            moved = true;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
             focusedViewer->anchorPos.x += step;
+            moved = true;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
             focusedViewer->anchorPos.y -= step;
+            moved = true;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
             focusedViewer->anchorPos.y += step;
+            moved = true;
         }
         
-        // Update the anchor address based on new position
-        // This will need the ScreenToMemoryAddress function from manager
-        focusedViewer->anchorAddress = ScreenToMemoryAddress(focusedViewer->anchorPos);
-        focusedViewer->anchorMode = BitmapViewer::ANCHOR_TO_ADDRESS;
+        if (moved) {
+            // Update the anchor address based on new position
+            focusedViewer->anchorAddress = ScreenToMemoryAddress(focusedViewer->anchorPos);
+            focusedViewer->anchorMode = BitmapViewer::ANCHOR_TO_ADDRESS;
+            
+            // Also update relative position for proper leader line drawing
+            if (memoryViewSize.x > 0 && memoryViewSize.y > 0) {
+                focusedViewer->anchorRelativePos.x = (focusedViewer->anchorPos.x - memoryViewPos.x) / memoryViewSize.x;
+                focusedViewer->anchorRelativePos.y = (focusedViewer->anchorPos.y - memoryViewPos.y) / memoryViewSize.y;
+                focusedViewer->anchorRelativePos.x = std::max(0.0f, std::min(1.0f, focusedViewer->anchorRelativePos.x));
+                focusedViewer->anchorRelativePos.y = std::max(0.0f, std::min(1.0f, focusedViewer->anchorRelativePos.y));
+            }
+        }
         return;  // Don't process other shortcuts
     }
     
