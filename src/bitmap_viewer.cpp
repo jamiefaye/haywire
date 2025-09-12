@@ -53,7 +53,12 @@ void BitmapViewerManager::CreateViewer(TypedAddress address, ImVec2 anchorPos, P
     }
     
     // Initialize stride based on the format
-    viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+    if (viewer.format.type == PixelFormat::BINARY) {
+        // For binary, stride is width/8 (bits to bytes)
+        viewer.stride = (viewer.memWidth + 7) / 8;  // Round up
+    } else {
+        viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+    }
     
     // Position window offset from anchor
     viewer.windowPos = ImVec2(anchorPos.x + 100, anchorPos.y - 50);
@@ -125,7 +130,12 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             // Update viewer dimensions
             viewer.memWidth = std::max(16, contentWidth);
             viewer.memHeight = std::max(16, contentHeight);
-            viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;  // Stride = width * bytes per pixel
+            // Update stride based on format
+            if (viewer.format.type == PixelFormat::BINARY) {
+                viewer.stride = (viewer.memWidth + 7) / 8;  // Binary: bits to bytes
+            } else {
+                viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+            }
             viewer.needsUpdate = true;
             
             // Resize pixel buffer
@@ -193,7 +203,12 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                         }
                         viewer.format = PixelFormat(newType);
                         // Update stride when format changes
-                        viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+                        // Update stride based on new format
+                        if (viewer.format.type == PixelFormat::BINARY) {
+                            viewer.stride = (viewer.memWidth + 7) / 8;  // Binary: bits to bytes  
+                        } else {
+                            viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+                        }
                         viewer.needsUpdate = true;
                     }
                 }
@@ -580,6 +595,10 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
     } else if (viewer.format.type == PixelFormat::CHAR_8BIT) {
         // For CHAR format: each byte becomes 6x8 pixels
         ConvertMemoryToCharPixels(viewer, memPtr, totalBytes);
+        return;
+    } else if (viewer.format.type == PixelFormat::BINARY) {
+        // For BINARY format: each byte becomes 8 pixels (one per bit)
+        ConvertMemoryToBinaryPixels(viewer, memPtr, totalBytes);
         return;
     }
     
@@ -970,6 +989,29 @@ void BitmapViewerManager::ConvertMemoryToSplitPixels(BitmapViewer& viewer, const
                     }
                 }
             }
+        }
+    }
+}
+
+void BitmapViewerManager::ConvertMemoryToBinaryPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes) {
+    // For binary display, each byte becomes 8 pixels (one per bit)
+    viewer.pixels.clear();
+    viewer.pixels.resize(viewer.memWidth * viewer.memHeight, 0xFF000000);
+    
+    // Calculate how many bytes we need
+    size_t totalPixels = viewer.memWidth * viewer.memHeight;
+    size_t bytesNeeded = (totalPixels + 7) / 8;  // Round up
+    
+    // Process each pixel position
+    for (size_t pixelIdx = 0; pixelIdx < totalPixels; pixelIdx++) {
+        size_t byteIdx = pixelIdx / 8;
+        int bitIdx = 7 - (pixelIdx % 8);  // MSB first
+        
+        if (byteIdx < totalBytes) {
+            uint8_t byte = memPtr[byteIdx];
+            uint8_t bit = (byte >> bitIdx) & 1;
+            uint8_t value = bit ? 255 : 0;
+            viewer.pixels[pixelIdx] = PackRGBA(value, value, value);
         }
     }
 }

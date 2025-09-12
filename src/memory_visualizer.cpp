@@ -176,7 +176,7 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
         
         if (elapsed >= 1.0f / refreshRate) {
             // Do a simple, direct read - no threading
-            size_t size = viewport.stride * viewport.height;
+            size_t size = viewport.stride * viewport.format.bytesPerPixel * viewport.height;
             uint64_t addr = viewport.baseAddress;
             
             std::vector<uint8_t> buffer;
@@ -233,8 +233,9 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                             changedBytes++;
                             
                             // Calculate X,Y position in the viewport
-                            int x = (i % viewport.stride) / viewport.format.bytesPerPixel;
-                            int y = i / viewport.stride;
+                            size_t strideBytes = viewport.stride * viewport.format.bytesPerPixel;
+                            int x = (i % strideBytes) / viewport.format.bytesPerPixel;
+                            int y = i / strideBytes;
                             
                             // Add to current frame's changes
                             bool foundAdjacentRegion = false;
@@ -306,7 +307,7 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                 
                 currentMemory.address = addr;
                 currentMemory.data = std::move(buffer);
-                currentMemory.stride = viewport.stride;
+                currentMemory.stride = viewport.stride * viewport.format.bytesPerPixel;
                 
                 // Skip texture updates if memory is thrashing
                 if (volatileCount < 20) {  // Only update if not excessively volatile
@@ -321,27 +322,18 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                 
                 // std::cerr << "Direct read and texture update at " << std::hex << addr << std::dec << "\n";
             } else {
-                // Failed to read - clear the display to show invalid memory
-                // Fill with a pattern to indicate unreadable memory
-                size_t size = viewport.stride * viewport.height;
-                std::vector<uint8_t> invalidPattern(size);
-                
-                // Create a checkerboard pattern to indicate invalid memory
-                for (size_t i = 0; i < size; i++) {
-                    int x = (i % viewport.stride) / viewport.format.bytesPerPixel;
-                    int y = i / viewport.stride;
-                    // Checkerboard pattern
-                    invalidPattern[i] = ((x / 8) + (y / 8)) % 2 ? 0x40 : 0x20;
-                }
+                // Failed to read - fill with black to show unmapped area
+                size_t size = viewport.stride * viewport.format.bytesPerPixel * viewport.height;
+                std::vector<uint8_t> blackData(size, 0);  // All zeros = black
                 
                 currentMemory.address = addr;
-                currentMemory.data = std::move(invalidPattern);
-                currentMemory.stride = viewport.stride;
+                currentMemory.data = std::move(blackData);
+                currentMemory.stride = viewport.stride * viewport.format.bytesPerPixel;
                 
                 // Clear change history since we have no valid data
                 changeHistory.clear();
                 
-                UpdateTexture();  // Update to show the invalid pattern
+                UpdateTexture();  // Update to show black
                 lastRefresh = now;
             }
         }
@@ -1892,7 +1884,7 @@ void MemoryVisualizer::DrawMagnifier() {
     
     // Get the pixel value at center (keep existing format-specific display)
     if (!currentMemory.data.empty()) {
-        size_t offset = srcY * viewport.stride + srcX * viewport.format.bytesPerPixel;
+        size_t offset = (srcY * viewport.stride + srcX) * viewport.format.bytesPerPixel;
         if (offset < currentMemory.data.size()) {
             switch (viewport.format.type) {
                 case PixelFormat::RGB888:
@@ -2214,7 +2206,7 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToPixels(const MemoryBlock&
     for (size_t y = 0; y < viewport.height; ++y) {
         for (size_t x = 0; x < viewport.width; ++x) {
             size_t pixelIndex = y * viewport.width + x;
-            size_t memIndex = y * viewport.stride + x * viewport.format.bytesPerPixel;
+            size_t memIndex = (y * viewport.stride + x) * viewport.format.bytesPerPixel;
             
             if (memIndex >= memory.data.size()) {
                 continue;
@@ -2302,14 +2294,20 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToPixels(const MemoryBlock&
                     }
                     break;
                     
-                case PixelFormat::BINARY:
-                    if (memIndex / 8 < memory.data.size()) {
-                        uint8_t byte = memory.data[memIndex / 8];
-                        uint8_t bit = (byte >> (7 - (memIndex % 8))) & 1;
+                case PixelFormat::BINARY: {
+                    // For binary: each byte becomes 8 pixels (one per bit)
+                    // x coordinate tells us which bit within the byte
+                    size_t byteIndex = (y * viewport.stride + x) / 8;
+                    int bitIndex = 7 - ((y * viewport.stride + x) % 8);  // MSB first
+                    
+                    if (byteIndex < memory.data.size()) {
+                        uint8_t byte = memory.data[byteIndex];
+                        uint8_t bit = (byte >> bitIndex) & 1;
                         uint8_t value = bit ? 255 : 0;
                         pixels[pixelIndex] = PackRGBA(value, value, value);
                     }
                     break;
+                }
                     
                 case PixelFormat::CUSTOM:
                     // Custom format - just use grayscale for now
@@ -2340,7 +2338,7 @@ uint32_t MemoryVisualizer::GetPixelAt(int x, int y) const {
 }
 
 uint64_t MemoryVisualizer::GetAddressAt(int x, int y) const {
-    size_t offset = y * viewport.stride + x * viewport.format.bytesPerPixel;
+    size_t offset = (y * viewport.stride + x) * viewport.format.bytesPerPixel;
     return viewport.baseAddress + offset;
 }
 
@@ -2953,7 +2951,7 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToSplitPixels(const MemoryB
     // Process each pixel
     for (size_t y = 0; y < viewport.height; y++) {
         for (size_t x = 0; x < (size_t)expandedWidth; x++) {
-            size_t offset = y * viewport.stride + x * componentsPerPixel;
+            size_t offset = (y * viewport.stride + x) * componentsPerPixel;
             
             if (offset + componentsPerPixel > memory.data.size()) break;
             
