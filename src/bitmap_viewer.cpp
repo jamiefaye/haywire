@@ -497,18 +497,26 @@ void BitmapViewerManager::DrawLeaderLine(BitmapViewer& viewer) {
     if (viewer.anchorMode == BitmapViewer::ANCHOR_TO_ADDRESS) {
         // Anchor follows a specific memory address as the view scrolls
         if (viewer.anchorAddress.value != 0) {
-            // Convert memory address to screen position
+            // Always update anchor position to track the address
+            // This makes the anchor move with scrolling
             ImVec2 newPos = MemoryToScreen(viewer.anchorAddress.value);
-            // Only update if within view bounds
-            if (newPos.x >= memoryViewPos.x && newPos.x <= memoryViewPos.x + memoryViewSize.x &&
-                newPos.y >= memoryViewPos.y && newPos.y <= memoryViewPos.y + memoryViewSize.y) {
-                viewer.anchorPos = newPos;
-            }
+            viewer.anchorPos = newPos;
+            
+            // The constrain below will keep it within bounds
         }
     } else {
         // ANCHOR_TO_POSITION: Anchor stays at relative position in view
         viewer.anchorPos.x = memoryViewPos.x + viewer.anchorRelativePos.x * memoryViewSize.x;
         viewer.anchorPos.y = memoryViewPos.y + viewer.anchorRelativePos.y * memoryViewSize.y;
+        
+        // Update the memory address to match what's at this relative position
+        // This ensures the mini viewer shows the memory at the current anchor position
+        TypedAddress newAddress = ScreenToMemoryAddress(viewer.anchorPos);
+        if (newAddress.value != viewer.memoryAddress.value) {
+            viewer.memoryAddress = newAddress;
+            viewer.name = AddressParser::Format(viewer.memoryAddress);
+            viewer.needsUpdate = true;
+        }
     }
     
     // Constrain anchor to main view bounds
