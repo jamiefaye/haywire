@@ -584,10 +584,9 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     // Get available size (already constrained by parent)
     ImVec2 availSize = ImGui::GetContentRegionAvail();
     
-    // Constrain height to prevent overflow on first frame
-    // The parent window is typically 800 high, with 60 for control bar
-    // Need to account for formula bar and other elements
-    float maxHeight = std::min(400.0f, std::max(50.0f, availSize.y));
+    // Use most of available height, leaving some margin for safety
+    // The formula bar takes about 30-40 pixels
+    float maxHeight = std::max(50.0f, availSize.y - 40.0f);
     
     // Ensure we have enough space
     if (maxHeight < 50) {
@@ -973,8 +972,8 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     
     // Vertical slider
     ImVec2 availSize = ImGui::GetContentRegionAvail();
-    // Less reserved height needed since info moved to formula bar
-    float reservedHeight = 50;
+    // Reserve minimal space at bottom for any remaining UI
+    float reservedHeight = 10;
     float sliderHeight = std::max(100.0f, availSize.y - reservedHeight);  // Minimum height for slider
     
     // Convert address to vertical slider position (inverted - top is 0)
