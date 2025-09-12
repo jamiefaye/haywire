@@ -511,6 +511,8 @@ void BitmapViewerManager::DrawLeaderLine(BitmapViewer& viewer) {
         if (viewer.anchorAddress.value != 0) {
             // Always update anchor position to track the address
             // This makes the anchor move with scrolling and can go off-screen
+            // Note: anchorAddress might be in a different space than viewport
+            // For now, assume they're in the same space (both Physical or both Crunched)
             ImVec2 newPos = MemoryToScreen(viewer.anchorAddress.value);
             viewer.anchorPos = newPos;
             // Don't constrain - let it scroll off screen
@@ -947,8 +949,24 @@ void BitmapViewerManager::HandleContextMenu(uint64_t clickAddress, ImVec2 clickP
 }
 
 ImVec2 BitmapViewerManager::MemoryToScreen(uint64_t address) {
-    // TODO: Convert memory address to screen position based on current viewport
-    return ImVec2(100, 100);
+    // Convert memory address to screen position based on current viewport
+    // The address passed in should be in the same space as viewportBaseAddress
+    
+    // Calculate offset from viewport base
+    int64_t offset = (int64_t)address - (int64_t)viewportBaseAddress;
+    
+    // Convert byte offset to pixel offset
+    int64_t pixelOffset = offset / viewportBytesPerPixel;
+    
+    // Convert to x,y coordinates
+    int64_t y = pixelOffset / viewportWidth;
+    int64_t x = pixelOffset % viewportWidth;
+    
+    // Scale to screen coordinates
+    float screenX = memoryViewPos.x + (x * memoryViewSize.x / viewportWidth);
+    float screenY = memoryViewPos.y + (y * memoryViewSize.y / viewportHeight);
+    
+    return ImVec2(screenX, screenY);
 }
 
 TypedAddress BitmapViewerManager::ScreenToMemoryAddress(ImVec2 screenPos) {
