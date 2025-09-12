@@ -122,15 +122,16 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
     
     // Set window position and size
     ImGui::SetNextWindowPos(viewer.windowPos, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(viewer.windowSize, ImGuiCond_FirstUseEver);
+    
+    // Use forced resize when user changes size in settings, otherwise first use only
+    ImGuiCond sizeCondition = viewer.forceResize ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+    ImGui::SetNextWindowSize(viewer.windowSize, sizeCondition);
+    if (viewer.forceResize) {
+        viewer.forceResize = false;  // Clear the flag after using it
+    }
     
     // Create window with custom title bar
     std::string windowTitle = viewer.name + "###BitmapViewer" + std::to_string(viewer.id);
-    
-    
-    // Set initial window size based on memory dimensions
-    ImVec2 desiredWindowSize(viewer.memWidth + 10, viewer.memHeight + 35);
-    ImGui::SetNextWindowSize(desiredWindowSize, ImGuiCond_FirstUseEver);
     
     if (ImGui::Begin(windowTitle.c_str(), &viewer.active, flags)) {
         // Get window position for leader line
@@ -391,12 +392,18 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                 viewer.needsUpdate = true;
                 // Resize pixel buffer
                 viewer.pixels.resize(viewer.memWidth * viewer.memHeight);
+                // Update window size to match
+                viewer.windowSize.x = viewer.memWidth + 10;  // Add padding
+                viewer.forceResize = true;  // Force window resize on next frame
             }
             if (ImGui::InputInt("Height", &viewer.memHeight)) {
                 viewer.memHeight = std::max(16, viewer.memHeight);
                 viewer.needsUpdate = true;
                 // Resize pixel buffer  
                 viewer.pixels.resize(viewer.memWidth * viewer.memHeight);
+                // Update window size to match
+                viewer.windowSize.y = viewer.memHeight + 35;  // Add title bar + padding
+                viewer.forceResize = true;  // Force window resize on next frame
             }
             if (ImGui::InputInt("Stride", &viewer.stride)) {
                 viewer.needsUpdate = true;

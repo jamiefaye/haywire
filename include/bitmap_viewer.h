@@ -58,6 +58,7 @@ struct BitmapViewer {
     bool isResizing = false;
     bool isDraggingAnchor = false;
     bool isPinned = false;  // When pinned, window goes to background
+    bool forceResize = false;  // Force window resize on next frame
     
     // For dragging
     ImVec2 dragOffset;
