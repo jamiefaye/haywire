@@ -584,8 +584,10 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     // Get available size (already constrained by parent)
     ImVec2 availSize = ImGui::GetContentRegionAvail();
     
-    // Use full available height (minus formula bar)
-    float maxHeight = std::max(50.0f, availSize.y);
+    // Constrain height to prevent overflow on first frame
+    // The parent window is typically 800 high, with 60 for control bar
+    // This leaves roughly 740 pixels, but we need to be conservative
+    float maxHeight = std::min(600.0f, std::max(50.0f, availSize.y));
     
     // Ensure we have enough space
     if (maxHeight < 50) {
