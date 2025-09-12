@@ -979,7 +979,8 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     ImVec2 availSize = ImGui::GetContentRegionAvail();
     // Calculate slider height: total available minus two 30px buttons and ImGui spacing
     // - button (30px) + ImGui spacing (~8px) + slider + ImGui spacing (~8px) + button (30px)
-    float sliderHeight = std::max(100.0f, availSize.y - 76.0f);  // Conservative to ensure buttons fit
+    // Adding extra 80px as requested to make scrollbar shorter
+    float sliderHeight = std::max(100.0f, availSize.y - 156.0f);  // 76 + 80 extra
     
     // Debug output
     static int sliderFrameCount = 0;
