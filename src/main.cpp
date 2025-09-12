@@ -322,6 +322,10 @@ int main(int argc, char** argv) {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         
+        // Handle bitmap viewer anchor input before any windows are created
+        // This ensures anchors can be dragged even when over other UI elements
+        visualizer.HandleBitmapViewerInputEarly();
+        
         if (ImGui::BeginMainMenuBar()) {
             if (ImGui::BeginMenu("File")) {
                 if (ImGui::MenuItem("Connect to QEMU")) {

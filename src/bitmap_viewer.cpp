@@ -88,8 +88,17 @@ void BitmapViewerManager::RemoveViewer(int id) {
     }
 }
 
+void BitmapViewerManager::HandleAnchorInputEarly() {
+    // Handle anchor input at the very beginning of the frame
+    // This must be called before ANY ImGui windows are created
+    for (auto& viewer : viewers) {
+        if (viewer.active && viewer.showLeader) {
+            HandleAnchorInput(viewer);
+        }
+    }
+}
+
 void BitmapViewerManager::DrawViewers() {
-    
     // Draw all active viewers
     for (auto& viewer : viewers) {
         if (viewer.active) {
@@ -347,9 +356,6 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                 // Resize pixel buffer  
                 viewer.pixels.resize(viewer.memWidth * viewer.memHeight);
             }
-            if (ImGui::InputInt("Stride", &viewer.stride)) {
-                viewer.needsUpdate = true;
-            }
             
             ImGui::EndPopup();
         }
@@ -428,6 +434,42 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
     ImGui::End();
 }
 
+void BitmapViewerManager::HandleAnchorInput(BitmapViewer& viewer) {
+    // Handle anchor input early in the frame to prevent other UI from stealing mouse events
+    ImVec2 mousePos = ImGui::GetMousePos();
+    float dist = std::sqrt(std::pow(mousePos.x - viewer.anchorPos.x, 2) + 
+                          std::pow(mousePos.y - viewer.anchorPos.y, 2));
+    
+    // Check if we should start dragging
+    if (!viewer.isDraggingAnchor && dist < 10 && ImGui::IsMouseClicked(0)) {
+        // Check if any other anchor is being dragged
+        bool otherAnchorDragging = false;
+        for (const auto& v : viewers) {
+            if (v.id != viewer.id && v.isDraggingAnchor) {
+                otherAnchorDragging = true;
+                break;
+            }
+        }
+        
+        if (!otherAnchorDragging) {
+            viewer.isDraggingAnchor = true;
+        }
+    }
+    
+    // Handle ongoing drag
+    if (viewer.isDraggingAnchor) {
+        if (ImGui::IsMouseDown(0)) {
+            viewer.anchorPos = mousePos;
+            // Update memory address based on new position
+            viewer.memoryAddress = ScreenToMemoryAddress(viewer.anchorPos);
+            viewer.name = AddressParser::Format(viewer.memoryAddress);
+            viewer.needsUpdate = true;
+        } else {
+            viewer.isDraggingAnchor = false;
+        }
+    }
+}
+
 void BitmapViewerManager::DrawLeaderLine(BitmapViewer& viewer) {
     ImDrawList* drawList = ImGui::GetForegroundDrawList();
     
@@ -438,39 +480,24 @@ void BitmapViewerManager::DrawLeaderLine(BitmapViewer& viewer) {
     ImU32 lineColor = viewer.isPinned ? IM_COL32(255, 0, 0, 128) : IM_COL32(255, 255, 0, 128);
     drawList->AddLine(imageTopLeft, viewer.anchorPos, lineColor, 2.0f);
     
-    // Draw anchor point
-    drawList->AddCircleFilled(viewer.anchorPos, 6, IM_COL32(255, 255, 0, 255));
-    drawList->AddCircle(viewer.anchorPos, 8, IM_COL32(0, 0, 0, 255), 12, 2);
-    
-    // Check for anchor dragging
+    // Draw anchor point with different states
     ImVec2 mousePos = ImGui::GetMousePos();
     float dist = std::sqrt(std::pow(mousePos.x - viewer.anchorPos.x, 2) + 
                           std::pow(mousePos.y - viewer.anchorPos.y, 2));
     
-    if (dist < 10) {
-        // Hover effect
-        drawList->AddCircle(viewer.anchorPos, 10, IM_COL32(255, 255, 255, 255), 12, 2);
-        
-        // Handle anchor dragging - check for click on the anchor itself
-        if (ImGui::IsMouseClicked(0)) {
-            // Start dragging this anchor
-            viewer.isDraggingAnchor = true;
-        }
-    }
-    
-    // Handle anchor dragging for this viewer
     if (viewer.isDraggingAnchor) {
-        if (ImGui::IsMouseDragging(0)) {
-            viewer.anchorPos = ImGui::GetMousePos();
-            // Update memory address based on new position
-            // This updates where the viewer is looking in memory
-            viewer.memoryAddress = ScreenToMemoryAddress(viewer.anchorPos);
-            // Update the viewer name to reflect new address with space prefix
-            viewer.name = AddressParser::Format(viewer.memoryAddress);
-            viewer.needsUpdate = true;
-        } else if (ImGui::IsMouseReleased(0)) {
-            viewer.isDraggingAnchor = false;
-        }
+        // Being dragged - make it more visible
+        drawList->AddCircleFilled(viewer.anchorPos, 8, IM_COL32(255, 128, 0, 255));
+        drawList->AddCircle(viewer.anchorPos, 10, IM_COL32(255, 255, 255, 255), 12, 2);
+    } else if (dist < 10) {
+        // Hover state
+        drawList->AddCircleFilled(viewer.anchorPos, 6, IM_COL32(255, 255, 0, 255));
+        drawList->AddCircle(viewer.anchorPos, 8, IM_COL32(0, 0, 0, 255), 12, 2);
+        drawList->AddCircle(viewer.anchorPos, 10, IM_COL32(255, 255, 255, 255), 12, 2);
+    } else {
+        // Normal state
+        drawList->AddCircleFilled(viewer.anchorPos, 6, IM_COL32(255, 255, 0, 255));
+        drawList->AddCircle(viewer.anchorPos, 8, IM_COL32(0, 0, 0, 255), 12, 2);
     }
 }
 

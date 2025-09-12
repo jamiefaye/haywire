@@ -601,6 +601,12 @@ void MemoryVisualizer::DrawBitmapViewers() {
     }
 }
 
+void MemoryVisualizer::HandleBitmapViewerInputEarly() {
+    if (bitmapViewerManager) {
+        bitmapViewerManager->HandleAnchorInputEarly();
+    }
+}
+
 void MemoryVisualizer::SetBeaconReader(std::shared_ptr<BeaconReader> reader) {
     if (bitmapViewerManager) {
         bitmapViewerManager->SetBeaconReader(reader);

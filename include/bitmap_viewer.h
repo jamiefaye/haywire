@@ -110,6 +110,9 @@ public:
     // Remove a viewer
     void RemoveViewer(int id);
     
+    // Handle anchor input before any UI (called very early in frame)
+    void HandleAnchorInputEarly();
+    
     // Draw all viewers (called from main render loop)
     void DrawViewers();
     
@@ -136,6 +139,7 @@ private:
     
     void DrawViewer(BitmapViewer& viewer);
     void DrawLeaderLine(BitmapViewer& viewer);
+    void HandleAnchorInput(BitmapViewer& viewer);
     void UpdateViewerTexture(BitmapViewer& viewer);
     void ExtractMemory(BitmapViewer& viewer);
     void ConvertMemoryToHexPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
