@@ -383,26 +383,32 @@ int main(int argc, char** argv) {
             
             ImGui::EndChild();
             
-            // Bottom section with two panes
-            float availableHeight = ImGui::GetContentRegionAvail().y;
-            // Ensure minimum height to prevent overflow on first frame
-            availableHeight = std::max(100.0f, availableHeight);
+            // Bottom section with two panes - child windows will use remaining space automatically
+            
+            // Debug output
+            static int mainFrameCount = 0;
+            if (mainFrameCount++ % 60 == 0) {
+                ImVec2 windowSize = ImGui::GetWindowSize();
+                ImVec2 availSpace = ImGui::GetContentRegionAvail();
+                printf("Main window size: %.1fx%.1f, available space after ControlBar: %.1fx%.1f\n", 
+                       windowSize.x, windowSize.y, availSpace.x, availSpace.y);
+            }
             
             if (show_overview) {
                 // Left pane: Memory Sections
-                ImGui::BeginChild("SectionsPane", ImVec2(300, availableHeight), true);
+                ImGui::BeginChild("SectionsPane", ImVec2(300, 0), true);  // 0 = use remaining height
                 overview.DrawCompact();
                 ImGui::EndChild();
                 
                 ImGui::SameLine();
                 
                 // Right pane: Memory dump
-                ImGui::BeginChild("MemoryPane", ImVec2(0, availableHeight), false);
+                ImGui::BeginChild("MemoryPane", ImVec2(0, 0), false);  // 0,0 = use remaining space
                 visualizer.DrawMemoryBitmap();
                 ImGui::EndChild();
             } else {
                 // Full width memory dump when overview is hidden
-                ImGui::BeginChild("MemoryPane", ImVec2(0, availableHeight), false);
+                ImGui::BeginChild("MemoryPane", ImVec2(0, 0), false);  // 0,0 = use remaining space
                 visualizer.DrawMemoryBitmap();
                 ImGui::EndChild();
             }

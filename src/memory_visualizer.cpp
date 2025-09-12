@@ -590,7 +590,12 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     // Debug: Let's see what we're getting
     static int frameCount = 0;
     if (frameCount++ % 60 == 0) {  // Print every second
-        printf("DrawMemoryBitmap: availSize.y=%.1f, maxHeight=%.1f\n", availSize.y, maxHeight);
+        ImVec2 parentSize = ImGui::GetWindowSize();
+        ImVec2 contentMax = ImGui::GetWindowContentRegionMax();
+        ImVec2 contentMin = ImGui::GetWindowContentRegionMin();
+        ImVec2 parentContentSize = ImVec2(contentMax.x - contentMin.x, contentMax.y - contentMin.y);
+        printf("DrawMemoryBitmap: parentWindow=%.1fx%.1f, parentContent=%.1fx%.1f, availSize.y=%.1f, maxHeight=%.1f\n", 
+               parentSize.x, parentSize.y, parentContentSize.x, parentContentSize.y, availSize.y, maxHeight);
     }
     
     // Ensure we have enough space
