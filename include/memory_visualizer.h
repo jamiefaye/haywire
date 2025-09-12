@@ -79,7 +79,6 @@ public:
     
     // Draw bitmap viewers (floating windows)
     void DrawBitmapViewers();
-    void HandleBitmapViewerInputEarly();
     
     // Set beacon reader for bitmap viewers
     void SetBeaconReader(std::shared_ptr<class BeaconReader> reader);
