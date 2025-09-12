@@ -1004,19 +1004,9 @@ TypedAddress BitmapViewerManager::ScreenToMemoryAddress(ImVec2 screenPos) {
             return TypedAddress::Shared(address);
         }
     } else {
-        // In physical mode, viewportBaseAddress is actually a physical address
-        // We need to convert it to a file offset for shared memory access
-        
-        // Use MemoryMapper if available to properly translate GPA to file offset
-        if (memoryMapper) {
-            int64_t fileOffset = memoryMapper->TranslateGPAToFileOffset(address);
-            if (fileOffset >= 0) {
-                return TypedAddress::Shared(fileOffset);
-            }
-        }
-        
-        // Fallback: assume it's already a file offset (for backward compatibility)
-        return TypedAddress::Shared(address);
+        // In physical mode, return a physical address
+        // The viewport is displaying physical addresses
+        return TypedAddress::Physical(address);
     }
 }
 
