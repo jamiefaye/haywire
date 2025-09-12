@@ -34,6 +34,16 @@ void BitmapViewerManager::CreateViewer(TypedAddress address, ImVec2 anchorPos, P
     viewer.anchorAddress = address;
     viewer.anchorPos = anchorPos;
     
+    // Set the format first
+    viewer.format = format;
+    
+    // Calculate stride based on width and format
+    if (viewer.format.type == PixelFormat::BINARY) {
+        viewer.stride = (viewer.memWidth + 7) / 8;  // Binary: bits to bytes
+    } else {
+        viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+    }
+    
     // Center the viewer around the clicked point
     // Calculate offset to center the anchor in the viewer
     int centerOffsetX = viewer.memWidth / 2;
@@ -59,9 +69,6 @@ void BitmapViewerManager::CreateViewer(TypedAddress address, ImVec2 anchorPos, P
         viewer.anchorRelativePos.y = std::max(0.0f, std::min(1.0f, viewer.anchorRelativePos.y));
     }
     
-    // Use the format from the main window
-    viewer.format = format;
-    
     // Set the format index for the combo box
     switch(format.type) {
         case PixelFormat::RGB888: viewer.formatIndex = 0; break;
@@ -76,14 +83,6 @@ void BitmapViewerManager::CreateViewer(TypedAddress address, ImVec2 anchorPos, P
         case PixelFormat::HEX_PIXEL: viewer.formatIndex = 9; break;
         case PixelFormat::CHAR_8BIT: viewer.formatIndex = 10; break;
         default: viewer.formatIndex = 0; break;
-    }
-    
-    // Initialize stride based on the format
-    if (viewer.format.type == PixelFormat::BINARY) {
-        // For binary, stride is width/8 (bits to bytes)
-        viewer.stride = (viewer.memWidth + 7) / 8;  // Round up
-    } else {
-        viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
     }
     
     // Position window offset from anchor

@@ -2338,7 +2338,12 @@ uint32_t MemoryVisualizer::GetPixelAt(int x, int y) const {
 }
 
 uint64_t MemoryVisualizer::GetAddressAt(int x, int y) const {
+    // Calculate base offset from pixel position
     size_t offset = (y * viewport.stride + x) * viewport.format.bytesPerPixel;
+    
+    // Add scroll offset if we're in a scrollable view
+    // The viewport.baseAddress already includes scroll offset from mouse wheel/dragging
+    // This gives us the actual memory address at the clicked position
     return viewport.baseAddress + offset;
 }
 
