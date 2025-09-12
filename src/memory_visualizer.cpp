@@ -581,12 +581,11 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     // Draw formula bar at the top
     DrawFormulaBar();
     
-    // Get available size (already constrained by parent)
+    // Get available size AFTER the formula bar has taken its space
     ImVec2 availSize = ImGui::GetContentRegionAvail();
     
-    // Use all available height minus the formula bar
-    // The formula bar takes exactly 30 pixels  
-    float maxHeight = std::max(50.0f, availSize.y - 30.0f);
+    // Use all the remaining space - the formula bar already consumed its pixels
+    float maxHeight = std::max(50.0f, availSize.y);
     
     // Debug: Let's see what we're getting
     static int frameCount = 0;
