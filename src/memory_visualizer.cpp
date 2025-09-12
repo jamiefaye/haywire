@@ -486,9 +486,9 @@ void MemoryVisualizer::DrawFormulaBar() {
     
     // Draw formula bar with all address spaces
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.1f, 0.1f, 0.15f, 0.95f));
-    ImGui::BeginChild("FormulaBar", ImVec2(0, 25), true);
+    ImGui::BeginChild("FormulaBar", ImVec2(0, 30), true);  // Slightly taller for nav info
     
-    // Build address display string
+    // Build address display string for mouse position
     std::stringstream addrDisplay;
     
     // Show current address based on mode
@@ -525,6 +525,50 @@ void MemoryVisualizer::DrawFormulaBar() {
     // Show the address display
     ImGui::Text("📍 %s", addrDisplay.str().c_str());
     
+    // Add navigation info
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+    
+    // Show current viewport navigation info
+    if (useVirtualAddresses && addressFlattener) {
+        // In VA mode, show current viewport VA and region
+        uint64_t currentVA = addressFlattener->FlatToVirtual(viewport.baseAddress);
+        ImGui::Text("View: v:%llx", currentVA);
+        
+        // Show region info
+        const auto* region = addressFlattener->GetRegionForFlat(viewport.baseAddress);
+        if (region) {
+            ImGui::SameLine();
+            
+            // Truncate region name if too long
+            std::string regionName = region->name;
+            if (regionName.length() > 20) {
+                regionName = regionName.substr(0, 17) + "...";
+            }
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "[%s]", regionName.c_str());
+            
+            if (ImGui::IsItemHovered() && region->name.length() > 20) {
+                ImGui::SetTooltip("%s", region->name.c_str());
+            }
+        }
+        
+        // Show PA if available
+        if (crunchedReader && targetPid > 0) {
+            auto translator = crunchedReader->GetBeaconTranslator();
+            if (translator) {
+                uint64_t pa = translator->TranslateAddress(targetPid, currentVA);
+                if (pa != 0) {
+                    ImGui::SameLine();
+                    ImGui::Text("p:%llx", pa);
+                }
+            }
+        }
+    } else {
+        // In PA mode, show physical address
+        ImGui::Text("View: p:%llx", viewport.baseAddress);
+    }
+    
     // Show mouse position info on the right
     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 150);
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "(%d,%d)", memX, memY);
@@ -557,7 +601,8 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     float memoryWidth = std::max(100.0f, availSize.x - sliderWidth - 10);  // -10 for spacing
     
     // Vertical address slider on the left - use constrained height
-    ImGui::BeginChild("AddressSlider", ImVec2(sliderWidth, maxHeight), true);
+    ImGui::BeginChild("AddressSlider", ImVec2(sliderWidth, maxHeight), true, 
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     DrawVerticalAddressSlider();
     ImGui::EndChild();
     
@@ -897,8 +942,8 @@ void MemoryVisualizer::DrawControls() {
 }
 
 void MemoryVisualizer::DrawVerticalAddressSlider() {
-    ImGui::Text("Memory Navigation");
-    ImGui::Separator();
+    // All header info moved to DrawFormulaBar
+    // Just calculate slider parameters
     
     uint64_t sliderUnit;
     uint64_t maxAddress;
@@ -912,61 +957,10 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
         
         // Debug: Check if viewport is out of bounds
         if (currentPos > maxAddress && maxAddress > 0) {
-            static bool warnedSlider = false;
-            if (!warnedSlider) {
-                std::cerr << "VA Mode Slider: viewport.baseAddress (0x" << std::hex << currentPos 
-                          << ") exceeds flat size (0x" << maxAddress << ")" << std::dec << std::endl;
-                warnedSlider = true;
-            }
             // Clamp to maximum valid address instead of wrapping
             size_t viewSize = viewport.width * viewport.height * 4;
             currentPos = (maxAddress > viewSize) ? (maxAddress - viewSize) : 0;
             viewport.baseAddress = currentPos;
-        }
-        
-        // Show current VA and region info
-        uint64_t currentVA = addressFlattener->FlatToVirtual(currentPos);
-        ImGui::Text("VA: 0x%llx", currentVA);
-        
-        // Show PA if we can translate it
-        if (crunchedReader && targetPid > 0) {
-            // Get beacon translator from crunched reader
-            auto translator = crunchedReader->GetBeaconTranslator();
-            if (translator) {
-                uint64_t pa = translator->TranslateAddress(targetPid, currentVA);
-                if (pa != 0) {
-                    ImGui::Text("PA:");
-                    ImGui::SameLine();
-                    char paText[32];
-                    snprintf(paText, sizeof(paText), "0x%llx", pa);
-                    ImGui::PushID("PA_nav");
-                    ImGui::InputText("##pa", paText, sizeof(paText), ImGuiInputTextFlags_ReadOnly);
-                    ImGui::PopID();
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Click to select, Ctrl+C to copy");
-                    }
-                } else {
-                    ImGui::Text("PA: (unmapped)");
-                }
-            }
-        }
-        
-        ImGui::Text("Flat: %llu MB", currentPos / (1024*1024));
-        
-        // Show current region info
-        const auto* region = addressFlattener->GetRegionForFlat(currentPos);
-        if (region) {
-            ImGui::Separator();
-            ImGui::Text("Region: %.32s", region->name.c_str());
-            if (region->name.length() > 32) {
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s", region->name.c_str());
-                }
-            }
-            uint64_t regionSize = region->virtualEnd - region->virtualStart;
-            ImGui::Text("Size: %.1f MB", regionSize / (1024.0 * 1024.0));
-            uint64_t offsetInRegion = currentVA - region->virtualStart;
-            ImGui::Text("Offset: +0x%llx", offsetInRegion);
         }
     } else {
         // Physical mode - original behavior
@@ -977,9 +971,9 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     
     // Vertical slider
     ImVec2 availSize = ImGui::GetContentRegionAvail();
-    // Need more room in VA mode for region info (but not too much!)
-    float reservedHeight = useVirtualAddresses ? 150 : 80;
-    float sliderHeight = std::max(50.0f, availSize.y - reservedHeight);  // Minimum height for slider
+    // Less reserved height needed since info moved to formula bar
+    float reservedHeight = 50;
+    float sliderHeight = std::max(100.0f, availSize.y - reservedHeight);  // Minimum height for slider
     
     // Convert address to vertical slider position (inverted - top is 0)
     uint64_t sliderValue = currentPos / sliderUnit;
@@ -1093,6 +1087,37 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
         needsUpdate = true;
     }
     
+    // Show tooltip with region info when dragging
+    if (ImGui::IsItemActive()) {
+        if (useVirtualAddresses && addressFlattener) {
+            uint64_t currentAddr = sliderValue * sliderUnit;
+            uint64_t virtualAddr = addressFlattener->FlatToVirtual(currentAddr);
+            const auto* region = addressFlattener->GetRegionForFlat(currentAddr);
+            
+            if (region) {
+                // Extract just the filename from the path
+                std::string displayName = region->name;
+                size_t lastSlash = displayName.find_last_of("/");
+                if (lastSlash != std::string::npos) {
+                    displayName = displayName.substr(lastSlash + 1);
+                }
+                
+                ImGui::BeginTooltip();
+                ImGui::Text("%s", displayName.c_str());
+                ImGui::Text("VA: 0x%llx", virtualAddr);
+                ImGui::Text("Size: %.1f MB", (region->virtualEnd - region->virtualStart) / (1024.0 * 1024.0));
+                ImGui::EndTooltip();
+            }
+        } else {
+            // Physical mode - show address
+            uint64_t physAddr = sliderValue * sliderUnit;
+            ImGui::BeginTooltip();
+            ImGui::Text("PA: 0x%llx", physAddr);
+            ImGui::Text("Offset: %.1f GB", physAddr / (1024.0 * 1024.0 * 1024.0));
+            ImGui::EndTooltip();
+        }
+    }
+    
     // Pop the style colors we pushed before the slider
     ImGui::PopStyleColor(5);  // Pop all 5 style colors
     
@@ -1114,41 +1139,7 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     
     ImGui::PopItemWidth();
     
-    // Current address display
-    ImGui::Separator();
-    ImGui::Text("Current:");
-    
-    if (useVirtualAddresses && addressFlattener) {
-        // In VA mode, show both VA and PA
-        uint64_t flatAddr = viewport.baseAddress;
-        uint64_t va = addressFlattener->FlatToVirtual(flatAddr);
-        ImGui::Text("VA: 0x%llx", va);
-        
-        // Try to translate to PA if we have a translator
-        if (crunchedReader && targetPid > 0) {
-            auto translator = crunchedReader->GetBeaconTranslator();
-            if (translator) {
-                uint64_t pa = translator->TranslateAddress(targetPid, va);
-                if (pa != 0) {
-                    ImGui::Text("PA:");
-                    ImGui::SameLine();
-                    char paText[32];
-                    snprintf(paText, sizeof(paText), "0x%llx", pa);
-                    ImGui::PushID("PA_current");
-                    ImGui::InputText("##pa", paText, sizeof(paText), ImGuiInputTextFlags_ReadOnly);
-                    ImGui::PopID();
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Click to select, Ctrl+C to copy");
-                    }
-                } else {
-                    ImGui::Text("PA: (unmapped)");
-                }
-            }
-        }
-    } else {
-        // In PA mode, just show the physical address
-        ImGui::Text("PA: 0x%llx", viewport.baseAddress);
-    }
+    // Address display moved to formula bar and tooltip
 }
 
 void MemoryVisualizer::DrawMemoryView() {
