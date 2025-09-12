@@ -160,34 +160,12 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         }
         viewer.windowSize = newWindowSize;
         
-        // Capture parent window position before creating child
-        ImVec2 parentWindowPos = viewer.windowPos;
-        ImVec2 parentWindowSize = viewer.windowSize;
-        
         // Custom title bar with controls
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
         ImGui::BeginChild("TitleBar", ImVec2(0, 25), true);
         
         // Settings button first so it's always accessible
         if (ImGui::SmallButton("⚙")) {
-            // Position popup to the left of the viewer to avoid obscuring content
-            const float popupWidth = 350;  // Estimated popup width
-            
-            // Use the parent window position captured before child window
-            ImVec2 currentWindowPos = parentWindowPos;
-            ImVec2 currentWindowSize = parentWindowSize;
-            
-            // Calculate position to the left of viewer
-            ImVec2 popupPos;
-            popupPos.x = currentWindowPos.x - popupWidth - 10;
-            popupPos.y = currentWindowPos.y + 30;  // Below the title bar
-            
-            // If that would go off-screen, place to the right instead
-            if (popupPos.x < 0) {
-                popupPos.x = currentWindowPos.x + currentWindowSize.x + 10;
-            }
-            
-            ImGui::SetNextWindowPos(popupPos, ImGuiCond_Always);
             ImGui::OpenPopup("ViewerSettings");
         }
         
