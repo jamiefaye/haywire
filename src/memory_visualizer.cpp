@@ -584,9 +584,15 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     // Get available size (already constrained by parent)
     ImVec2 availSize = ImGui::GetContentRegionAvail();
     
-    // Use most of available height, leaving some margin for safety
-    // The formula bar takes about 30-40 pixels
-    float maxHeight = std::max(50.0f, availSize.y - 40.0f);
+    // Use all available height minus the formula bar
+    // The formula bar takes exactly 30 pixels  
+    float maxHeight = std::max(50.0f, availSize.y - 30.0f);
+    
+    // Debug: Let's see what we're getting
+    static int frameCount = 0;
+    if (frameCount++ % 60 == 0) {  // Print every second
+        printf("DrawMemoryBitmap: availSize.y=%.1f, maxHeight=%.1f\n", availSize.y, maxHeight);
+    }
     
     // Ensure we have enough space
     if (maxHeight < 50) {
@@ -602,7 +608,7 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     float memoryWidth = std::max(100.0f, availSize.x - sliderWidth - 10);  // -10 for spacing
     
     // Vertical address slider on the left - use constrained height
-    ImGui::BeginChild("AddressSlider", ImVec2(sliderWidth, maxHeight), true, 
+    ImGui::BeginChild("AddressSlider", ImVec2(sliderWidth, maxHeight), false, 
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     DrawVerticalAddressSlider();
     ImGui::EndChild();
@@ -972,9 +978,14 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     
     // Vertical slider
     ImVec2 availSize = ImGui::GetContentRegionAvail();
-    // Reserve minimal space at bottom for any remaining UI
-    float reservedHeight = 10;
-    float sliderHeight = std::max(100.0f, availSize.y - reservedHeight);  // Minimum height for slider
+    // Make the slider half height to fit better
+    float sliderHeight = std::max(100.0f, availSize.y * 0.5f);
+    
+    // Debug output
+    static int sliderFrameCount = 0;
+    if (sliderFrameCount++ % 60 == 0) {
+        printf("DrawVerticalAddressSlider: availSize.y=%.1f, sliderHeight=%.1f\n", availSize.y, sliderHeight);
+    }
     
     // Convert address to vertical slider position (inverted - top is 0)
     uint64_t sliderValue = currentPos / sliderUnit;

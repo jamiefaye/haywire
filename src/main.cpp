@@ -397,12 +397,12 @@ int main(int argc, char** argv) {
                 ImGui::SameLine();
                 
                 // Right pane: Memory dump
-                ImGui::BeginChild("MemoryPane", ImVec2(0, availableHeight), true);
+                ImGui::BeginChild("MemoryPane", ImVec2(0, availableHeight), false);
                 visualizer.DrawMemoryBitmap();
                 ImGui::EndChild();
             } else {
                 // Full width memory dump when overview is hidden
-                ImGui::BeginChild("MemoryPane", ImVec2(0, availableHeight), true);
+                ImGui::BeginChild("MemoryPane", ImVec2(0, availableHeight), false);
                 visualizer.DrawMemoryBitmap();
                 ImGui::EndChild();
             }
