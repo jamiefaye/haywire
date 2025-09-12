@@ -1384,6 +1384,98 @@ void BitmapViewerManager::HandleKeyboardInput() {
     // Handle keyboard navigation for the focused mini-viewer
     ImGuiIO& io = ImGui::GetIO();
     bool shiftPressed = io.KeyShift;
+    bool ctrlPressed = io.KeyCtrl;
+    
+    // Ctrl+Arrow keys adjust width/height
+    if (ctrlPressed) {
+        bool needsUpdate = false;
+        
+        // Ctrl+Left/Right adjusts width
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
+            // Decrease width by power of 2 or 10
+            int newWidth = focusedViewer->memWidth;
+            if (newWidth > 32) {
+                // Try power of 2 first
+                if ((newWidth & (newWidth - 1)) == 0) {  // Is power of 2
+                    newWidth /= 2;
+                } else {
+                    // Round down to nearest nice number
+                    if (newWidth > 1000) newWidth = (newWidth / 100) * 100 - 100;
+                    else if (newWidth > 100) newWidth = (newWidth / 10) * 10 - 10;
+                    else newWidth -= 8;
+                }
+                focusedViewer->memWidth = std::max(32, newWidth);
+                needsUpdate = true;
+            }
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
+            // Increase width by power of 2 or 10
+            int newWidth = focusedViewer->memWidth;
+            if (newWidth < 2048) {
+                // Try power of 2 first
+                if ((newWidth & (newWidth - 1)) == 0) {  // Is power of 2
+                    newWidth *= 2;
+                } else {
+                    // Round up to nearest nice number
+                    if (newWidth >= 1000) newWidth = (newWidth / 100) * 100 + 100;
+                    else if (newWidth >= 100) newWidth = (newWidth / 10) * 10 + 10;
+                    else newWidth += 8;
+                }
+                focusedViewer->memWidth = std::min(2048, newWidth);
+                needsUpdate = true;
+            }
+        }
+        
+        // Ctrl+Up/Down adjusts height
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+            // Decrease height
+            int newHeight = focusedViewer->memHeight;
+            if (newHeight > 32) {
+                if ((newHeight & (newHeight - 1)) == 0) {  // Is power of 2
+                    newHeight /= 2;
+                } else {
+                    if (newHeight > 1000) newHeight = (newHeight / 100) * 100 - 100;
+                    else if (newHeight > 100) newHeight = (newHeight / 10) * 10 - 10;
+                    else newHeight -= 8;
+                }
+                focusedViewer->memHeight = std::max(32, newHeight);
+                needsUpdate = true;
+            }
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+            // Increase height
+            int newHeight = focusedViewer->memHeight;
+            if (newHeight < 2048) {
+                if ((newHeight & (newHeight - 1)) == 0) {  // Is power of 2
+                    newHeight *= 2;
+                } else {
+                    if (newHeight >= 1000) newHeight = (newHeight / 100) * 100 + 100;
+                    else if (newHeight >= 100) newHeight = (newHeight / 10) * 10 + 10;
+                    else newHeight += 8;
+                }
+                focusedViewer->memHeight = std::min(2048, newHeight);
+                needsUpdate = true;
+            }
+        }
+        
+        if (needsUpdate) {
+            // Update stride based on new width
+            if (focusedViewer->format.type == PixelFormat::BINARY) {
+                focusedViewer->stride = (focusedViewer->memWidth + 7) / 8;
+            } else {
+                focusedViewer->stride = focusedViewer->memWidth * focusedViewer->format.bytesPerPixel;
+            }
+            // Resize pixel buffer
+            focusedViewer->pixels.resize(focusedViewer->memWidth * focusedViewer->memHeight);
+            // Mark for texture update
+            focusedViewer->needsUpdate = true;
+            // Update window size to match
+            focusedViewer->windowSize.x = focusedViewer->memWidth + 10;
+            focusedViewer->windowSize.y = focusedViewer->memHeight + 35;
+            focusedViewer->forceResize = true;
+        }
+        return;  // Don't process normal navigation when Ctrl is held
+    }
     
     // Calculate movement based on viewer's pixel format
     int moveX = 1;

@@ -2311,26 +2311,94 @@ void MemoryVisualizer::HandleInput() {
     bool downKey = !miniViewerHasFocus && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
     
     if (leftKey || rightKey || upKey || downKey) {
-        int stepX = 0, stepY = 0;
-        int pixelStep = shiftPressed ? 4 : 1;  // Shift for 4-byte alignment
-        
-        if (leftKey) stepX = -pixelStep;
-        if (rightKey) stepX = pixelStep;
-        if (upKey) stepY = -1;
-        if (downKey) stepY = 1;
-        
-        // Move viewport
-        uint64_t newAddr = viewport.baseAddress;
-        newAddr += stepY * viewport.stride;
-        newAddr += stepX * viewport.format.bytesPerPixel;
-        
-        // Apply alignment if shift is held
-        if (shiftPressed && stepX != 0) {
-            newAddr = (newAddr / 4) * 4;  // Align to 4 bytes
+        // Ctrl+Arrows adjust width/height
+        if (ctrlPressed) {
+            // Ctrl+Left/Right adjusts width
+            if (leftKey && viewport.width > 32) {
+                // Decrease width
+                int newWidth = viewport.width;
+                if ((newWidth & (newWidth - 1)) == 0) {  // Is power of 2
+                    newWidth /= 2;
+                } else {
+                    if (newWidth > 1000) newWidth = (newWidth / 100) * 100 - 100;
+                    else if (newWidth > 100) newWidth = (newWidth / 10) * 10 - 10;
+                    else newWidth -= 8;
+                }
+                viewport.width = std::max(32, newWidth);
+                widthInput = viewport.width;
+                viewport.stride = viewport.width * viewport.format.bytesPerPixel;
+                strideInput = viewport.stride;
+                needsUpdate = true;
+            }
+            if (rightKey && viewport.width < 2048) {
+                // Increase width
+                int newWidth = viewport.width;
+                if ((newWidth & (newWidth - 1)) == 0) {  // Is power of 2
+                    newWidth *= 2;
+                } else {
+                    if (newWidth >= 1000) newWidth = (newWidth / 100) * 100 + 100;
+                    else if (newWidth >= 100) newWidth = (newWidth / 10) * 10 + 10;
+                    else newWidth += 8;
+                }
+                viewport.width = std::min(2048, newWidth);
+                widthInput = viewport.width;
+                viewport.stride = viewport.width * viewport.format.bytesPerPixel;
+                strideInput = viewport.stride;
+                needsUpdate = true;
+            }
+            
+            // Ctrl+Up/Down adjusts height
+            if (upKey && viewport.height > 32) {
+                // Decrease height
+                int newHeight = viewport.height;
+                if ((newHeight & (newHeight - 1)) == 0) {  // Is power of 2
+                    newHeight /= 2;
+                } else {
+                    if (newHeight > 1000) newHeight = (newHeight / 100) * 100 - 100;
+                    else if (newHeight > 100) newHeight = (newHeight / 10) * 10 - 10;
+                    else newHeight -= 8;
+                }
+                viewport.height = std::max(32, newHeight);
+                heightInput = viewport.height;
+                needsUpdate = true;
+            }
+            if (downKey && viewport.height < 2048) {
+                // Increase height
+                int newHeight = viewport.height;
+                if ((newHeight & (newHeight - 1)) == 0) {  // Is power of 2
+                    newHeight *= 2;
+                } else {
+                    if (newHeight >= 1000) newHeight = (newHeight / 100) * 100 + 100;
+                    else if (newHeight >= 100) newHeight = (newHeight / 10) * 10 + 10;
+                    else newHeight += 8;
+                }
+                viewport.height = std::min(2048, newHeight);
+                heightInput = viewport.height;
+                needsUpdate = true;
+            }
+        } else {
+            // Normal arrow key navigation
+            int stepX = 0, stepY = 0;
+            int pixelStep = shiftPressed ? 4 : 1;  // Shift for 4-byte alignment
+            
+            if (leftKey) stepX = -pixelStep;
+            if (rightKey) stepX = pixelStep;
+            if (upKey) stepY = -1;
+            if (downKey) stepY = 1;
+            
+            // Move viewport
+            uint64_t newAddr = viewport.baseAddress;
+            newAddr += stepY * viewport.stride;
+            newAddr += stepX * viewport.format.bytesPerPixel;
+            
+            // Apply alignment if shift is held
+            if (shiftPressed && stepX != 0) {
+                newAddr = (newAddr / 4) * 4;  // Align to 4 bytes
+            }
+            
+            viewport.baseAddress = newAddr;
+            needsUpdate = true;
         }
-        
-        viewport.baseAddress = newAddr;
-        needsUpdate = true;
     }
     
     // Page Up/Down navigation (skip if mini-viewer has focus)
