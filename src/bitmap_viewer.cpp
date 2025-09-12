@@ -379,8 +379,28 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             ImGui::Separator();
             // Anchor settings
             ImGui::Text("Anchor Mode:");
+            
+            // Track mode changes
+            BitmapViewer::AnchorMode oldMode = viewer.anchorMode;
+            
             ImGui::RadioButton("Stick to Address", (int*)&viewer.anchorMode, BitmapViewer::ANCHOR_TO_ADDRESS);
             ImGui::RadioButton("Stick to Position", (int*)&viewer.anchorMode, BitmapViewer::ANCHOR_TO_POSITION);
+            
+            // When switching from Position to Address mode, update the anchor address
+            // to the current memory address at the relative position
+            if (oldMode == BitmapViewer::ANCHOR_TO_POSITION && 
+                viewer.anchorMode == BitmapViewer::ANCHOR_TO_ADDRESS) {
+                // Calculate the memory address at the current relative position
+                ImVec2 currentPos = ImVec2(
+                    memoryViewPos.x + viewer.anchorRelativePos.x * memoryViewSize.x,
+                    memoryViewPos.y + viewer.anchorRelativePos.y * memoryViewSize.y
+                );
+                viewer.anchorAddress = ScreenToMemoryAddress(currentPos);
+                // Update the viewer to show this address
+                viewer.memoryAddress = viewer.anchorAddress;
+                viewer.name = AddressParser::Format(viewer.memoryAddress);
+                viewer.needsUpdate = true;
+            }
             
             // Show anchor position info based on mode
             if (viewer.anchorMode == BitmapViewer::ANCHOR_TO_ADDRESS) {
