@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstring>
 #include <sstream>
+#include <chrono>
 
 namespace Haywire {
 
@@ -115,21 +116,25 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
     std::string windowTitle = viewer.name + "###BitmapViewer" + std::to_string(viewer.id);
     
     
+    // Set initial window size based on memory dimensions
+    ImVec2 desiredWindowSize(viewer.memWidth + 10, viewer.memHeight + 35);
+    ImGui::SetNextWindowSize(desiredWindowSize, ImGuiCond_FirstUseEver);
+    
     if (ImGui::Begin(windowTitle.c_str(), &viewer.active, flags)) {
-        // Get window position and size for leader line
+        // Get window position for leader line
         viewer.windowPos = ImGui::GetWindowPos();
         ImVec2 newWindowSize = ImGui::GetWindowSize();
         
-        // Check if window was resized
+        // Check if window was resized by dragging
         if (newWindowSize.x != viewer.windowSize.x || newWindowSize.y != viewer.windowSize.y) {
-            // Window was resized - update memory dimensions
-            // Account for title bar height (approximately 30 pixels)
+            // Window was resized - update memory dimensions to match
             int contentWidth = (int)(newWindowSize.x - 10);  // Padding
             int contentHeight = (int)(newWindowSize.y - 35); // Title bar + padding
             
             // Update viewer dimensions
             viewer.memWidth = std::max(16, contentWidth);
             viewer.memHeight = std::max(16, contentHeight);
+            
             // Update stride based on format
             if (viewer.format.type == PixelFormat::BINARY) {
                 viewer.stride = (viewer.memWidth + 7) / 8;  // Binary: bits to bytes
@@ -147,10 +152,16 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
         ImGui::BeginChild("TitleBar", ImVec2(0, 25), true);
         
-        // Address on the left (acts as title)
+        // Settings button first so it's always accessible
+        if (ImGui::SmallButton("⚙")) {
+            ImGui::OpenPopup("ViewerSettings");
+        }
+        
+        // Address after settings button
+        ImGui::SameLine();
         ImGui::Text("%s", viewer.name.c_str());
         
-        // Format selector first for narrow window accessibility
+        // Format selector (keeping in title bar for quick access)
         ImGui::SameLine(100);
         ImGui::SetNextItemWidth(80);
         
@@ -224,12 +235,8 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%dx%d", viewer.memWidth, viewer.memHeight);
         
-        // Settings and close buttons on the right
-        float buttonX = ImGui::GetWindowWidth() - 50;
-        ImGui::SameLine(buttonX);
-        if (ImGui::SmallButton("⚙")) {
-            ImGui::OpenPopup("ViewerSettings");
-        }
+        // Close button on the right
+        float buttonX = ImGui::GetWindowWidth() - 25;
         
         // Settings popup
         if (ImGui::BeginPopup("ViewerSettings")) {
@@ -280,14 +287,75 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                 }
             }
             
+            // Format selector in popup
+            ImGui::Separator();
+            const char* formatNames[] = { 
+                "RGB888", "RGBA8888", "BGR888", "BGRA8888", 
+                "ARGB8888", "ABGR8888", "RGB565", "Grayscale", 
+                "Binary", "Hex Pixel", "Char 8-bit"
+            };
+            
+            if (ImGui::Combo("Format", &viewer.formatIndex, formatNames, IM_ARRAYSIZE(formatNames))) {
+                // Map combo index to PixelFormat::Type
+                PixelFormat::Type newType;
+                switch(viewer.formatIndex) {
+                    case 0: newType = PixelFormat::RGB888; break;
+                    case 1: newType = PixelFormat::RGBA8888; break;
+                    case 2: newType = PixelFormat::BGR888; break;
+                    case 3: newType = PixelFormat::BGRA8888; break;
+                    case 4: newType = PixelFormat::ARGB8888; break;
+                    case 5: newType = PixelFormat::ABGR8888; break;
+                    case 6: newType = PixelFormat::RGB565; break;
+                    case 7: newType = PixelFormat::GRAYSCALE; break;
+                    case 8: newType = PixelFormat::BINARY; break;
+                    case 9: newType = PixelFormat::HEX_PIXEL; break;
+                    case 10: newType = PixelFormat::CHAR_8BIT; break;
+                    default: newType = PixelFormat::RGB888; break;
+                }
+                viewer.format = PixelFormat(newType);
+                // Update stride based on new format
+                if (viewer.format.type == PixelFormat::BINARY) {
+                    viewer.stride = (viewer.memWidth + 7) / 8;  // Binary: bits to bytes
+                } else {
+                    viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+                }
+                viewer.needsUpdate = true;
+            }
+            
+            // Split checkbox
+            if (ImGui::Checkbox("Split Components", &viewer.splitComponents)) {
+                viewer.needsUpdate = true;
+            }
+            
+            ImGui::Separator();
             // Size controls
-            ImGui::InputInt("Width", &viewer.memWidth);
-            ImGui::InputInt("Height", &viewer.memHeight);
-            ImGui::InputInt("Stride", &viewer.stride);
+            if (ImGui::InputInt("Width", &viewer.memWidth)) {
+                viewer.memWidth = std::max(16, viewer.memWidth);
+                // Update stride based on format
+                if (viewer.format.type == PixelFormat::BINARY) {
+                    viewer.stride = (viewer.memWidth + 7) / 8;  // Binary: bits to bytes
+                } else {
+                    viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+                }
+                viewer.needsUpdate = true;
+                // Resize pixel buffer
+                viewer.pixels.resize(viewer.memWidth * viewer.memHeight);
+            }
+            if (ImGui::InputInt("Height", &viewer.memHeight)) {
+                viewer.memHeight = std::max(16, viewer.memHeight);
+                viewer.needsUpdate = true;
+                // Resize pixel buffer  
+                viewer.pixels.resize(viewer.memWidth * viewer.memHeight);
+            }
+            if (ImGui::InputInt("Stride", &viewer.stride)) {
+                viewer.needsUpdate = true;
+            }
             
             ImGui::EndPopup();
         }
-        ImGui::SameLine();
+        
+        // Close button on the right
+        ImGui::SameLine(buttonX);
         if (ImGui::SmallButton("X")) {
             viewer.active = false;
         }
@@ -407,12 +475,27 @@ void BitmapViewerManager::DrawLeaderLine(BitmapViewer& viewer) {
 }
 
 void BitmapViewerManager::UpdateViewers() {
+    // Update all active viewers periodically for dynamic refresh
+    static auto lastUpdate = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    float elapsed = std::chrono::duration<float>(now - lastUpdate).count();
+    
+    // Refresh at 10 Hz (every 0.1 seconds)
+    const float refreshInterval = 0.1f;
+    bool shouldRefresh = elapsed >= refreshInterval;
+    
     for (auto& viewer : viewers) {
-        if (viewer.active && viewer.needsUpdate) {
-            ExtractMemory(viewer);
-            UpdateViewerTexture(viewer);
-            viewer.needsUpdate = false;
+        if (viewer.active) {
+            if (viewer.needsUpdate || shouldRefresh) {
+                ExtractMemory(viewer);
+                UpdateViewerTexture(viewer);
+                viewer.needsUpdate = false;
+            }
         }
+    }
+    
+    if (shouldRefresh) {
+        lastUpdate = now;
     }
 }
 
