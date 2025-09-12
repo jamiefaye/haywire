@@ -385,7 +385,7 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             
             ImGui::Separator();
             // Size controls
-            ImGui::SetNextItemWidth(80);
+            ImGui::SetNextItemWidth(90);
             if (ImGui::InputInt("W", &viewer.memWidth)) {
                 viewer.memWidth = std::max(16, viewer.memWidth);
                 // Update stride based on format
@@ -401,7 +401,7 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                 viewer.windowSize.x = viewer.memWidth + 10;  // Add padding
                 viewer.forceResize = true;  // Force window resize on next frame
             }
-            ImGui::SetNextItemWidth(80);
+            ImGui::SetNextItemWidth(90);
             if (ImGui::InputInt("H", &viewer.memHeight)) {
                 viewer.memHeight = std::max(16, viewer.memHeight);
                 viewer.needsUpdate = true;
