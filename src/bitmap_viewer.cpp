@@ -299,44 +299,64 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                 }
             }
             
-            // Format selector in popup
+            // Format selector in popup with split option
             ImGui::Separator();
-            const char* formatNames[] = { 
+            const char* formats[] = { 
                 "RGB888", "RGBA8888", "BGR888", "BGRA8888", 
                 "ARGB8888", "ABGR8888", "RGB565", "Grayscale", 
-                "Binary", "Hex Pixel", "Char 8-bit"
+                "Binary", "Hex Pixel", "Char 8-bit",
+                "---",  // Separator
+                viewer.splitComponents ? "[X] Split" : "[ ] Split"
             };
             
-            if (ImGui::Combo("Format", &viewer.formatIndex, formatNames, IM_ARRAYSIZE(formatNames))) {
-                // Map combo index to PixelFormat::Type
-                PixelFormat::Type newType;
-                switch(viewer.formatIndex) {
-                    case 0: newType = PixelFormat::RGB888; break;
-                    case 1: newType = PixelFormat::RGBA8888; break;
-                    case 2: newType = PixelFormat::BGR888; break;
-                    case 3: newType = PixelFormat::BGRA8888; break;
-                    case 4: newType = PixelFormat::ARGB8888; break;
-                    case 5: newType = PixelFormat::ABGR8888; break;
-                    case 6: newType = PixelFormat::RGB565; break;
-                    case 7: newType = PixelFormat::GRAYSCALE; break;
-                    case 8: newType = PixelFormat::BINARY; break;
-                    case 9: newType = PixelFormat::HEX_PIXEL; break;
-                    case 10: newType = PixelFormat::CHAR_8BIT; break;
-                    default: newType = PixelFormat::RGB888; break;
+            // Custom combo to handle the split option specially
+            int displayIndex = viewer.formatIndex;
+            if (ImGui::BeginCombo("Format", formats[displayIndex])) {
+                for (int i = 0; i < IM_ARRAYSIZE(formats); i++) {
+                    if (i == 11) { // Separator line
+                        ImGui::Separator();
+                        continue;
+                    }
+                    
+                    bool isSelected = (i == displayIndex);
+                    if (ImGui::Selectable(formats[i], isSelected)) {
+                        if (i == 12) { // Split toggle
+                            viewer.splitComponents = !viewer.splitComponents;
+                            viewer.needsUpdate = true;
+                        } else if (i < 11) { // Regular format selection
+                            viewer.formatIndex = i;
+                            // Map combo index to PixelFormat::Type
+                            PixelFormat::Type newType;
+                            switch(viewer.formatIndex) {
+                                case 0: newType = PixelFormat::RGB888; break;
+                                case 1: newType = PixelFormat::RGBA8888; break;
+                                case 2: newType = PixelFormat::BGR888; break;
+                                case 3: newType = PixelFormat::BGRA8888; break;
+                                case 4: newType = PixelFormat::ARGB8888; break;
+                                case 5: newType = PixelFormat::ABGR8888; break;
+                                case 6: newType = PixelFormat::RGB565; break;
+                                case 7: newType = PixelFormat::GRAYSCALE; break;
+                                case 8: newType = PixelFormat::BINARY; break;
+                                case 9: newType = PixelFormat::HEX_PIXEL; break;
+                                case 10: newType = PixelFormat::CHAR_8BIT; break;
+                                default: newType = PixelFormat::RGB888; break;
+                            }
+                            viewer.format = PixelFormat(newType);
+                            // Update stride based on new format
+                            if (viewer.format.type == PixelFormat::BINARY) {
+                                viewer.stride = (viewer.memWidth + 7) / 8;  // Binary: bits to bytes
+                            } else {
+                                viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+                            }
+                            viewer.needsUpdate = true;
+                        }
+                    }
+                    
+                    if (isSelected && i < 11) {
+                        ImGui::SetItemDefaultFocus();
+                    }
                 }
-                viewer.format = PixelFormat(newType);
-                // Update stride based on new format
-                if (viewer.format.type == PixelFormat::BINARY) {
-                    viewer.stride = (viewer.memWidth + 7) / 8;  // Binary: bits to bytes
-                } else {
-                    viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
-                }
-                viewer.needsUpdate = true;
-            }
-            
-            // Split checkbox
-            if (ImGui::Checkbox("Split Components", &viewer.splitComponents)) {
-                viewer.needsUpdate = true;
+                ImGui::EndCombo();
             }
             
             ImGui::Separator();
@@ -344,6 +364,15 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             ImGui::Text("Anchor Mode:");
             ImGui::RadioButton("Stick to Address", (int*)&viewer.anchorMode, BitmapViewer::ANCHOR_TO_ADDRESS);
             ImGui::RadioButton("Stick to Position", (int*)&viewer.anchorMode, BitmapViewer::ANCHOR_TO_POSITION);
+            
+            // Show anchor position info based on mode
+            if (viewer.anchorMode == BitmapViewer::ANCHOR_TO_ADDRESS) {
+                ImGui::Text("Anchor: %s", AddressParser::Format(viewer.anchorAddress).c_str());
+            } else {
+                ImGui::Text("Anchor: %.1f%%, %.1f%%", 
+                           viewer.anchorRelativePos.x * 100.0f, 
+                           viewer.anchorRelativePos.y * 100.0f);
+            }
             
             if (ImGui::Checkbox("Show Leader Line", &viewer.showLeader)) {
                 // Just toggle the visibility
