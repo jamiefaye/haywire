@@ -169,9 +169,9 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             // Position popup to the left of the viewer to avoid obscuring content
             const float popupWidth = 350;  // Estimated popup width
             
-            // Get current window position (more accurate than stored position)
-            ImVec2 currentWindowPos = ImGui::GetWindowPos();
-            ImVec2 currentWindowSize = ImGui::GetWindowSize();
+            // Use the stored viewer window position and size (parent window, not child)
+            ImVec2 currentWindowPos = viewer.windowPos;
+            ImVec2 currentWindowSize = viewer.windowSize;
             
             // Calculate position to the left of viewer
             ImVec2 popupPos;
@@ -183,7 +183,7 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                 popupPos.x = currentWindowPos.x + currentWindowSize.x + 10;
             }
             
-            ImGui::SetNextWindowPos(popupPos, ImGuiCond_Appearing);
+            ImGui::SetNextWindowPos(popupPos, ImGuiCond_Always);
             ImGui::OpenPopup("ViewerSettings");
         }
         
