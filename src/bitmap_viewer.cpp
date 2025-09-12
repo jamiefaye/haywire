@@ -419,7 +419,7 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             // Size controls
             ImGui::SetNextItemWidth(90);
             if (ImGui::InputInt("W", &viewer.memWidth)) {
-                viewer.memWidth = std::max(16, viewer.memWidth);
+                viewer.memWidth = std::max(1, viewer.memWidth);
                 // Update stride based on format
                 if (viewer.format.type == PixelFormat::BINARY) {
                     viewer.stride = (viewer.memWidth + 7) / 8;  // Binary: bits to bytes
@@ -435,7 +435,7 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             }
             ImGui::SetNextItemWidth(90);
             if (ImGui::InputInt("H", &viewer.memHeight)) {
-                viewer.memHeight = std::max(16, viewer.memHeight);
+                viewer.memHeight = std::max(1, viewer.memHeight);
                 viewer.needsUpdate = true;
                 // Resize pixel buffer  
                 viewer.pixels.resize(viewer.memWidth * viewer.memHeight);
@@ -1394,8 +1394,8 @@ void BitmapViewerManager::HandleKeyboardInput() {
         if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
             // Decrease width - 1 pixel normally, 8 with Shift
             int step = shiftPressed ? 8 : 1;
-            if (focusedViewer->memWidth > 32) {
-                focusedViewer->memWidth = std::max(32, focusedViewer->memWidth - step);
+            if (focusedViewer->memWidth > 1) {
+                focusedViewer->memWidth = std::max(1, focusedViewer->memWidth - step);
                 needsUpdate = true;
             }
         }
@@ -1412,8 +1412,8 @@ void BitmapViewerManager::HandleKeyboardInput() {
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
             // Decrease height - 1 pixel normally, 8 with Shift
             int step = shiftPressed ? 8 : 1;
-            if (focusedViewer->memHeight > 32) {
-                focusedViewer->memHeight = std::max(32, focusedViewer->memHeight - step);
+            if (focusedViewer->memHeight > 1) {
+                focusedViewer->memHeight = std::max(1, focusedViewer->memHeight - step);
                 needsUpdate = true;
             }
         }
