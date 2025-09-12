@@ -405,9 +405,6 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                 viewer.windowSize.y = viewer.memHeight + 35;  // Add title bar + padding
                 viewer.forceResize = true;  // Force window resize on next frame
             }
-            if (ImGui::InputInt("Stride", &viewer.stride)) {
-                viewer.needsUpdate = true;
-            }
             
             ImGui::EndPopup();
         }
