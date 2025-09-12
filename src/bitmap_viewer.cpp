@@ -484,8 +484,24 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             // Calculate available space for the image
             ImVec2 availSize = ImGui::GetContentRegionAvail();
             
-            // Display the image filling the available space
-            ImGui::Image((void*)(intptr_t)viewer.texture, availSize);
+            // For very small images, display at actual size rather than stretching
+            ImVec2 displaySize = availSize;
+            if (viewer.memWidth < 50 || viewer.memHeight < 50) {
+                // Display at actual pixel size for small viewers
+                displaySize.x = std::min(availSize.x, (float)viewer.memWidth);
+                displaySize.y = std::min(availSize.y, (float)viewer.memHeight);
+                
+                // Center the image if there's extra space
+                if (displaySize.x < availSize.x || displaySize.y < availSize.y) {
+                    float offsetX = (availSize.x - displaySize.x) * 0.5f;
+                    float offsetY = (availSize.y - displaySize.y) * 0.5f;
+                    ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX() + offsetX, 
+                                               ImGui::GetCursorPosY() + offsetY));
+                }
+            }
+            
+            // Display the image
+            ImGui::Image((void*)(intptr_t)viewer.texture, displaySize);
         } else {
             // Show placeholder if no texture yet
             ImGui::Text("Loading...");
