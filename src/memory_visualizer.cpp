@@ -586,8 +586,8 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     
     // Constrain height to prevent overflow on first frame
     // The parent window is typically 800 high, with 60 for control bar
-    // This leaves roughly 740 pixels, but we need to be conservative
-    float maxHeight = std::min(600.0f, std::max(50.0f, availSize.y));
+    // Need to account for formula bar and other elements
+    float maxHeight = std::min(400.0f, std::max(50.0f, availSize.y));
     
     // Ensure we have enough space
     if (maxHeight < 50) {
