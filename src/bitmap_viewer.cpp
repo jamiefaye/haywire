@@ -253,7 +253,7 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         
         // Settings popup
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
-        ImGui::SetNextWindowSizeConstraints(ImVec2(200, 0), ImVec2(220, FLT_MAX));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(140, 0), ImVec2(160, FLT_MAX));
         if (ImGui::BeginPopup("ViewerSettings")) {
             ImGui::Text("Viewer Settings");
             ImGui::Separator();
@@ -270,8 +270,8 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             ss << std::hex << viewer.memoryAddress.value;
             strcpy(addrBuf, ss.str().c_str());
             
-            ImGui::SetNextItemWidth(150);
-            if (ImGui::InputText("Address", addrBuf, sizeof(addrBuf), 
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::InputText("##Address", addrBuf, sizeof(addrBuf), 
                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
                 // Parse using basic notation (TODO: use AddressParser)
                 uint64_t newAddr = 0;
@@ -315,7 +315,8 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             
             // Custom combo to handle the split option specially
             int displayIndex = viewer.formatIndex;
-            if (ImGui::BeginCombo("Format", formats[displayIndex])) {
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::BeginCombo("##Format", formats[displayIndex])) {
                 for (int i = 0; i < IM_ARRAYSIZE(formats); i++) {
                     if (i == 11) { // Separator line
                         ImGui::Separator();
@@ -384,8 +385,8 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             
             ImGui::Separator();
             // Size controls
-            ImGui::SetNextItemWidth(100);
-            if (ImGui::InputInt("Width", &viewer.memWidth)) {
+            ImGui::SetNextItemWidth(80);
+            if (ImGui::InputInt("W", &viewer.memWidth)) {
                 viewer.memWidth = std::max(16, viewer.memWidth);
                 // Update stride based on format
                 if (viewer.format.type == PixelFormat::BINARY) {
@@ -400,8 +401,8 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                 viewer.windowSize.x = viewer.memWidth + 10;  // Add padding
                 viewer.forceResize = true;  // Force window resize on next frame
             }
-            ImGui::SetNextItemWidth(100);
-            if (ImGui::InputInt("Height", &viewer.memHeight)) {
+            ImGui::SetNextItemWidth(80);
+            if (ImGui::InputInt("H", &viewer.memHeight)) {
                 viewer.memHeight = std::max(16, viewer.memHeight);
                 viewer.needsUpdate = true;
                 // Resize pixel buffer  
