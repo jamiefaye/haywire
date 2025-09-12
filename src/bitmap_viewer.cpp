@@ -160,6 +160,10 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         }
         viewer.windowSize = newWindowSize;
         
+        // Capture parent window position before creating child
+        ImVec2 parentWindowPos = viewer.windowPos;
+        ImVec2 parentWindowSize = viewer.windowSize;
+        
         // Custom title bar with controls
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
         ImGui::BeginChild("TitleBar", ImVec2(0, 25), true);
@@ -169,9 +173,9 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             // Position popup to the left of the viewer to avoid obscuring content
             const float popupWidth = 350;  // Estimated popup width
             
-            // Use the stored viewer window position and size (parent window, not child)
-            ImVec2 currentWindowPos = viewer.windowPos;
-            ImVec2 currentWindowSize = viewer.windowSize;
+            // Use the parent window position captured before child window
+            ImVec2 currentWindowPos = parentWindowPos;
+            ImVec2 currentWindowSize = parentWindowSize;
             
             // Calculate position to the left of viewer
             ImVec2 popupPos;
