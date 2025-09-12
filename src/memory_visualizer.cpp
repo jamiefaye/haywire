@@ -2293,7 +2293,7 @@ void MemoryVisualizer::HandleInput() {
     }
     
     bool shiftPressed = io.KeyShift;
-    bool ctrlPressed = io.KeyCtrl;
+    bool ctrlPressed = io.KeyCtrl || io.KeySuper;  // Cmd key on macOS
     bool altPressed = io.KeyAlt;
     
     // Check if mini-viewers have focus and handle their KEYBOARD input only
@@ -2315,32 +2315,18 @@ void MemoryVisualizer::HandleInput() {
         if (ctrlPressed) {
             // Ctrl+Left/Right adjusts width
             if (leftKey && viewport.width > 32) {
-                // Decrease width
-                int newWidth = viewport.width;
-                if ((newWidth & (newWidth - 1)) == 0) {  // Is power of 2
-                    newWidth /= 2;
-                } else {
-                    if (newWidth > 1000) newWidth = (newWidth / 100) * 100 - 100;
-                    else if (newWidth > 100) newWidth = (newWidth / 10) * 10 - 10;
-                    else newWidth -= 8;
-                }
-                viewport.width = std::max(32, newWidth);
+                // Decrease width - 1 pixel normally, 8 with Shift
+                int step = shiftPressed ? 8 : 1;
+                viewport.width = std::max(32, (int)viewport.width - step);
                 widthInput = viewport.width;
                 viewport.stride = viewport.width * viewport.format.bytesPerPixel;
                 strideInput = viewport.stride;
                 needsUpdate = true;
             }
             if (rightKey && viewport.width < 2048) {
-                // Increase width
-                int newWidth = viewport.width;
-                if ((newWidth & (newWidth - 1)) == 0) {  // Is power of 2
-                    newWidth *= 2;
-                } else {
-                    if (newWidth >= 1000) newWidth = (newWidth / 100) * 100 + 100;
-                    else if (newWidth >= 100) newWidth = (newWidth / 10) * 10 + 10;
-                    else newWidth += 8;
-                }
-                viewport.width = std::min(2048, newWidth);
+                // Increase width - 1 pixel normally, 8 with Shift
+                int step = shiftPressed ? 8 : 1;
+                viewport.width = std::min(2048, (int)viewport.width + step);
                 widthInput = viewport.width;
                 viewport.stride = viewport.width * viewport.format.bytesPerPixel;
                 strideInput = viewport.stride;
@@ -2349,30 +2335,16 @@ void MemoryVisualizer::HandleInput() {
             
             // Ctrl+Up/Down adjusts height
             if (upKey && viewport.height > 32) {
-                // Decrease height
-                int newHeight = viewport.height;
-                if ((newHeight & (newHeight - 1)) == 0) {  // Is power of 2
-                    newHeight /= 2;
-                } else {
-                    if (newHeight > 1000) newHeight = (newHeight / 100) * 100 - 100;
-                    else if (newHeight > 100) newHeight = (newHeight / 10) * 10 - 10;
-                    else newHeight -= 8;
-                }
-                viewport.height = std::max(32, newHeight);
+                // Decrease height - 1 pixel normally, 8 with Shift
+                int step = shiftPressed ? 8 : 1;
+                viewport.height = std::max(32, (int)viewport.height - step);
                 heightInput = viewport.height;
                 needsUpdate = true;
             }
             if (downKey && viewport.height < 2048) {
-                // Increase height
-                int newHeight = viewport.height;
-                if ((newHeight & (newHeight - 1)) == 0) {  // Is power of 2
-                    newHeight *= 2;
-                } else {
-                    if (newHeight >= 1000) newHeight = (newHeight / 100) * 100 + 100;
-                    else if (newHeight >= 100) newHeight = (newHeight / 10) * 10 + 10;
-                    else newHeight += 8;
-                }
-                viewport.height = std::min(2048, newHeight);
+                // Increase height - 1 pixel normally, 8 with Shift
+                int step = shiftPressed ? 8 : 1;
+                viewport.height = std::min(2048, (int)viewport.height + step);
                 heightInput = viewport.height;
                 needsUpdate = true;
             }

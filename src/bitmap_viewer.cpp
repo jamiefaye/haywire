@@ -1384,7 +1384,7 @@ void BitmapViewerManager::HandleKeyboardInput() {
     // Handle keyboard navigation for the focused mini-viewer
     ImGuiIO& io = ImGui::GetIO();
     bool shiftPressed = io.KeyShift;
-    bool ctrlPressed = io.KeyCtrl;
+    bool ctrlPressed = io.KeyCtrl || io.KeySuper;  // Cmd key on macOS
     
     // Ctrl+Arrow keys adjust width/height
     if (ctrlPressed) {
@@ -1392,68 +1392,36 @@ void BitmapViewerManager::HandleKeyboardInput() {
         
         // Ctrl+Left/Right adjusts width
         if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
-            // Decrease width by power of 2 or 10
-            int newWidth = focusedViewer->memWidth;
-            if (newWidth > 32) {
-                // Try power of 2 first
-                if ((newWidth & (newWidth - 1)) == 0) {  // Is power of 2
-                    newWidth /= 2;
-                } else {
-                    // Round down to nearest nice number
-                    if (newWidth > 1000) newWidth = (newWidth / 100) * 100 - 100;
-                    else if (newWidth > 100) newWidth = (newWidth / 10) * 10 - 10;
-                    else newWidth -= 8;
-                }
-                focusedViewer->memWidth = std::max(32, newWidth);
+            // Decrease width - 1 pixel normally, 8 with Shift
+            int step = shiftPressed ? 8 : 1;
+            if (focusedViewer->memWidth > 32) {
+                focusedViewer->memWidth = std::max(32, focusedViewer->memWidth - step);
                 needsUpdate = true;
             }
         }
         if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
-            // Increase width by power of 2 or 10
-            int newWidth = focusedViewer->memWidth;
-            if (newWidth < 2048) {
-                // Try power of 2 first
-                if ((newWidth & (newWidth - 1)) == 0) {  // Is power of 2
-                    newWidth *= 2;
-                } else {
-                    // Round up to nearest nice number
-                    if (newWidth >= 1000) newWidth = (newWidth / 100) * 100 + 100;
-                    else if (newWidth >= 100) newWidth = (newWidth / 10) * 10 + 10;
-                    else newWidth += 8;
-                }
-                focusedViewer->memWidth = std::min(2048, newWidth);
+            // Increase width - 1 pixel normally, 8 with Shift
+            int step = shiftPressed ? 8 : 1;
+            if (focusedViewer->memWidth < 2048) {
+                focusedViewer->memWidth = std::min(2048, focusedViewer->memWidth + step);
                 needsUpdate = true;
             }
         }
         
         // Ctrl+Up/Down adjusts height
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
-            // Decrease height
-            int newHeight = focusedViewer->memHeight;
-            if (newHeight > 32) {
-                if ((newHeight & (newHeight - 1)) == 0) {  // Is power of 2
-                    newHeight /= 2;
-                } else {
-                    if (newHeight > 1000) newHeight = (newHeight / 100) * 100 - 100;
-                    else if (newHeight > 100) newHeight = (newHeight / 10) * 10 - 10;
-                    else newHeight -= 8;
-                }
-                focusedViewer->memHeight = std::max(32, newHeight);
+            // Decrease height - 1 pixel normally, 8 with Shift
+            int step = shiftPressed ? 8 : 1;
+            if (focusedViewer->memHeight > 32) {
+                focusedViewer->memHeight = std::max(32, focusedViewer->memHeight - step);
                 needsUpdate = true;
             }
         }
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
-            // Increase height
-            int newHeight = focusedViewer->memHeight;
-            if (newHeight < 2048) {
-                if ((newHeight & (newHeight - 1)) == 0) {  // Is power of 2
-                    newHeight *= 2;
-                } else {
-                    if (newHeight >= 1000) newHeight = (newHeight / 100) * 100 + 100;
-                    else if (newHeight >= 100) newHeight = (newHeight / 10) * 10 + 10;
-                    else newHeight += 8;
-                }
-                focusedViewer->memHeight = std::min(2048, newHeight);
+            // Increase height - 1 pixel normally, 8 with Shift
+            int step = shiftPressed ? 8 : 1;
+            if (focusedViewer->memHeight < 2048) {
+                focusedViewer->memHeight = std::min(2048, focusedViewer->memHeight + step);
                 needsUpdate = true;
             }
         }
