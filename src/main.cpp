@@ -284,8 +284,8 @@ int main(int argc, char** argv) {
         });
     };
     
-    bool show_demo_window = false;
     bool show_metrics = false;  // Hidden by default
+    bool show_help = false;  // Keyboard shortcuts help
     bool show_memory_view = true;
     bool show_overview = false;
     bool show_connection_window = !autoConnected;  // Only show if auto-connect failed
@@ -349,7 +349,11 @@ int main(int argc, char** argv) {
                 }
                 ImGui::Separator();
                 ImGui::MenuItem("Metrics", nullptr, &show_metrics);
-                ImGui::MenuItem("Demo Window", nullptr, &show_demo_window);
+                ImGui::EndMenu();
+            }
+            
+            if (ImGui::BeginMenu("Help")) {
+                ImGui::MenuItem("Keyboard Shortcuts", "F1", &show_help);
                 ImGui::EndMenu();
             }
             
@@ -381,6 +385,11 @@ int main(int argc, char** argv) {
             // Handle 'P' hotkey
             if (ImGui::IsKeyPressed(ImGuiKey_P) && !ImGui::GetIO().WantTextInput) {
                 pidSelector.ToggleVisible();
+            }
+            
+            // Handle F1 for help
+            if (ImGui::IsKeyPressed(ImGuiKey_F1)) {
+                show_help = !show_help;
             }
             
             ImGui::EndChild();
@@ -464,8 +473,59 @@ int main(int argc, char** argv) {
             ImGui::End();
         }
         
-        if (show_demo_window) {
-            ImGui::ShowDemoWindow(&show_demo_window);
+        // Help window with keyboard shortcuts
+        if (show_help) {
+            ImGui::SetNextWindowSize(ImVec2(400, 500), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Keyboard Shortcuts", &show_help);
+            
+            ImGui::Text("Navigation:");
+            ImGui::BulletText("Arrow Keys: Move by one row/column");
+            ImGui::BulletText("Shift+Arrow: Move with 4-byte alignment");
+            ImGui::BulletText("Shift+Drag: Constrain drag to X or Y axis");
+            ImGui::BulletText("Page Up/Down: Move by screen height");
+            ImGui::BulletText("Home/End: Go to start/end of memory");
+            
+            ImGui::Separator();
+            ImGui::Text("Display:");
+            ImGui::BulletText("Tab: Cycle through pixel formats");
+            ImGui::BulletText("Shift+Tab: Cycle backwards through formats");
+            ImGui::BulletText("H: Toggle hex overlay");
+            ImGui::BulletText("M: Toggle magnifier");
+            ImGui::BulletText("N: Toggle navigator");
+            ImGui::BulletText("C: Toggle correlation graph");
+            ImGui::BulletText("X: Toggle change highlight");
+            ImGui::BulletText("R: Toggle auto-refresh");
+            
+            ImGui::Separator();
+            ImGui::Text("Width/Height:");
+            ImGui::BulletText("Ctrl+Left/Right: Adjust width (-/+ 1 pixel)");
+            ImGui::BulletText("Ctrl+Shift+Left/Right: Adjust width (-/+ 8 pixels)");
+            ImGui::BulletText("Ctrl+Up/Down: Adjust height (-/+ 1 pixel)");
+            ImGui::BulletText("Ctrl+Shift+Up/Down: Adjust height (-/+ 8 pixels)");
+            
+            ImGui::Separator();
+            ImGui::Text("Mini Viewers:");
+            ImGui::BulletText("Right-click: Create mini viewer at location");
+            ImGui::BulletText("Ctrl+Arrow: Adjust viewer width/height");
+            ImGui::BulletText("Alt+Arrow: Move anchor point");
+            ImGui::BulletText("Click title: Focus viewer for keyboard input");
+            ImGui::BulletText("ESC: Clear focus from mini viewer");
+            
+            ImGui::Separator();
+            ImGui::Text("Search:");
+            ImGui::BulletText("Ctrl+F: Search (when magnifier is open)");
+            ImGui::BulletText("F3: Find next");
+            ImGui::BulletText("Shift+F3: Find previous");
+            ImGui::BulletText("Enter: Go to address (in formula bar)");
+            
+            ImGui::Separator();
+            ImGui::Text("Other:");
+            ImGui::BulletText("F5: Refresh memory");
+            ImGui::BulletText("F12/S: Take screenshot");
+            ImGui::BulletText("Ctrl+F12: Take full window screenshot (planned)");
+            ImGui::BulletText("F1: Show this help");
+            
+            ImGui::End();
         }
         
         // Draw PID selector window if visible
