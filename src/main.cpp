@@ -385,15 +385,6 @@ int main(int argc, char** argv) {
             
             // Bottom section with two panes - child windows will use remaining space automatically
             
-            // Debug output
-            static int mainFrameCount = 0;
-            if (mainFrameCount++ % 60 == 0) {
-                ImVec2 windowSize = ImGui::GetWindowSize();
-                ImVec2 availSpace = ImGui::GetContentRegionAvail();
-                printf("Main window size: %.1fx%.1f, available space after ControlBar: %.1fx%.1f\n", 
-                       windowSize.x, windowSize.y, availSpace.x, availSpace.y);
-            }
-            
             if (show_overview) {
                 // Left pane: Memory Sections
                 ImGui::BeginChild("SectionsPane", ImVec2(300, 0), true);  // 0 = use remaining height

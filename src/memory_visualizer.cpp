@@ -587,16 +587,6 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     // Use all the remaining space - the formula bar already consumed its pixels
     float maxHeight = std::max(50.0f, availSize.y);
     
-    // Debug: Let's see what we're getting
-    static int frameCount = 0;
-    if (frameCount++ % 60 == 0) {  // Print every second
-        ImVec2 parentSize = ImGui::GetWindowSize();
-        ImVec2 contentMax = ImGui::GetWindowContentRegionMax();
-        ImVec2 contentMin = ImGui::GetWindowContentRegionMin();
-        ImVec2 parentContentSize = ImVec2(contentMax.x - contentMin.x, contentMax.y - contentMin.y);
-        printf("DrawMemoryBitmap: parentWindow=%.1fx%.1f, parentContent=%.1fx%.1f, availSize.y=%.1f, maxHeight=%.1f\n", 
-               parentSize.x, parentSize.y, parentContentSize.x, parentContentSize.y, availSize.y, maxHeight);
-    }
     
     // Ensure we have enough space
     if (maxHeight < 50) {
@@ -984,14 +974,8 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     ImVec2 availSize = ImGui::GetContentRegionAvail();
     // Calculate slider height: total available minus two 30px buttons and ImGui spacing
     // - button (30px) + ImGui spacing (~8px) + slider + ImGui spacing (~8px) + button (30px)
-    // Adding extra 80px as requested to make scrollbar shorter
-    float sliderHeight = std::max(100.0f, availSize.y - 156.0f);  // 76 + 80 extra
+    float sliderHeight = std::max(100.0f, availSize.y - 76.0f);  // Properly sized for buttons
     
-    // Debug output
-    static int sliderFrameCount = 0;
-    if (sliderFrameCount++ % 60 == 0) {
-        printf("DrawVerticalAddressSlider: availSize.y=%.1f, sliderHeight=%.1f\n", availSize.y, sliderHeight);
-    }
     
     // Convert address to vertical slider position (inverted - top is 0)
     uint64_t sliderValue = currentPos / sliderUnit;
