@@ -949,8 +949,6 @@ TypedAddress BitmapViewerManager::ScreenToMemoryAddress(ImVec2 screenPos) {
         if (address < maxFlat) {
             return TypedAddress::Crunched(address);
         } else {
-            printf("Warning: Address 0x%llx exceeds crunched space size (0x%llx)\n", 
-                   address, maxFlat);
             // Fall back to shared memory interpretation
             return TypedAddress::Shared(address);
         }
