@@ -589,14 +589,25 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     ImVec2 availSize = ImGui::GetContentRegionAvail();
     
     // Calculate proper height for child windows
-    // availSize.y should be initialAvail.y - formulaBarHeight - spacing
-    float maxHeight = availSize.y;
+    // Account for UI elements above the memory view:
+    // - Window title bar: ~22px (ImGui default)
+    // - ControlBar: 60px (defined in main.cpp)
+    // - Window padding: 8px top + 8px bottom = 16px
+    // - Additional spacing: ~2px
+    // Total: 22 + 60 + 16 + 2 = 100px
+    const float titleBarHeight = 22.0f;  // ImGui window title bar
+    const float controlBarHeight = 60.0f;  // ControlBar child window height from main.cpp
+    const float windowPadding = ImGui::GetStyle().WindowPadding.y * 2;  // Top and bottom padding
+    const float additionalSpacing = 2.0f;  // Small buffer for rounding/alignment
+    
+    float totalOverhead = titleBarHeight + controlBarHeight + windowPadding + additionalSpacing;
+    float maxHeight = std::max(50.0f, availSize.y - totalOverhead);
     
     // Debug output to understand space allocation
     static int frameCount = 0;
     if (frameCount++ % 60 == 0) {
-        printf("DrawMemoryBitmap: initial=%.1f, after formula=%.1f, maxHeight=%.1f\n",
-               initialAvail.y, availSize.y, maxHeight);
+        printf("DrawMemoryBitmap: availSize=%.1f, overhead=%.1f (title=%.1f + control=%.1f + pad=%.1f), maxHeight=%.1f\n",
+               availSize.y, totalOverhead, titleBarHeight, controlBarHeight, windowPadding, maxHeight);
     }
     
     
@@ -613,7 +624,8 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     float sliderWidth = 200;
     float memoryWidth = std::max(100.0f, availSize.x - sliderWidth - 10);  // -10 for spacing
     
-    // Vertical address slider on the left - use constrained height
+    // Vertical address slider on the left - match the bitmap height
+    // Account for the same overhead as the memory view
     ImGui::BeginChild("AddressSlider", ImVec2(sliderWidth, maxHeight), false, 
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     DrawVerticalAddressSlider();
@@ -621,7 +633,7 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     
     ImGui::SameLine();
     
-    // Memory view on the right - use constrained height
+    // Memory view on the right - same height as scrollbar container
     ImGui::BeginChild("BitmapView", ImVec2(memoryWidth, maxHeight), false);
     DrawMemoryView();
     ImGui::EndChild();
@@ -988,8 +1000,8 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     float spacing = ImGui::GetStyle().ItemSpacing.y;
     
     // Calculate from first principles:
-    // Total available = availSize.y
-    // Need: button (30) + spacing + slider + spacing + button (30)
+    // We need to reserve space for both buttons and their spacing
+    // The buttons are drawn BEFORE and AFTER the slider
     float totalButtonSpace = buttonHeight * 2 + spacing * 2;
     float sliderHeight = std::max(100.0f, availSize.y - totalButtonSpace);
     
