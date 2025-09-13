@@ -40,6 +40,7 @@ Haywire is a VM memory introspection tool that bypasses QEMU's memory isolation 
 - `docs/qemu_memory_introspection.md` - Technical architecture
 - `docs/build_qemu.md` - Building modified QEMU
 - `docs/kernel_structs.md` - Kernel structure layouts
+- `docs/rendering_pipeline.md` - Memory rendering pipeline and column mode
 
 ## Common Tasks
 
@@ -142,12 +143,22 @@ response = json.loads(sock.recv(4096).decode())
   - Available in both main visualizer and mini viewers
   - Toggled via "Split" option in format selector
 
+### Column Mode Memory Layout
+- **Multi-column display**: Memory flows vertically down columns, then wraps to next column
+- **Simplified controls**: Only column width and gap (height = window height, stride = width)
+- **Unified pixel units**: All widths use pixels for consistency (not mix of bytes/pixels)
+- **Proper coordinate transformations**: Mouse clicks, change tracking, mini-viewers all work correctly
+- **Full documentation**: See `docs/rendering_pipeline.md` for implementation details
+
 ### UI Improvements
 - Default width changed from 640 to 1024 pixels
 - Compact "Split" label instead of "Split Components" 
 - Dynamic combo box height to show all format options
 - Format selector moved left in mini viewers for narrow window access
 - Address-based labels for bitmap viewers (e.g., "s:0x1000" instead of "Viewer 1")
+- Dynamic control bar height that adjusts for column mode (3 rows vs 2 rows)
+- Select button in memory visualizer opens Process Selector window
+- Removed redundant Process Selector [P] button (kept hotkey)
 
 ### New Beacon Encoder/Decoder Architecture
 - Simplified beacon protocol with page-based encoding (no entries span pages)
