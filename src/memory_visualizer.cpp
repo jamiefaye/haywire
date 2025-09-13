@@ -585,7 +585,8 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     ImVec2 availSize = ImGui::GetContentRegionAvail();
     
     // Use all the remaining space - the formula bar already consumed its pixels
-    float maxHeight = std::max(50.0f, availSize.y);
+    // Reduce by 100px to match scrollbar adjustment
+    float maxHeight = std::max(50.0f, availSize.y - 100.0f);
     
     
     // Ensure we have enough space
