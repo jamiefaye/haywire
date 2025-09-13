@@ -78,4 +78,4 @@ vms/*.qcow2
 qemu-mods/qemu-system-aarch64-unsigned
 
 # Temporary test attempts
-test_attempts/
+test_attempts/imgui.ini
