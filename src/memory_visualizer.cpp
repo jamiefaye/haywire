@@ -107,9 +107,12 @@ void MemoryVisualizer::SetProcessPid(int pid) {
     if (crunchedReader) {
         crunchedReader->SetPID(pid);
     }
-    // Update bitmap viewer manager's PID
+    // Update bitmap viewer manager's PID and VA components
     if (bitmapViewerManager) {
         bitmapViewerManager->SetCurrentPID(pid);
+        // Always update these when PID changes, regardless of VA mode state
+        bitmapViewerManager->SetCrunchedReader(crunchedReader.get());
+        bitmapViewerManager->SetAddressFlattener(addressFlattener.get());
     }
     
     // Auto-enable VA mode when a PID is selected
