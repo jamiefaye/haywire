@@ -92,6 +92,9 @@ public:
     // Check if any bitmap viewer anchor is being dragged
     bool IsBitmapAnchorDragging() const;
     
+    // Callback for process selector button
+    std::function<void()> onProcessSelectorClick;
+    
 private:
     void DrawControls();
     void DrawMemoryView();
@@ -122,6 +125,12 @@ private:
     bool showChangeHighlight;
     bool showMagnifier;
     bool splitComponents;  // Whether to split RGB/RGBA into separate channels
+    
+    // Column mode settings
+    bool columnMode;        // Enable column layout
+    int columnWidth;        // Width of each column in bytes
+    int columnHeight;       // Height of each column in rows
+    int columnGap;          // Gap between columns in pixels
     
     char addressInput[32];
     int widthInput;

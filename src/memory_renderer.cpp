@@ -49,13 +49,34 @@ std::vector<uint32_t> MemoryRenderer::RenderStandard(
     
     int bytesPerPixel = GetBytesPerPixel(config.format);
     
-    for (int y = 0; y < config.height && y < config.displayHeight; y++) {
-        for (int x = 0; x < config.width && x < config.displayWidth; x++) {
-            size_t offset = y * config.stride + x * bytesPerPixel;
-            
-            if (offset + bytesPerPixel <= dataSize) {
-                uint32_t pixel = ExtractPixel(data, offset, dataSize, config.format);
-                pixels[y * config.displayWidth + x] = pixel;
+    if (config.columnMode) {
+        // Column mode rendering
+        for (int y = 0; y < config.displayHeight; y++) {
+            for (int x = 0; x < config.displayWidth; x++) {
+                // Calculate memory offset for this display position
+                size_t offset = config.ColumnDisplayToMemory(x, y, 1);  // 1 pixel per element for standard formats
+                
+                if (offset == size_t(-1)) {
+                    // We're in a gap between columns - leave as black
+                    continue;
+                }
+                
+                if (offset + bytesPerPixel <= dataSize) {
+                    uint32_t pixel = ExtractPixel(data, offset, dataSize, config.format);
+                    pixels[y * config.displayWidth + x] = pixel;
+                }
+            }
+        }
+    } else {
+        // Linear mode rendering (existing code)
+        for (int y = 0; y < config.height && y < config.displayHeight; y++) {
+            for (int x = 0; x < config.width && x < config.displayWidth; x++) {
+                size_t offset = y * config.stride + x * bytesPerPixel;
+                
+                if (offset + bytesPerPixel <= dataSize) {
+                    uint32_t pixel = ExtractPixel(data, offset, dataSize, config.format);
+                    pixels[y * config.displayWidth + x] = pixel;
+                }
             }
         }
     }

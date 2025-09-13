@@ -30,6 +30,7 @@ MemoryVisualizer::MemoryVisualizer()
       refreshRate(10.0f), showHexOverlay(false), showNavigator(true), showCorrelation(false),
       showChangeHighlight(true), showMagnifier(false),  // Magnifier off by default
       splitComponents(false),  // Split components off by default
+      columnMode(false), columnWidth(256), columnHeight(256), columnGap(8),  // Column mode defaults
       widthInput(512), heightInput(480), strideInput(512),  // Default to 512 width
       pixelFormatIndex(0), mouseX(0), mouseY(0), isDragging(false),
       dragStartX(0), dragStartY(0), dragAxisLocked(false), dragAxis(0),
@@ -148,10 +149,6 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
     
     // Horizontal layout for controls
     DrawControls();
-    
-    ImGui::SameLine();
-    ImGui::Separator();
-    ImGui::SameLine();
     
     // Check if async read completed
     if (readComplete.exchange(false)) {
@@ -652,7 +649,7 @@ void MemoryVisualizer::DrawMemoryBitmap() {
 void MemoryVisualizer::Draw(QemuConnection& qemu) {
     // Legacy method for compatibility - combines both
     ImGui::Columns(2, "VisualizerColumns", true);
-    ImGui::SetColumnWidth(0, 300);
+    ImGui::SetColumnWidth(0, 300);  // Back to original width
     
     DrawControlBar(qemu);
     
@@ -858,7 +855,10 @@ void MemoryVisualizer::DrawControls() {
         ImGui::SetTooltip("Show magnifier & search tool (Press 'M' to bring to front, Ctrl+F to search)");
     }
     
-    // Second row: VA/PA translation controls and process info
+    // Second row: Column mode, VA/PA translation controls, and process info
+    ImGui::Checkbox("Columns", &columnMode);
+    
+    ImGui::SameLine();
     if (ImGui::Checkbox("VA Mode", &useVirtualAddresses)) {
         // Update bitmap viewer manager's VA mode
         if (bitmapViewerManager) {
@@ -917,6 +917,7 @@ void MemoryVisualizer::DrawControls() {
         ImGui::SetTooltip("Enter virtual addresses (auto-translates to physical)");
     }
     
+    // PID input field (only show when in VA mode)
     if (useVirtualAddresses) {
         ImGui::SameLine();
         ImGui::Text("PID:");
@@ -936,25 +937,73 @@ void MemoryVisualizer::DrawControls() {
             }
         }
         ImGui::PopItemWidth();
-        
-        // Show cache stats if available
-        if (viewportTranslator) {
-            auto stats = viewportTranslator->GetStats();
-            if (stats.totalEntries > 0) {
-                ImGui::SameLine();
-                ImGui::Text("Cache: %.1f%% (%zu entries)", 
-                           stats.hitRate * 100.0f, stats.totalEntries);
-            }
+    }
+    
+    // Process selector button - always visible on line 2
+    ImGui::SameLine();
+    if (ImGui::Button("Select...")) {
+        if (onProcessSelectorClick) {
+            onProcessSelectorClick();
         }
     }
     
-    // Display process name if available (always show, not just in VA mode)
+    // Display process name if available
     if (!currentProcessName.empty() && targetPid > 0) {
         ImGui::SameLine();
-        ImGui::Text("Process: %s", currentProcessName.c_str());
-    } else if (targetPid > 0) {
+        ImGui::Text("%s", currentProcessName.c_str());
+    }
+    
+    // Third row: Column mode controls (only show if column mode is enabled)
+    if (columnMode) {
+        // Force column parameters to start on a new line (line 3)
+        ImGui::Text("Col Width:");
         ImGui::SameLine();
-        ImGui::Text("Process: PID %d", targetPid);
+        ImGui::PushItemWidth(100);  // Wider field
+        if (ImGui::InputInt("##ColWidth", &columnWidth)) {
+            columnWidth = std::max(1, columnWidth);
+            needsUpdate = true;
+        }
+        ImGui::PopItemWidth();
+        
+        ImGui::SameLine();
+        ImGui::Dummy(ImVec2(15, 0));  // Add spacing
+        ImGui::SameLine();
+        ImGui::Text("Col Height:");
+        ImGui::SameLine();
+        ImGui::PushItemWidth(100);  // Wider field
+        if (ImGui::InputInt("##ColHeight", &columnHeight)) {
+            columnHeight = std::max(1, columnHeight);
+            needsUpdate = true;
+        }
+        ImGui::PopItemWidth();
+        
+        ImGui::SameLine();
+        ImGui::Dummy(ImVec2(15, 0));  // Add spacing
+        ImGui::SameLine();
+        ImGui::Text("Gap:");
+        ImGui::SameLine();
+        ImGui::PushItemWidth(80);  // Wider field for gap
+        if (ImGui::InputInt("##ColGap", &columnGap)) {
+            columnGap = std::max(0, columnGap);
+            needsUpdate = true;
+        }
+        ImGui::PopItemWidth();
+        
+        ImGui::SameLine();
+        ImGui::Dummy(ImVec2(15, 0));  // Add spacing
+        ImGui::SameLine();
+        ImGui::Text("Stride:");
+        ImGui::SameLine();
+        ImGui::PushItemWidth(100);  // Wider field
+        if (ImGui::InputInt("##Stride", &strideInput)) {
+            viewport.stride = std::max(columnWidth, strideInput);  // Stride must be >= column width
+            strideInput = viewport.stride;
+            needsUpdate = true;
+        }
+        ImGui::PopItemWidth();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Memory stride (bytes per row). Must be >= column width.");
+        }
     }
     
     // Refresh rate is now automatic based on connection type
@@ -2651,6 +2700,12 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToPixels(const MemoryBlock&
     config.height = viewport.height;
     config.format = viewport.format;
     config.splitComponents = splitComponents;
+    
+    // Column mode settings
+    config.columnMode = columnMode;
+    config.columnWidth = columnWidth;
+    config.columnHeight = columnHeight;
+    config.columnGap = columnGap;
     
     if (memory.data.empty()) {
         return std::vector<uint32_t>(viewport.width * viewport.height, 0xFF000000);

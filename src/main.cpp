@@ -114,6 +114,12 @@ int main(int argc, char** argv) {
         visualizer.SetBeaconReader(beaconReader);  // Also set beacon reader for bitmap viewers
         visualizer.SetQemuConnection(&qemu);  // Pass QEMU connection for VA->PA translation
         visualizer.SetMemoryMapper(memoryMapper);  // Pass memory mapper for GPA->offset translation
+        
+        // Wire up the Select button to open the PID selector
+        visualizer.onProcessSelectorClick = [&pidSelector]() {
+            pidSelector.Show();
+        };
+        
         std::cout << "Beacon translator created and connected to visualizer\n";
         
         // Set callback to switch to process mode when PID is selected
@@ -373,16 +379,8 @@ int main(int argc, char** argv) {
             ImGui::BeginChild("ControlBar", ImVec2(0, 60), false);  // false = no border/resize
             visualizer.DrawControlBar(qemu);
             
-            // Add Process Selector button
-            ImGui::SameLine();
-            ImGui::Separator();
-            ImGui::SameLine();
-            
-            if (ImGui::Button("Process Selector [P]")) {
-                pidSelector.Show();
-            }
-            
-            // Handle 'P' hotkey
+            // Process Selector button removed - now using Select button in memory visualizer
+            // The 'P' hotkey still works
             if (ImGui::IsKeyPressed(ImGuiKey_P) && !ImGui::GetIO().WantTextInput) {
                 pidSelector.ToggleVisible();
             }
