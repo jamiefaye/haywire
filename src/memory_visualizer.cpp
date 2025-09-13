@@ -246,9 +246,28 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                             changedBytes++;
                             
                             // Calculate X,Y position in the viewport
-                            size_t strideBytes = viewport.stride * viewport.format.bytesPerPixel;
-                            int x = (i % strideBytes) / viewport.format.bytesPerPixel;
-                            int y = i / strideBytes;
+                            int x, y;
+                            if (columnMode) {
+                                // Column mode - reverse the column layout calculation
+                                int bytesPerPixel = viewport.format.bytesPerPixel;
+                                size_t bytesPerColumn = viewport.height * columnWidth * bytesPerPixel;
+                                
+                                // Which column is this byte in?
+                                int col = i / bytesPerColumn;
+                                size_t posInColumn = i % bytesPerColumn;
+                                
+                                // Position within column
+                                y = posInColumn / (columnWidth * bytesPerPixel);
+                                int xInColumn = (posInColumn % (columnWidth * bytesPerPixel)) / bytesPerPixel;
+                                
+                                // Convert to display coordinates
+                                x = col * (columnWidth + columnGap) + xInColumn;
+                            } else {
+                                // Linear mode
+                                size_t strideBytes = viewport.stride * viewport.format.bytesPerPixel;
+                                x = (i % strideBytes) / viewport.format.bytesPerPixel;
+                                y = i / strideBytes;
+                            }
                             
                             // Add to current frame's changes
                             bool foundAdjacentRegion = false;
@@ -967,7 +986,7 @@ void MemoryVisualizer::DrawControls() {
         }
         ImGui::PopItemWidth();
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Width of each column in bytes");
+            ImGui::SetTooltip("Width of each column in pixels (same units as main Width field)");
         }
         
         ImGui::SameLine();
@@ -986,7 +1005,7 @@ void MemoryVisualizer::DrawControls() {
         }
         
         ImGui::SameLine();
-        ImGui::TextDisabled("(Height: window height, Stride: column width)");
+        ImGui::TextDisabled("(All widths in pixels)");
     }
     
     // Refresh rate is now automatic based on connection type
@@ -1423,6 +1442,9 @@ void MemoryVisualizer::DrawMemoryView() {
                 viewport.height,
                 viewport.format.bytesPerPixel
             );
+            
+            // Also update column mode settings
+            bitmapViewerManager->SetColumnMode(columnMode, columnWidth, columnGap);
         }
         
         drawList->PushClipRect(canvasPos, 
@@ -2714,8 +2736,38 @@ uint32_t MemoryVisualizer::GetPixelAt(int x, int y) const {
 }
 
 uint64_t MemoryVisualizer::GetAddressAt(int x, int y) const {
-    // Calculate base offset from pixel position
-    size_t offset = (y * viewport.stride + x) * viewport.format.bytesPerPixel;
+    size_t offset;
+    
+    if (columnMode) {
+        // Column mode - columnWidth is now in pixels, like viewport.width
+        int bytesPerPixel = viewport.format.bytesPerPixel;
+        int totalColumnWidth = columnWidth + columnGap;
+        
+        // Which column are we in?
+        int col = x / totalColumnWidth;
+        int xInColumn = x % totalColumnWidth;
+        
+        // Are we in the gap between columns?
+        if (xInColumn >= columnWidth) {
+            // Return address of the start of the next column
+            col++;
+            xInColumn = 0;
+        }
+        
+        // Calculate memory offset using column layout
+        // Each column contains (viewport.height * columnWidth * bytesPerPixel) bytes
+        size_t bytesPerColumn = viewport.height * columnWidth * bytesPerPixel;
+        size_t columnStart = col * bytesPerColumn;
+        
+        // Position within the column
+        size_t byteInRow = xInColumn * bytesPerPixel;
+        size_t rowOffset = y * columnWidth * bytesPerPixel;  // columnWidth in pixels * bytesPerPixel = stride in bytes
+        
+        offset = columnStart + rowOffset + byteInRow;
+    } else {
+        // Linear mode - original calculation
+        offset = (y * viewport.stride + x) * viewport.format.bytesPerPixel;
+    }
     
     // Add scroll offset if we're in a scrollable view
     // The viewport.baseAddress already includes scroll offset from mouse wheel/dragging

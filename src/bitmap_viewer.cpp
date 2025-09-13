@@ -906,12 +906,29 @@ ImVec2 BitmapViewerManager::MemoryToScreen(uint64_t address) {
     // Calculate offset from viewport base
     int64_t offset = (int64_t)address - (int64_t)viewportBaseAddress;
     
-    // Convert byte offset to pixel offset
-    int64_t pixelOffset = offset / viewportBytesPerPixel;
+    // Convert byte offset to display coordinates
+    int64_t x, y;
     
-    // Convert to x,y coordinates
-    int64_t y = pixelOffset / viewportWidth;
-    int64_t x = pixelOffset % viewportWidth;
+    if (columnMode) {
+        // Column mode - reverse the calculation
+        size_t bytesPerColumn = viewportHeight * columnWidth * viewportBytesPerPixel;
+        
+        // Which column is this byte in?
+        int col = offset / bytesPerColumn;
+        size_t posInColumn = offset % bytesPerColumn;
+        
+        // Position within column
+        y = posInColumn / (columnWidth * viewportBytesPerPixel);
+        int xInColumn = (posInColumn % (columnWidth * viewportBytesPerPixel)) / viewportBytesPerPixel;
+        
+        // Convert to display coordinates
+        x = col * (columnWidth + columnGap) + xInColumn;
+    } else {
+        // Linear mode
+        int64_t pixelOffset = offset / viewportBytesPerPixel;
+        y = pixelOffset / viewportWidth;
+        x = pixelOffset % viewportWidth;
+    }
     
     // Scale to screen coordinates
     float screenX = memoryViewPos.x + (x * memoryViewSize.x / viewportWidth);
@@ -936,8 +953,37 @@ TypedAddress BitmapViewerManager::ScreenToMemoryAddress(ImVec2 screenPos) {
     int memY = (int)(relY * viewportHeight / memoryViewSize.y);
     
     // Calculate byte offset from viewport base
-    uint64_t offset = memY * viewportWidth * viewportBytesPerPixel + 
-                      memX * viewportBytesPerPixel;
+    uint64_t offset;
+    if (columnMode) {
+        // Column mode - same logic as GetAddressAt in memory_visualizer
+        int totalColumnWidth = columnWidth + columnGap;
+        
+        // Which column are we in?
+        int col = memX / totalColumnWidth;
+        int xInColumn = memX % totalColumnWidth;
+        
+        // Are we in the gap between columns?
+        if (xInColumn >= columnWidth) {
+            // Return address of the start of the next column
+            col++;
+            xInColumn = 0;
+        }
+        
+        // Calculate memory offset using column layout
+        // Each column contains (viewportHeight * columnWidth * bytesPerPixel) bytes
+        size_t bytesPerColumn = viewportHeight * columnWidth * viewportBytesPerPixel;
+        size_t columnStart = col * bytesPerColumn;
+        
+        // Position within the column
+        size_t byteInRow = xInColumn * viewportBytesPerPixel;
+        size_t rowOffset = memY * columnWidth * viewportBytesPerPixel;  // columnWidth in pixels * bytesPerPixel = stride in bytes
+        
+        offset = columnStart + rowOffset + byteInRow;
+    } else {
+        // Linear mode
+        offset = memY * viewportWidth * viewportBytesPerPixel + 
+                 memX * viewportBytesPerPixel;
+    }
     
     uint64_t address = viewportBaseAddress + offset;
     

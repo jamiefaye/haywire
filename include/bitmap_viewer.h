@@ -114,6 +114,13 @@ public:
         viewportBytesPerPixel = bytesPerPixel;
     }
     
+    // Set column mode parameters
+    void SetColumnMode(bool enabled, int colWidth, int colGap) {
+        columnMode = enabled;
+        columnWidth = colWidth;
+        columnGap = colGap;
+    }
+    
     // Create a new viewer at the specified memory location
     void CreateViewer(TypedAddress address, ImVec2 anchorPos, PixelFormat format = PixelFormat::RGB888);
     
@@ -187,6 +194,11 @@ private:
     int viewportWidth = 256;
     int viewportHeight = 256;
     int viewportBytesPerPixel = 1;
+    
+    // Column mode parameters
+    bool columnMode = false;
+    int columnWidth = 256;  // In pixels
+    int columnGap = 8;
 };
 
 }  // namespace Haywire
