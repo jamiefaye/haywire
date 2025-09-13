@@ -2550,10 +2550,28 @@ void MemoryVisualizer::HandleInput() {
                 }
             }
             
-            // Vertical: Each pixel of drag = one row of memory
-            // Horizontal: Each pixel of drag = one byte (or pixel format size)
-            int64_t verticalDelta = (int64_t)dragDeltaY * viewport.stride;
-            int64_t horizontalDelta = (int64_t)dragDeltaX * viewport.format.bytesPerPixel;
+            // Calculate memory offset based on format
+            int64_t verticalDelta, horizontalDelta;
+            
+            if (viewport.format.type == PixelFormat::HEX_PIXEL) {
+                // HEX_PIXEL: Each cell is 32x8 pixels showing 4 bytes
+                // Vertical: 8 display pixels = 1 row of hex cells = viewport.stride * 4 bytes
+                verticalDelta = ((int64_t)dragDeltaY / 8) * viewport.stride * 4;
+                // Horizontal: 32 display pixels = 1 hex cell = 4 bytes
+                horizontalDelta = ((int64_t)dragDeltaX / 32) * 4;
+            } else if (viewport.format.type == PixelFormat::CHAR_8BIT) {
+                // CHAR_8BIT: Each character is 6x8 pixels showing 1 byte
+                // Vertical: 8 display pixels = 1 row of characters = viewport.stride bytes
+                verticalDelta = ((int64_t)dragDeltaY / 8) * viewport.stride;
+                // Horizontal: 6 display pixels = 1 character = 1 byte
+                horizontalDelta = (int64_t)dragDeltaX / 6;
+            } else {
+                // Normal pixel formats: 1 display pixel = 1 memory pixel
+                // Vertical: Each pixel of drag = one row of memory
+                verticalDelta = (int64_t)dragDeltaY * viewport.stride * viewport.format.bytesPerPixel;
+                // Horizontal: Each pixel of drag = one pixel worth of memory
+                horizontalDelta = (int64_t)dragDeltaX * viewport.format.bytesPerPixel;
+            }
             
             int64_t totalDelta = verticalDelta + horizontalDelta;
             
