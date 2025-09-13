@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
-    // Disable ImGui INI file to prevent layout persistence issues
+    // Disable ImGui INI file - it causes layout issues
     io.IniFilename = nullptr;
     // Disable ImGui keyboard navigation to use our own shortcuts
     // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
