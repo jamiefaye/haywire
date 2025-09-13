@@ -361,7 +361,7 @@ int main(int argc, char** argv) {
         // Main Haywire window with classic layout (draw first so connection appears on top)
         if (show_memory_view) {
             ImGui::SetNextWindowSize(ImVec2(1200, 800), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowPos(ImVec2(50, 100), ImGuiCond_FirstUseEver);  // Start below menu bar
+            ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);  // Move up 80px and left 30px
             ImGui::Begin("Haywire Memory Visualizer", &show_memory_view, 
                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
             
