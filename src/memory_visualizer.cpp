@@ -1027,8 +1027,38 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     // Top navigation buttons (- buttons side by side)
     float buttonWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
     
+    // Auto-repeat parameters
+    const auto REPEAT_DELAY = std::chrono::milliseconds(500);  // Initial delay before repeat starts
+    const auto REPEAT_RATE = std::chrono::milliseconds(50);    // Repeat rate once started (20 Hz)
+    auto now = std::chrono::steady_clock::now();
+    
     // -Page button (always 4K)
-    if (ImGui::Button("-Page", ImVec2(buttonWidth, 20))) {
+    bool doPageUp = false;
+    ImGui::Button("-Page", ImVec2(buttonWidth, 20));
+    
+    if (ImGui::IsItemActive()) {
+        if (activeButtonId != 1) {
+            // Just pressed - trigger immediately
+            doPageUp = true;
+            activeButtonId = 1;
+            buttonHoldStart = now;
+            lastRepeatTime = now;
+        } else {
+            // Being held - check for auto-repeat
+            auto holdDuration = now - buttonHoldStart;
+            if (holdDuration > REPEAT_DELAY) {
+                // Start repeating
+                if (now - lastRepeatTime > REPEAT_RATE) {
+                    doPageUp = true;
+                    lastRepeatTime = now;
+                }
+            }
+        }
+    } else if (activeButtonId == 1) {
+        activeButtonId = 0;  // Button released
+    }
+    
+    if (doPageUp) {
         uint64_t pageSize = 0x1000;  // Always 4K
         if (viewport.baseAddress >= pageSize) {
             viewport.baseAddress -= pageSize;
@@ -1046,7 +1076,32 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     ImGui::SameLine();
     
     // -64K button
-    if (ImGui::Button("-64K", ImVec2(buttonWidth, 20))) {
+    bool do64kUp = false;
+    ImGui::Button("-64K", ImVec2(buttonWidth, 20));
+    
+    if (ImGui::IsItemActive()) {
+        if (activeButtonId != 2) {
+            // Just pressed - trigger immediately
+            do64kUp = true;
+            activeButtonId = 2;
+            buttonHoldStart = now;
+            lastRepeatTime = now;
+        } else {
+            // Being held - check for auto-repeat
+            auto holdDuration = now - buttonHoldStart;
+            if (holdDuration > REPEAT_DELAY) {
+                // Start repeating
+                if (now - lastRepeatTime > REPEAT_RATE) {
+                    do64kUp = true;
+                    lastRepeatTime = now;
+                }
+            }
+        }
+    } else if (activeButtonId == 2) {
+        activeButtonId = 0;  // Button released
+    }
+    
+    if (do64kUp) {
         if (viewport.baseAddress >= 0x10000) {
             viewport.baseAddress -= 0x10000;
             
@@ -1186,7 +1241,32 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     
     // Bottom navigation buttons (+ buttons side by side)
     // +Page button (always 4K)
-    if (ImGui::Button("+Page", ImVec2(buttonWidth, 20))) {
+    bool doPageDown = false;
+    ImGui::Button("+Page", ImVec2(buttonWidth, 20));
+    
+    if (ImGui::IsItemActive()) {
+        if (activeButtonId != 3) {
+            // Just pressed - trigger immediately
+            doPageDown = true;
+            activeButtonId = 3;
+            buttonHoldStart = now;
+            lastRepeatTime = now;
+        } else {
+            // Being held - check for auto-repeat
+            auto holdDuration = now - buttonHoldStart;
+            if (holdDuration > REPEAT_DELAY) {
+                // Start repeating
+                if (now - lastRepeatTime > REPEAT_RATE) {
+                    doPageDown = true;
+                    lastRepeatTime = now;
+                }
+            }
+        }
+    } else if (activeButtonId == 3) {
+        activeButtonId = 0;  // Button released
+    }
+    
+    if (doPageDown) {
         uint64_t pageSize = 0x1000;  // Always 4K
         if (viewport.baseAddress + pageSize <= maxAddress) {
             viewport.baseAddress += pageSize;
@@ -1204,7 +1284,32 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     ImGui::SameLine();
     
     // +64K button
-    if (ImGui::Button("+64K", ImVec2(buttonWidth, 20))) {
+    bool do64kDown = false;
+    ImGui::Button("+64K", ImVec2(buttonWidth, 20));
+    
+    if (ImGui::IsItemActive()) {
+        if (activeButtonId != 4) {
+            // Just pressed - trigger immediately
+            do64kDown = true;
+            activeButtonId = 4;
+            buttonHoldStart = now;
+            lastRepeatTime = now;
+        } else {
+            // Being held - check for auto-repeat
+            auto holdDuration = now - buttonHoldStart;
+            if (holdDuration > REPEAT_DELAY) {
+                // Start repeating
+                if (now - lastRepeatTime > REPEAT_RATE) {
+                    do64kDown = true;
+                    lastRepeatTime = now;
+                }
+            }
+        }
+    } else if (activeButtonId == 4) {
+        activeButtonId = 0;  // Button released
+    }
+    
+    if (do64kDown) {
         if (viewport.baseAddress + 0x10000 <= maxAddress) {
             viewport.baseAddress += 0x10000;
             

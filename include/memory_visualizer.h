@@ -225,6 +225,11 @@ private:
     
     // Memory mapper for GPA to file offset translation
     std::shared_ptr<MemoryMapper> memoryMapper;
+    
+    // Button auto-repeat state
+    std::chrono::steady_clock::time_point buttonHoldStart;
+    int activeButtonId = 0;  // Which button is being held (0=none, 1=-Page, 2=-64K, 3=+Page, 4=+64K)
+    std::chrono::steady_clock::time_point lastRepeatTime;
 };
 
 }
