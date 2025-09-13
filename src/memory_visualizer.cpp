@@ -632,7 +632,8 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     // Vertical address slider on the left - match the bitmap height
     // Account for the same overhead as the memory view
     ImGui::BeginChild("AddressSlider", ImVec2(sliderWidth, maxHeight), false, 
-                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | 
+                      ImGuiWindowFlags_AlwaysUseWindowPadding);
     DrawVerticalAddressSlider();
     ImGui::EndChild();
     
@@ -972,6 +973,10 @@ void MemoryVisualizer::DrawControls() {
 }
 
 void MemoryVisualizer::DrawVerticalAddressSlider() {
+    // Reduce padding for this window
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 4));
+    
     // All header info moved to DrawFormulaBar
     // Just calculate slider parameters
     
@@ -1020,7 +1025,7 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     
     // - button
     const char* buttonLabel = useVirtualAddresses ? "-Page" : "-64K";
-    if (ImGui::Button(buttonLabel, ImVec2(-1, 30))) {
+    if (ImGui::Button(buttonLabel, ImVec2(-1, 20))) {
         if (viewport.baseAddress >= sliderUnit) {
             viewport.baseAddress -= sliderUnit;
             
@@ -1160,7 +1165,7 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     
     // + button  
     const char* plusLabel = useVirtualAddresses ? "+Page" : "+64K";
-    if (ImGui::Button(plusLabel, ImVec2(-1, 30))) {
+    if (ImGui::Button(plusLabel, ImVec2(-1, 20))) {
         if (viewport.baseAddress + sliderUnit <= maxAddress) {
             viewport.baseAddress += sliderUnit;
             
@@ -1175,6 +1180,9 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     }
     
     ImGui::PopItemWidth();
+    
+    // Restore style
+    ImGui::PopStyleVar(2);  // WindowPadding and ItemSpacing
     
     // Address display moved to formula bar and tooltip
 }
