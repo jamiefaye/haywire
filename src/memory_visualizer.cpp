@@ -1026,9 +1026,9 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     // Top navigation buttons (- buttons side by side)
     float buttonWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
     
-    // -Page button
+    // -Page button (always 4K)
     if (ImGui::Button("-Page", ImVec2(buttonWidth, 20))) {
-        uint64_t pageSize = useVirtualAddresses ? 0x1000 : 0x10000;  // 4K for VA, 64K for PA
+        uint64_t pageSize = 0x1000;  // Always 4K
         if (viewport.baseAddress >= pageSize) {
             viewport.baseAddress -= pageSize;
             
@@ -1184,9 +1184,9 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     ImGui::PopStyleColor(5);  // Pop all 5 style colors
     
     // Bottom navigation buttons (+ buttons side by side)
-    // +Page button
+    // +Page button (always 4K)
     if (ImGui::Button("+Page", ImVec2(buttonWidth, 20))) {
-        uint64_t pageSize = useVirtualAddresses ? 0x1000 : 0x10000;  // 4K for VA, 64K for PA
+        uint64_t pageSize = 0x1000;  // Always 4K
         if (viewport.baseAddress + pageSize <= maxAddress) {
             viewport.baseAddress += pageSize;
             
