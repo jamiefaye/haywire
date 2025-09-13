@@ -578,9 +578,6 @@ void MemoryVisualizer::DrawFormulaBar() {
 }
 
 void MemoryVisualizer::DrawMemoryBitmap() {
-    // Get initial available size before formula bar
-    ImVec2 initialAvail = ImGui::GetContentRegionAvail();
-    float formulaBarHeight = 30.0f;  // Fixed height of formula bar
     
     // Draw formula bar at the top
     DrawFormulaBar();
@@ -603,12 +600,6 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     float totalOverhead = titleBarHeight + controlBarHeight + windowPadding + additionalSpacing;
     float maxHeight = std::max(50.0f, availSize.y - totalOverhead);
     
-    // Debug output to understand space allocation
-    static int frameCount = 0;
-    if (frameCount++ % 60 == 0) {
-        printf("DrawMemoryBitmap: availSize=%.1f, overhead=%.1f (title=%.1f + control=%.1f + pad=%.1f), maxHeight=%.1f\n",
-               availSize.y, totalOverhead, titleBarHeight, controlBarHeight, windowPadding, maxHeight);
-    }
     
     
     // Ensure we have enough space
@@ -1005,12 +996,6 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     float totalButtonSpace = buttonHeight * 2 + spacing * 2;
     float sliderHeight = std::max(100.0f, availSize.y - totalButtonSpace);
     
-    // Debug output
-    static int frameCount = 0;
-    if (frameCount++ % 60 == 0) {
-        printf("DrawVerticalAddressSlider: avail=%.1f, spacing=%.1f, buttons=%d, slider=%.1f\n",
-               availSize.y, spacing, (int)(buttonHeight*2), sliderHeight);
-    }
     
     
     // Convert address to vertical slider position (inverted - top is 0)
