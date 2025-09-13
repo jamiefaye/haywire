@@ -91,6 +91,7 @@ add_executable(haywire
     src/pagemap_cache.cpp
     src/crunched_memory_reader.cpp
     src/memory_visualizer.cpp
+    src/memory_renderer.cpp
     src/memory_overview.cpp
     src/hex_overlay.cpp
     src/autocorrelator.cpp
