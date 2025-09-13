@@ -364,7 +364,7 @@ int main(int argc, char** argv) {
                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
             
             // Top bar with controls (full width, compact)
-            ImGui::BeginChild("ControlBar", ImVec2(0, 60), true);
+            ImGui::BeginChild("ControlBar", ImVec2(0, 60), false);  // false = no border/resize
             visualizer.DrawControlBar(qemu);
             
             // Add Process Selector button
@@ -387,7 +387,7 @@ int main(int argc, char** argv) {
             
             if (show_overview) {
                 // Left pane: Memory Sections
-                ImGui::BeginChild("SectionsPane", ImVec2(300, 0), true);  // 0 = use remaining height
+                ImGui::BeginChild("SectionsPane", ImVec2(300, 0), false);  // false = no border, 0 = use remaining height
                 overview.DrawCompact();
                 ImGui::EndChild();
                 
