@@ -1,5 +1,6 @@
 #include "memory_renderer.h"
 #include "font5x7u.h"
+#include "font_data.h"
 #include <cstring>
 #include <algorithm>
 
@@ -67,10 +68,9 @@ std::vector<uint32_t> MemoryRenderer::RenderHexPixels(
     size_t dataSize,
     const RenderConfig& config)
 {
-    // Each hex cell is 33x7 pixels (32 for digits + 1 for separator, 7 rows)
+    // Each hex cell is 33x7 pixels (32 for content + 1 separator, 6 for digits + 1 separator)
     const int CELL_WIDTH = 33;
     const int CELL_HEIGHT = 7;
-    const int CHAR_WIDTH = 4;
     
     std::vector<uint32_t> pixels(config.displayWidth * config.displayHeight, 0xFF000000);
     
@@ -78,74 +78,104 @@ std::vector<uint32_t> MemoryRenderer::RenderHexPixels(
         return pixels;
     }
     
-    // Simple 4x6 hex digit bitmaps
-    static const uint16_t hexDigits[16] = {
-        0x6996, // 0
-        0x2622, // 1
-        0x691E, // 2
-        0xE11E, // 3
-        0x99F1, // 4
-        0xE88E, // 5
-        0x698E, // 6
-        0xE111, // 7
-        0x6966, // 8
-        0xE996, // 9
-        0x9996, // A
-        0x699D, // B
-        0x7887, // C
-        0x9669, // D
-        0x788F, // E
-        0x788F  // F (with baseline)
-    };
+    // Calculate how many 32-bit values fit in one row
+    size_t valuesPerRow = config.width / CELL_WIDTH;
+    if (valuesPerRow == 0) valuesPerRow = 1;
     
-    // Calculate how many cells fit
-    int cellsPerRow = config.width / CELL_WIDTH;
-    if (cellsPerRow == 0) cellsPerRow = 1;
+    // Calculate how many rows we need
+    size_t numValues = dataSize / 4;  // 4 bytes per value
+    size_t numRows = (numValues + valuesPerRow - 1) / valuesPerRow;
     
-    int totalCells = (dataSize + 3) / 4;  // Round up
-    int cellRows = (totalCells + cellsPerRow - 1) / cellsPerRow;
-    
-    for (int cellY = 0; cellY < cellRows; cellY++) {
-        for (int cellX = 0; cellX < cellsPerRow; cellX++) {
-            size_t byteIndex = (cellY * cellsPerRow + cellX) * 4;
-            if (byteIndex >= dataSize) break;
+    // Process each 32-bit value
+    for (size_t valueIdx = 0; valueIdx < numValues; ++valueIdx) {
+        // Calculate position
+        size_t row = valueIdx / valuesPerRow;
+        size_t col = valueIdx % valuesPerRow;
+        
+        if (row * CELL_HEIGHT >= config.displayHeight) break;  // Out of viewport
+        
+        // Read 32-bit value from memory (little-endian to match memory order)
+        size_t memIdx = valueIdx * 4;
+        if (memIdx + 3 >= dataSize) break;
+        
+        uint32_t value = (data[memIdx] << 0) |
+                        (data[memIdx + 1] << 8) |
+                        (data[memIdx + 2] << 16) |
+                        (data[memIdx + 3] << 24);
+        
+        // Calculate colors from the actual memory bytes
+        uint32_t bgColor = PackRGBA(
+            data[memIdx + 2],
+            data[memIdx + 1],
+            data[memIdx],
+            255
+        );
+        uint32_t fgColor = CalcHiContrastOpposite(bgColor);
+        
+        // Draw 8 hex nibbles (2 per byte)
+        for (int nibbleIdx = 7; nibbleIdx >= 0; --nibbleIdx) {
+            uint8_t nibble = (value >> (nibbleIdx * 4)) & 0xF;
+            uint16_t glyph = GetGlyph3x5Hex(nibble);
             
-            // Read up to 4 bytes
-            uint32_t value = 0;
-            for (int i = 0; i < 4 && byteIndex + i < dataSize; i++) {
-                value |= ((uint32_t)data[byteIndex + i]) << (i * 8);
-            }
+            // Position of this nibble (4 pixels wide each)
+            size_t nibbleX = col * CELL_WIDTH + (7 - nibbleIdx) * 4;
+            size_t nibbleY = row * CELL_HEIGHT;
             
-            // Draw 8 hex digits
-            for (int digit = 0; digit < 8; digit++) {
-                int nibble = (value >> ((7 - digit) * 4)) & 0xF;
-                uint16_t bitmap = hexDigits[nibble];
-                
-                int digitX = cellX * CELL_WIDTH + digit * CHAR_WIDTH;
-                int digitY = cellY * CELL_HEIGHT;
-                
-                // Draw the 4x6 bitmap
-                for (int py = 0; py < 6; py++) {
-                    for (int px = 0; px < 3; px++) {
-                        if (bitmap & (1 << (py * 3 + px))) {
-                            int finalX = digitX + px;
-                            int finalY = digitY + py;
-                            if (finalX < config.displayWidth && finalY < config.displayHeight) {
-                                pixels[finalY * config.displayWidth + finalX] = 0xFF00FF00;
-                            }
-                        }
-                    }
+            // Fill first column with background (left border)
+            for (int y = 0; y < 6; ++y) {
+                size_t pixX = nibbleX;
+                size_t pixY = nibbleY + y;
+                if (pixX < config.displayWidth && pixY < config.displayHeight) {
+                    size_t pixIdx = pixY * config.displayWidth + pixX;
+                    pixels[pixIdx] = bgColor;
                 }
             }
             
-            // Draw separator line
-            if (cellX < cellsPerRow - 1) {
-                int sepX = (cellX + 1) * CELL_WIDTH - 1;
-                for (int py = 0; py < CELL_HEIGHT && cellY * CELL_HEIGHT + py < config.displayHeight; py++) {
-                    if (sepX < config.displayWidth) {
-                        pixels[(cellY * CELL_HEIGHT + py) * config.displayWidth + sepX] = 0xFF404040;
+            // Fill first row with background (top border)
+            for (int x = 0; x < 4; ++x) {
+                size_t pixX = nibbleX + x;
+                size_t pixY = nibbleY;
+                if (pixX < config.displayWidth && pixY < config.displayHeight) {
+                    size_t pixIdx = pixY * config.displayWidth + pixX;
+                    pixels[pixIdx] = bgColor;
+                }
+            }
+            
+            // Draw the 3x5 glyph shifted by 1,1 (now in a 4x6 box with borders)
+            for (int y = 0; y < 5; ++y) {
+                for (int x = 0; x < 3; ++x) {
+                    // Extract bit from glyph - flip horizontally (mirror X-axis)
+                    int bitPos = (4 - y) * 3 + (2 - x);  // Mirror X: use (2-x) instead of x
+                    bool bit = (glyph >> bitPos) & 1;
+                    
+                    size_t pixX = nibbleX + x + 1;  // Shift right by 1 for left border
+                    size_t pixY = nibbleY + y + 1;  // Shift down by 1 for top border
+                    
+                    if (pixX < config.displayWidth && pixY < config.displayHeight) {
+                        size_t pixIdx = pixY * config.displayWidth + pixX;
+                        pixels[pixIdx] = bit ? fgColor : bgColor;
                     }
                 }
+            }
+        }
+        
+        // Fill the rightmost column (33rd pixel) with background for this value
+        for (int y = 0; y < CELL_HEIGHT; ++y) {
+            size_t pixX = col * CELL_WIDTH + 32;  // The 33rd pixel (index 32)
+            size_t pixY = row * CELL_HEIGHT + y;
+            if (pixX < config.displayWidth && pixY < config.displayHeight) {
+                size_t pixIdx = pixY * config.displayWidth + pixX;
+                pixels[pixIdx] = bgColor;
+            }
+        }
+        
+        // Fill the bottom row (7th row) with background for this value
+        for (int x = 0; x < 32; ++x) {  // Don't include the rightmost column (already filled)
+            size_t pixX = col * CELL_WIDTH + x;
+            size_t pixY = row * CELL_HEIGHT + 6;  // The 7th row (index 6)
+            if (pixX < config.displayWidth && pixY < config.displayHeight) {
+                size_t pixIdx = pixY * config.displayWidth + pixX;
+                pixels[pixIdx] = bgColor;
             }
         }
     }
@@ -161,75 +191,72 @@ std::vector<uint32_t> MemoryRenderer::RenderCharPixels(
     const int CHAR_WIDTH = 6;
     const int CHAR_HEIGHT = 8;
     
+    // Calculate how many characters fit in one row
+    size_t charsPerRow = config.width / CHAR_WIDTH;
+    if (charsPerRow == 0) charsPerRow = 1;
+    
+    // Calculate how many rows we need
+    size_t numChars = dataSize;
+    size_t numRows = (numChars + charsPerRow - 1) / charsPerRow;
+    
+    // Create expanded pixel buffer
     std::vector<uint32_t> pixels(config.displayWidth * config.displayHeight, 0xFF000000);
     
     if (!data || dataSize == 0) {
         return pixels;
     }
     
-    int charsPerRow = config.width / CHAR_WIDTH;
-    if (charsPerRow == 0) charsPerRow = 1;
-    
-    int totalChars = dataSize;
-    int charRows = (totalChars + charsPerRow - 1) / charsPerRow;
-    
-    for (int row = 0; row < charRows; row++) {
-        for (int col = 0; col < charsPerRow; col++) {
-            size_t charIndex = row * charsPerRow + col;
-            if (charIndex >= dataSize) break;
-            
-            uint8_t charCode = data[charIndex];
-            
-            // Find the glyph in Font5x7u array
-            uint64_t glyph = 0;
-            
-            // Display null characters as blank
-            if (charCode != 0) {
-                for (size_t i = 0; i < Font5x7u_count; ++i) {
-                    uint64_t entry = Font5x7u[i];
-                    uint16_t glyphCode = (entry >> 48) & 0xFFFF;
-                    if (glyphCode == charCode) {
-                        glyph = entry;
-                        break;
-                    }
+    // Process each byte as a character
+    for (size_t charIdx = 0; charIdx < numChars; ++charIdx) {
+        // Calculate position
+        size_t row = charIdx / charsPerRow;
+        size_t col = charIdx % charsPerRow;
+        
+        if (row * CHAR_HEIGHT >= config.displayHeight) break;  // Out of viewport
+        
+        uint8_t charCode = data[charIdx];
+        
+        // Find the glyph in Font5x7u array by searching for the character code
+        uint64_t glyph = 0;
+        
+        // Display null characters as blank
+        if (charCode != 0) {
+            for (size_t i = 0; i < Font5x7u_count; ++i) {
+                uint64_t entry = Font5x7u[i];
+                uint16_t glyphCode = (entry >> 48) & 0xFFFF;  // Character code in top 16 bits
+                if (glyphCode == charCode) {
+                    glyph = entry;
+                    break;
                 }
             }
-            
-            int baseX = col * CHAR_WIDTH;
-            int baseY = row * CHAR_HEIGHT;
-            
-            // Draw the 5x7 glyph in a 6x8 box
-            // Start at bit 47 and read sequentially downward
-            uint64_t rotatingBit = 0x0000800000000000ULL;  // bit 47
-            
-            for (int py = 0; py < CHAR_HEIGHT; py++) {
-                for (int px = 0; px < CHAR_WIDTH; px++) {
-                    int finalX = baseX + px;
-                    int finalY = baseY + py;
-                    
-                    if (finalX < config.displayWidth && finalY < config.displayHeight) {
-                        // Check if bit is set
-                        bool bit = (glyph & rotatingBit) != 0;
-                        
-                        // Color based on character type
-                        uint32_t color = 0xFF000000;  // Black background
-                        if (bit) {
-                            if (charCode >= '0' && charCode <= '9') {
-                                color = 0xFF00FFFF;  // Cyan for numbers
-                            } else if ((charCode >= 'A' && charCode <= 'Z') || 
-                                     (charCode >= 'a' && charCode <= 'z')) {
-                                color = 0xFF00FF00;  // Green for letters
-                            } else if (charCode < 32 || charCode >= 127) {
-                                color = 0xFFFF0080;  // Pink for control/extended
-                            } else {
-                                color = 0xFFFFFFFF;  // White for other printable
-                            }
-                        }
-                        pixels[finalY * config.displayWidth + finalX] = color;
-                    }
-                    
-                    rotatingBit >>= 1;  // Move to next bit
+        }
+        
+        // Simple color scheme: always white text on black background
+        uint32_t fgColor = 0xFFFFFFFF;  // White
+        uint32_t bgColor = 0xFF000000;  // Black
+        
+        // Position of this character
+        size_t charX = col * CHAR_WIDTH;
+        size_t charY = row * CHAR_HEIGHT;
+        
+        // Draw the 5x7 glyph in a 6x8 box
+        // Using the pattern from the reference code:
+        // Start at bit 47 and read sequentially downward
+        uint64_t rotatingBit = 0x0000800000000000ULL;  // bit 47
+        
+        for (int y = 0; y < CHAR_HEIGHT; ++y) {
+            for (int x = 0; x < CHAR_WIDTH; ++x) {
+                size_t pixX = charX + x;
+                size_t pixY = charY + y;
+                
+                if (pixX < config.displayWidth && pixY < config.displayHeight) {
+                    size_t pixIdx = pixY * config.displayWidth + pixX;
+                    // Check if bit is set
+                    bool bit = (glyph & rotatingBit) != 0;
+                    pixels[pixIdx] = bit ? fgColor : bgColor;
                 }
+                
+                rotatingBit >>= 1;  // Move to next bit
             }
         }
     }

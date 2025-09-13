@@ -1,4 +1,5 @@
 #include "memory_visualizer.h"
+#include "memory_renderer.h"
 #include "qemu_connection.h"
 #include "viewport_translator.h"
 #include "address_space_flattener.h"
@@ -2721,159 +2722,25 @@ void MemoryVisualizer::UpdateTexture() {
 }
 
 std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToPixels(const MemoryBlock& memory) {
-    // Check if we should split components
-    if (splitComponents && 
-        (viewport.format.type == PixelFormat::RGB888 || 
-         viewport.format.type == PixelFormat::RGBA8888 ||
-         viewport.format.type == PixelFormat::BGR888 ||
-         viewport.format.type == PixelFormat::BGRA8888 ||
-         viewport.format.type == PixelFormat::ARGB8888 ||
-         viewport.format.type == PixelFormat::ABGR8888 ||
-         viewport.format.type == PixelFormat::RGB565)) {
-        return ConvertMemoryToSplitPixels(memory);
-    }
-    
-    // For expanded formats (HEX_PIXEL, CHAR_8BIT), we need different dimensions
-    bool isExpandedFormat = (viewport.format.type == PixelFormat::HEX_PIXEL || 
-                            viewport.format.type == PixelFormat::CHAR_8BIT);
-    
-    if (isExpandedFormat) {
-        // Handle expanded formats separately
-        if (viewport.format.type == PixelFormat::HEX_PIXEL) {
-            return ConvertMemoryToHexPixels(memory);
-        } else if (viewport.format.type == PixelFormat::CHAR_8BIT) {
-            return ConvertMemoryToCharPixels(memory);
-        }
-    }
-    
-    // Original code for normal formats
-    std::vector<uint32_t> pixels(viewport.width * viewport.height, 0xFF000000);
+    // Use the unified renderer
+    RenderConfig config;
+    config.displayWidth = viewport.width;
+    config.displayHeight = viewport.height;
+    config.stride = viewport.stride * viewport.format.bytesPerPixel;
+    config.width = viewport.width;
+    config.height = viewport.height;
+    config.format = viewport.format;
+    config.splitComponents = splitComponents;
     
     if (memory.data.empty()) {
-        return pixels;
+        return std::vector<uint32_t>(viewport.width * viewport.height, 0xFF000000);
     }
     
-    size_t dataIndex = 0;
-    
-    for (size_t y = 0; y < viewport.height; ++y) {
-        for (size_t x = 0; x < viewport.width; ++x) {
-            size_t pixelIndex = y * viewport.width + x;
-            size_t memIndex = (y * viewport.stride + x) * viewport.format.bytesPerPixel;
-            
-            if (memIndex >= memory.data.size()) {
-                continue;
-            }
-            
-            switch (viewport.format.type) {
-                case PixelFormat::RGB888:
-                    if (memIndex + 2 < memory.data.size()) {
-                        pixels[pixelIndex] = PackRGBA(
-                            memory.data[memIndex],
-                            memory.data[memIndex + 1],
-                            memory.data[memIndex + 2]
-                        );
-                    }
-                    break;
-                    
-                case PixelFormat::RGBA8888:
-                    if (memIndex + 3 < memory.data.size()) {
-                        pixels[pixelIndex] = PackRGBA(
-                            memory.data[memIndex],
-                            memory.data[memIndex + 1],
-                            memory.data[memIndex + 2],
-                            memory.data[memIndex + 3]
-                        );
-                    }
-                    break;
-                    
-                case PixelFormat::BGR888:
-                    if (memIndex + 2 < memory.data.size()) {
-                        pixels[pixelIndex] = PackRGBA(
-                            memory.data[memIndex + 2],  // B -> R
-                            memory.data[memIndex + 1],  // G -> G
-                            memory.data[memIndex]        // R -> B
-                        );
-                    }
-                    break;
-                    
-                case PixelFormat::BGRA8888:
-                    if (memIndex + 3 < memory.data.size()) {
-                        pixels[pixelIndex] = PackRGBA(
-                            memory.data[memIndex + 2],  // B -> R
-                            memory.data[memIndex + 1],  // G -> G
-                            memory.data[memIndex],      // R -> B
-                            memory.data[memIndex + 3]   // A -> A
-                        );
-                    }
-                    break;
-                    
-                case PixelFormat::ARGB8888:
-                    if (memIndex + 3 < memory.data.size()) {
-                        pixels[pixelIndex] = PackRGBA(
-                            memory.data[memIndex + 1],  // A R G B -> R
-                            memory.data[memIndex + 2],  // G
-                            memory.data[memIndex + 3],  // B
-                            memory.data[memIndex]        // A
-                        );
-                    }
-                    break;
-                    
-                case PixelFormat::ABGR8888:
-                    if (memIndex + 3 < memory.data.size()) {
-                        pixels[pixelIndex] = PackRGBA(
-                            memory.data[memIndex + 3],  // A B G R -> R
-                            memory.data[memIndex + 2],  // G
-                            memory.data[memIndex + 1],  // B
-                            memory.data[memIndex]        // A
-                        );
-                    }
-                    break;
-                    
-                case PixelFormat::GRAYSCALE:
-                    if (memIndex < memory.data.size()) {
-                        uint8_t gray = memory.data[memIndex];
-                        pixels[pixelIndex] = PackRGBA(gray, gray, gray);
-                    }
-                    break;
-                    
-                case PixelFormat::RGB565:
-                    if (memIndex + 1 < memory.data.size()) {
-                        uint16_t rgb565 = (memory.data[memIndex] << 8) | memory.data[memIndex + 1];
-                        uint8_t r = ((rgb565 >> 11) & 0x1F) << 3;
-                        uint8_t g = ((rgb565 >> 5) & 0x3F) << 2;
-                        uint8_t b = (rgb565 & 0x1F) << 3;
-                        pixels[pixelIndex] = PackRGBA(r, g, b);
-                    }
-                    break;
-                    
-                case PixelFormat::BINARY: {
-                    // For binary: each byte becomes 8 pixels (one per bit)
-                    // x coordinate tells us which bit within the byte
-                    size_t byteIndex = (y * viewport.stride + x) / 8;
-                    int bitIndex = 7 - ((y * viewport.stride + x) % 8);  // MSB first
-                    
-                    if (byteIndex < memory.data.size()) {
-                        uint8_t byte = memory.data[byteIndex];
-                        uint8_t bit = (byte >> bitIndex) & 1;
-                        uint8_t value = bit ? 255 : 0;
-                        pixels[pixelIndex] = PackRGBA(value, value, value);
-                    }
-                    break;
-                }
-                    
-                case PixelFormat::CUSTOM:
-                    // Custom format - just use grayscale for now
-                    // TODO: Implement custom format handler
-                    if (memIndex < memory.data.size()) {
-                        uint8_t gray = memory.data[memIndex];
-                        pixels[pixelIndex] = PackRGBA(gray, gray, gray);
-                    }
-                    break;
-            }
-        }
-    }
-    
-    return pixels;
+    return MemoryRenderer::RenderMemory(
+        memory.data.data(),
+        memory.data.size(),
+        config
+    );
 }
 
 uint32_t MemoryVisualizer::GetPixelAt(int x, int y) const {
@@ -3292,6 +3159,8 @@ void MemoryVisualizer::PerformFullRangeSearch() {
     }
 }
 
+// Now handled by unified MemoryRenderer
+#if 0
 std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToHexPixels(const MemoryBlock& memory) {
     // For hex display, each 32-bit value becomes 8 hex digits
     // Each digit is 4x6 pixels, so 32 pixels wide, 6 pixels tall per value
@@ -3611,6 +3480,7 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToSplitPixels(const MemoryB
     
     return pixels;
 }
+#endif
 
 bool MemoryVisualizer::ExportToPNG(const std::string& filename) {
     if (pixelBuffer.empty()) {
