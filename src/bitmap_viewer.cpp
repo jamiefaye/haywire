@@ -1,4 +1,5 @@
 #include "bitmap_viewer.h"
+#include "memory_renderer.h"
 #include "memory_visualizer.h"
 #include "beacon_reader.h"
 #include "memory_mapper.h"
@@ -746,23 +747,21 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
             // Convert to pixels based on format
             viewer.pixels.clear();
             
-            // Check if we should split components
-            if (viewer.splitComponents && 
-                (viewer.format.type == PixelFormat::RGB888 || 
-                 viewer.format.type == PixelFormat::RGBA8888 ||
-                 viewer.format.type == PixelFormat::BGR888 || 
-                 viewer.format.type == PixelFormat::BGRA8888 ||
-                 viewer.format.type == PixelFormat::ARGB8888 || 
-                 viewer.format.type == PixelFormat::ABGR8888)) {
-                ConvertMemoryToSplitPixels(viewer, buffer.data(), bytesRead);
-            } else if (viewer.format.type == PixelFormat::HEX_PIXEL) {
-                ConvertMemoryToHexPixels(viewer, buffer.data(), bytesRead);
-            } else if (viewer.format.type == PixelFormat::CHAR_8BIT) {
-                ConvertMemoryToCharPixels(viewer, buffer.data(), bytesRead);
-            } else {
-                // Normal pixel format conversion
-                ExtractPixelsFromMemory(viewer, buffer.data(), bytesRead);
-            }
+            // Use the unified renderer
+            RenderConfig config;
+            config.displayWidth = viewer.memWidth;
+            config.displayHeight = viewer.memHeight;
+            config.stride = viewer.stride;
+            config.width = viewer.memWidth;
+            config.height = viewer.memHeight;
+            config.format = viewer.format;
+            config.splitComponents = viewer.splitComponents;
+            
+            viewer.pixels = MemoryRenderer::RenderMemory(
+                buffer.data(),
+                bytesRead,
+                config
+            );
             return;
         }
         
@@ -851,39 +850,21 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
         return;
     }
     
-    // Convert to pixels based on format
-    viewer.pixels.clear();
+    // Use the unified renderer
+    RenderConfig config;
+    config.displayWidth = viewer.memWidth;
+    config.displayHeight = viewer.memHeight;
+    config.stride = viewer.stride;
+    config.width = viewer.memWidth;
+    config.height = viewer.memHeight;
+    config.format = viewer.format;
+    config.splitComponents = viewer.splitComponents;
     
-    // Check if we should split components
-    if (viewer.splitComponents && 
-        (viewer.format.type == PixelFormat::RGB888 || 
-         viewer.format.type == PixelFormat::RGBA8888 ||
-         viewer.format.type == PixelFormat::BGR888 ||
-         viewer.format.type == PixelFormat::BGRA8888 ||
-         viewer.format.type == PixelFormat::ARGB8888 ||
-         viewer.format.type == PixelFormat::ABGR8888 ||
-         viewer.format.type == PixelFormat::RGB565)) {
-        ConvertMemoryToSplitPixels(viewer, memPtr, totalBytes);
-        return;
-    }
-    
-    // Handle expanded formats differently
-    if (viewer.format.type == PixelFormat::HEX_PIXEL) {
-        // For HEX format: each 4-byte value becomes 32x8 pixels
-        ConvertMemoryToHexPixels(viewer, memPtr, totalBytes);
-        return;
-    } else if (viewer.format.type == PixelFormat::CHAR_8BIT) {
-        // For CHAR format: each byte becomes 6x8 pixels
-        ConvertMemoryToCharPixels(viewer, memPtr, totalBytes);
-        return;
-    } else if (viewer.format.type == PixelFormat::BINARY) {
-        // For BINARY format: each byte becomes 8 pixels (one per bit)
-        ConvertMemoryToBinaryPixels(viewer, memPtr, totalBytes);
-        return;
-    }
-    
-    // Extract pixels using the existing logic
-    ExtractPixelsFromMemory(viewer, memPtr, totalBytes);
+    viewer.pixels = MemoryRenderer::RenderMemory(
+        memPtr,
+        totalBytes,
+        config
+    );
 }
 
 void BitmapViewerManager::FillTestPattern(BitmapViewer& viewer) {
@@ -903,6 +884,8 @@ void BitmapViewerManager::FillTestPattern(BitmapViewer& viewer) {
 }
 
 void BitmapViewerManager::ExtractPixelsFromMemory(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes) {
+    // Now handled by unified MemoryRenderer - keeping function for potential future use
+#if 0
     // Normal pixel formats
     size_t bytesPerPixel = viewer.format.bytesPerPixel;
     viewer.pixels.reserve(viewer.memWidth * viewer.memHeight);
@@ -979,7 +962,7 @@ void BitmapViewerManager::ExtractPixelsFromMemory(BitmapViewer& viewer, const ui
             }
         }
     }
-    
+#endif
 }
 
 void BitmapViewerManager::HandleContextMenu(uint64_t clickAddress, ImVec2 clickPos, PixelFormat format) {
@@ -1060,6 +1043,8 @@ const char* PixelFormatToString(int format) {
     return "RGB888";  // Simple for now
 }
 
+// Now handled by unified MemoryRenderer
+#if 0
 void BitmapViewerManager::ConvertMemoryToHexPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes) {
     // For HEX display, each 32-bit value (4 bytes) becomes a 32x8 pixel block
     // showing 8 hex digits with color based on the value
@@ -1380,6 +1365,7 @@ void BitmapViewerManager::ConvertMemoryToCharPixels(BitmapViewer& viewer, const 
         }
     }
 }
+#endif
 
 bool BitmapViewerManager::HasFocus() const {
     return focusedViewerID != -1;

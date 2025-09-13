@@ -161,10 +161,11 @@ private:
     void DrawLeaderLine(BitmapViewer& viewer);
     void UpdateViewerTexture(BitmapViewer& viewer);
     void ExtractMemory(BitmapViewer& viewer);
-    void ConvertMemoryToHexPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
-    void ConvertMemoryToCharPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
-    void ConvertMemoryToBinaryPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
-    void ConvertMemoryToSplitPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
+    // Now handled by unified MemoryRenderer:
+    // void ConvertMemoryToHexPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
+    // void ConvertMemoryToCharPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
+    // void ConvertMemoryToBinaryPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
+    // void ConvertMemoryToSplitPixels(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
     void FillTestPattern(BitmapViewer& viewer);
     void ExtractPixelsFromMemory(BitmapViewer& viewer, const uint8_t* memPtr, size_t totalBytes);
     
