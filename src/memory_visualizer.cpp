@@ -2392,10 +2392,28 @@ void MemoryVisualizer::HandleInput() {
             if (upKey) stepY = -1;
             if (downKey) stepY = 1;
             
-            // Move viewport
+            // Move viewport - account for display format
             uint64_t newAddr = viewport.baseAddress;
-            newAddr += stepY * viewport.stride;
-            newAddr += stepX * viewport.format.bytesPerPixel;
+            
+            // Calculate movement based on format
+            if (viewport.format.type == PixelFormat::HEX_PIXEL) {
+                // HEX_PIXEL: move by actual displayed bytes per row
+                int cellsPerRow = viewport.width / 33;
+                if (cellsPerRow == 0) cellsPerRow = 1;
+                int bytesPerRow = cellsPerRow * 4;
+                newAddr += stepY * bytesPerRow;
+                newAddr += stepX * 4;  // Horizontal: move by 1 cell (4 bytes)
+            } else if (viewport.format.type == PixelFormat::CHAR_8BIT) {
+                // CHAR_8BIT: move by actual displayed chars per row
+                int charsPerRow = viewport.width / 6;
+                if (charsPerRow == 0) charsPerRow = 1;
+                newAddr += stepY * charsPerRow;
+                newAddr += stepX;  // Horizontal: move by 1 char (1 byte)
+            } else {
+                // Normal formats: use stride as before
+                newAddr += stepY * viewport.stride;
+                newAddr += stepX * viewport.format.bytesPerPixel;
+            }
             
             // Apply alignment if shift is held
             if (shiftPressed && stepX != 0) {
@@ -2554,15 +2572,22 @@ void MemoryVisualizer::HandleInput() {
             int64_t verticalDelta, horizontalDelta;
             
             if (viewport.format.type == PixelFormat::HEX_PIXEL) {
-                // HEX_PIXEL: Each cell is 32x8 pixels showing 4 bytes
-                // Vertical: 8 display pixels = 1 row of hex cells = viewport.stride * 4 bytes
-                verticalDelta = ((int64_t)dragDeltaY / 8) * viewport.stride * 4;
-                // Horizontal: 32 display pixels = 1 hex cell = 4 bytes
-                horizontalDelta = ((int64_t)dragDeltaX / 32) * 4;
+                // HEX_PIXEL: Each cell is 33x7 pixels (with padding) showing 4 bytes
+                int cellsPerRow = viewport.width / 33;
+                if (cellsPerRow == 0) cellsPerRow = 1;
+                int bytesPerRow = cellsPerRow * 4;
+                
+                // Vertical: 7 display pixels = 1 row
+                verticalDelta = ((int64_t)dragDeltaY / 7) * bytesPerRow;
+                // Horizontal: 33 display pixels = 1 hex cell = 4 bytes
+                horizontalDelta = ((int64_t)dragDeltaX / 33) * 4;
             } else if (viewport.format.type == PixelFormat::CHAR_8BIT) {
                 // CHAR_8BIT: Each character is 6x8 pixels showing 1 byte
-                // Vertical: 8 display pixels = 1 row of characters = viewport.stride bytes
-                verticalDelta = ((int64_t)dragDeltaY / 8) * viewport.stride;
+                int charsPerRow = viewport.width / 6;
+                if (charsPerRow == 0) charsPerRow = 1;
+                
+                // Vertical: 8 display pixels = 1 row
+                verticalDelta = ((int64_t)dragDeltaY / 8) * charsPerRow;
                 // Horizontal: 6 display pixels = 1 character = 1 byte
                 horizontalDelta = (int64_t)dragDeltaX / 6;
             } else {
