@@ -31,7 +31,8 @@ MemoryVisualizer::MemoryVisualizer()
       splitComponents(false),  // Split components off by default
       widthInput(512), heightInput(480), strideInput(512),  // Default to 512 width
       pixelFormatIndex(0), mouseX(0), mouseY(0), isDragging(false),
-      dragStartX(0), dragStartY(0), isReading(false), readComplete(false),
+      dragStartX(0), dragStartY(0), dragAxisLocked(false), dragAxis(0),
+      isReading(false), readComplete(false),
       marchingAntsPhase(0.0f), magnifierZoom(8), magnifierLocked(false),
       magnifierSize(32), magnifierLockPos(0, 0), memoryViewPos(0, 0), memoryViewSize(0, 0),
       targetPid(-1), useVirtualAddresses(false), guestAgent(nullptr),
@@ -2522,11 +2523,32 @@ void MemoryVisualizer::HandleInput() {
                 isDragging = true;
                 dragStartX = 0;
                 dragStartY = 0;
+                // Reset axis lock state
+                dragAxisLocked = false;
+                dragAxis = 0;  // 0 = not locked, 1 = X, 2 = Y
             }
             
             // Calculate memory offset from drag
             float dragDeltaX = delta.x - dragStartX;
             float dragDeltaY = delta.y - dragStartY;
+            
+            // If Shift is held, constrain to one axis
+            if (shiftPressed) {
+                // Determine axis on first significant movement
+                if (!dragAxisLocked && (fabs(dragDeltaX) > 5.0f || fabs(dragDeltaY) > 5.0f)) {
+                    dragAxisLocked = true;
+                    dragAxis = (fabs(dragDeltaX) > fabs(dragDeltaY)) ? 1 : 2;
+                }
+                
+                // Apply axis constraint
+                if (dragAxisLocked) {
+                    if (dragAxis == 1) {
+                        dragDeltaY = 0;  // Lock to X axis
+                    } else if (dragAxis == 2) {
+                        dragDeltaX = 0;  // Lock to Y axis
+                    }
+                }
+            }
             
             // Vertical: Each pixel of drag = one row of memory
             // Horizontal: Each pixel of drag = one byte (or pixel format size)

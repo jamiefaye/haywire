@@ -139,6 +139,8 @@ private:
     float mouseX, mouseY;
     bool isDragging;
     float dragStartX, dragStartY;
+    bool dragAxisLocked;  // Whether we've locked to an axis
+    int dragAxis;  // 0 = not locked, 1 = X axis, 2 = Y axis
     
     // Async reading support
     std::thread readThread;
