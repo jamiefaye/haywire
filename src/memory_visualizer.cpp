@@ -110,6 +110,16 @@ void MemoryVisualizer::SetProcessPid(int pid) {
     if (bitmapViewerManager) {
         bitmapViewerManager->SetCurrentPID(pid);
     }
+    
+    // Auto-enable VA mode when a PID is selected
+    if (pid > 0 && !useVirtualAddresses) {
+        useVirtualAddresses = true;
+        // Update bitmap viewer manager to use VA mode
+        if (bitmapViewerManager) {
+            bitmapViewerManager->SetVAMode(true);
+        }
+        std::cerr << "Automatically enabled VA mode for PID " << pid << std::endl;
+    }
 }
 
 void MemoryVisualizer::CreateTexture() {
