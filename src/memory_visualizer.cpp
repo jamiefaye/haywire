@@ -578,15 +578,26 @@ void MemoryVisualizer::DrawFormulaBar() {
 }
 
 void MemoryVisualizer::DrawMemoryBitmap() {
+    // Get initial available size before formula bar
+    ImVec2 initialAvail = ImGui::GetContentRegionAvail();
+    float formulaBarHeight = 30.0f;  // Fixed height of formula bar
+    
     // Draw formula bar at the top
     DrawFormulaBar();
     
     // Get available size AFTER the formula bar has taken its space
     ImVec2 availSize = ImGui::GetContentRegionAvail();
     
-    // Use all the remaining space - the formula bar already consumed its pixels
-    // Reduce by 100px to match scrollbar adjustment
-    float maxHeight = std::max(50.0f, availSize.y - 100.0f);
+    // Calculate proper height for child windows
+    // availSize.y should be initialAvail.y - formulaBarHeight - spacing
+    float maxHeight = availSize.y;
+    
+    // Debug output to understand space allocation
+    static int frameCount = 0;
+    if (frameCount++ % 60 == 0) {
+        printf("DrawMemoryBitmap: initial=%.1f, after formula=%.1f, maxHeight=%.1f\n",
+               initialAvail.y, availSize.y, maxHeight);
+    }
     
     
     // Ensure we have enough space
@@ -973,13 +984,21 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     
     // Vertical slider
     ImVec2 availSize = ImGui::GetContentRegionAvail();
-    // Calculate slider height: total available minus two 30px buttons and ImGui spacing
-    // - button (30px) + spacing + slider + spacing + button (30px)
-    // Adding 16px more height to scrollbar
     float buttonHeight = 30.0f;
     float spacing = ImGui::GetStyle().ItemSpacing.y;
-    float totalButtonSpace = buttonHeight * 2 + spacing * 2 + 4.0f;  // Reduced from 20 to 4
+    
+    // Calculate from first principles:
+    // Total available = availSize.y
+    // Need: button (30) + spacing + slider + spacing + button (30)
+    float totalButtonSpace = buttonHeight * 2 + spacing * 2;
     float sliderHeight = std::max(100.0f, availSize.y - totalButtonSpace);
+    
+    // Debug output
+    static int frameCount = 0;
+    if (frameCount++ % 60 == 0) {
+        printf("DrawVerticalAddressSlider: avail=%.1f, spacing=%.1f, buttons=%d, slider=%.1f\n",
+               availSize.y, spacing, (int)(buttonHeight*2), sliderHeight);
+    }
     
     
     // Convert address to vertical slider position (inverted - top is 0)
