@@ -1023,11 +1023,31 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     
     ImGui::PushItemWidth(-1);  // Full width
     
-    // - button
-    const char* buttonLabel = useVirtualAddresses ? "-Page" : "-64K";
-    if (ImGui::Button(buttonLabel, ImVec2(-1, 20))) {
-        if (viewport.baseAddress >= sliderUnit) {
-            viewport.baseAddress -= sliderUnit;
+    // Top navigation buttons (- buttons side by side)
+    float buttonWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
+    
+    // -Page button
+    if (ImGui::Button("-Page", ImVec2(buttonWidth, 20))) {
+        uint64_t pageSize = useVirtualAddresses ? 0x1000 : 0x10000;  // 4K for VA, 64K for PA
+        if (viewport.baseAddress >= pageSize) {
+            viewport.baseAddress -= pageSize;
+            
+            if (useVirtualAddresses && addressFlattener) {
+                uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
+                strcpy(addressInput, AddressParser::Format(virtualAddr, AddressSpace::VIRTUAL).c_str());
+            } else {
+                strcpy(addressInput, AddressParser::Format(viewport.baseAddress, AddressSpace::PHYSICAL).c_str());
+            }
+            needsUpdate = true;
+        }
+    }
+    
+    ImGui::SameLine();
+    
+    // -64K button
+    if (ImGui::Button("-64K", ImVec2(buttonWidth, 20))) {
+        if (viewport.baseAddress >= 0x10000) {
+            viewport.baseAddress -= 0x10000;
             
             if (useVirtualAddresses && addressFlattener) {
                 uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
@@ -1163,11 +1183,29 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     // Pop the style colors we pushed before the slider
     ImGui::PopStyleColor(5);  // Pop all 5 style colors
     
-    // + button  
-    const char* plusLabel = useVirtualAddresses ? "+Page" : "+64K";
-    if (ImGui::Button(plusLabel, ImVec2(-1, 20))) {
-        if (viewport.baseAddress + sliderUnit <= maxAddress) {
-            viewport.baseAddress += sliderUnit;
+    // Bottom navigation buttons (+ buttons side by side)
+    // +Page button
+    if (ImGui::Button("+Page", ImVec2(buttonWidth, 20))) {
+        uint64_t pageSize = useVirtualAddresses ? 0x1000 : 0x10000;  // 4K for VA, 64K for PA
+        if (viewport.baseAddress + pageSize <= maxAddress) {
+            viewport.baseAddress += pageSize;
+            
+            if (useVirtualAddresses && addressFlattener) {
+                uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
+                strcpy(addressInput, AddressParser::Format(virtualAddr, AddressSpace::VIRTUAL).c_str());
+            } else {
+                strcpy(addressInput, AddressParser::Format(viewport.baseAddress, AddressSpace::PHYSICAL).c_str());
+            }
+            needsUpdate = true;
+        }
+    }
+    
+    ImGui::SameLine();
+    
+    // +64K button
+    if (ImGui::Button("+64K", ImVec2(buttonWidth, 20))) {
+        if (viewport.baseAddress + 0x10000 <= maxAddress) {
+            viewport.baseAddress += 0x10000;
             
             if (useVirtualAddresses && addressFlattener) {
                 uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
