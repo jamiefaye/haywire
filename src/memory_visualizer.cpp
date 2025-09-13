@@ -648,16 +648,18 @@ void MemoryVisualizer::DrawMemoryBitmap() {
 
 void MemoryVisualizer::Draw(QemuConnection& qemu) {
     // Legacy method for compatibility - combines both
-    ImGui::Columns(2, "VisualizerColumns", true);
-    ImGui::SetColumnWidth(0, 300);  // Back to original width
+    // This should match the actual layout: control bar on top, memory bitmap below
     
+    // Top control bar (full width)
+    float controlBarHeight = columnMode ? 70.0f : 45.0f;  // Taller when column mode is active
+    ImGui::BeginChild("ControlBar", ImVec2(0, controlBarHeight), false);
     DrawControlBar(qemu);
+    ImGui::EndChild();
     
-    ImGui::NextColumn();
-    
+    // Memory bitmap below
+    ImGui::BeginChild("MemoryView", ImVec2(0, 0), false);  // Fill remaining space
     DrawMemoryBitmap();
-    
-    ImGui::Columns(1);
+    ImGui::EndChild();
     
     // Draw bitmap viewers (they render as floating windows)
     printf("Draw() method called, bitmapViewerManager = %p\n", bitmapViewerManager.get());

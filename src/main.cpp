@@ -375,8 +375,9 @@ int main(int argc, char** argv) {
             ImGui::Begin("Haywire Memory Visualizer", &show_memory_view, 
                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
             
-            // Top bar with controls (full width, compact)
-            ImGui::BeginChild("ControlBar", ImVec2(0, 60), false);  // false = no border/resize
+            // Top bar with controls (full width, dynamic height based on column mode)
+            float controlBarHeight = visualizer.IsColumnModeEnabled() ? 70.0f : 45.0f;
+            ImGui::BeginChild("ControlBar", ImVec2(0, controlBarHeight), false);  // false = no border/resize
             visualizer.DrawControlBar(qemu);
             
             // Process Selector button removed - now using Select button in memory visualizer

@@ -95,6 +95,9 @@ public:
     // Callback for process selector button
     std::function<void()> onProcessSelectorClick;
     
+    // Column mode state getter
+    bool IsColumnModeEnabled() const { return columnMode; }
+    
 private:
     void DrawControls();
     void DrawMemoryView();
