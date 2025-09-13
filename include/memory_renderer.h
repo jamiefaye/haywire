@@ -23,8 +23,7 @@ struct RenderConfig {
     
     // Column mode settings
     bool columnMode = false;
-    int columnWidth = 256;    // Width of each column in bytes (inner width)
-    int columnHeight = 256;   // Height of each column in rows
+    int columnWidth = 256;    // Width of each column in bytes
     int columnGap = 8;        // Gap between columns in pixels
     
     // Calculate memory offset for a display position in column mode
@@ -32,7 +31,8 @@ struct RenderConfig {
         if (!columnMode) return size_t(-1);
         
         // Calculate column pixel width based on format
-        int columnPixelWidth = columnWidth * pixelWidth / GetBytesPerPixel(format);
+        int bytesPerPixel = GetBytesPerPixel(format);
+        int columnPixelWidth = columnWidth / bytesPerPixel;  // How many pixels wide is the column
         int totalColumnWidth = columnPixelWidth + columnGap;
         
         // Which column are we in?
@@ -45,14 +45,15 @@ struct RenderConfig {
         }
         
         // Calculate memory offset
-        size_t bytesPerColumn = stride * columnHeight;
+        // Each column contains (displayHeight * columnWidth) bytes
+        size_t bytesPerColumn = displayHeight * columnWidth;
         size_t columnStart = col * bytesPerColumn;
-        size_t rowInColumn = y % columnHeight;
         
-        // Convert pixel position to byte position
-        size_t byteInRow = (xInColumn * GetBytesPerPixel(format)) / pixelWidth;
+        // Position within the column
+        size_t byteInRow = xInColumn * bytesPerPixel;
+        size_t rowOffset = y * columnWidth;  // Use columnWidth as stride
         
-        return columnStart + (rowInColumn * stride) + byteInRow;
+        return columnStart + rowOffset + byteInRow;
     }
     
     static int GetBytesPerPixel(PixelFormat format) {

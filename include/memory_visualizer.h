@@ -132,7 +132,6 @@ private:
     // Column mode settings
     bool columnMode;        // Enable column layout
     int columnWidth;        // Width of each column in bytes
-    int columnHeight;       // Height of each column in rows
     int columnGap;          // Gap between columns in pixels
     
     char addressInput[32];

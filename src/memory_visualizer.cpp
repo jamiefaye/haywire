@@ -30,7 +30,7 @@ MemoryVisualizer::MemoryVisualizer()
       refreshRate(10.0f), showHexOverlay(false), showNavigator(true), showCorrelation(false),
       showChangeHighlight(true), showMagnifier(false),  // Magnifier off by default
       splitComponents(false),  // Split components off by default
-      columnMode(false), columnWidth(256), columnHeight(256), columnGap(8),  // Column mode defaults
+      columnMode(false), columnWidth(256), columnGap(8),  // Column mode defaults
       widthInput(512), heightInput(480), strideInput(512),  // Default to 512 width
       pixelFormatIndex(0), mouseX(0), mouseY(0), isDragging(false),
       dragStartX(0), dragStartY(0), dragAxisLocked(false), dragAxis(0),
@@ -958,7 +958,7 @@ void MemoryVisualizer::DrawControls() {
     // Third row: Column mode controls (only show if column mode is enabled)
     if (columnMode) {
         // Force column parameters to start on a new line (line 3)
-        ImGui::Text("Col Width:");
+        ImGui::Text("Column Width:");
         ImGui::SameLine();
         ImGui::PushItemWidth(100);  // Wider field
         if (ImGui::InputInt("##ColWidth", &columnWidth)) {
@@ -966,21 +966,12 @@ void MemoryVisualizer::DrawControls() {
             needsUpdate = true;
         }
         ImGui::PopItemWidth();
-        
-        ImGui::SameLine();
-        ImGui::Dummy(ImVec2(15, 0));  // Add spacing
-        ImGui::SameLine();
-        ImGui::Text("Col Height:");
-        ImGui::SameLine();
-        ImGui::PushItemWidth(100);  // Wider field
-        if (ImGui::InputInt("##ColHeight", &columnHeight)) {
-            columnHeight = std::max(1, columnHeight);
-            needsUpdate = true;
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Width of each column in bytes");
         }
-        ImGui::PopItemWidth();
         
         ImGui::SameLine();
-        ImGui::Dummy(ImVec2(15, 0));  // Add spacing
+        ImGui::Dummy(ImVec2(20, 0));  // Add spacing
         ImGui::SameLine();
         ImGui::Text("Gap:");
         ImGui::SameLine();
@@ -990,22 +981,12 @@ void MemoryVisualizer::DrawControls() {
             needsUpdate = true;
         }
         ImGui::PopItemWidth();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Pixel gap between columns");
+        }
         
         ImGui::SameLine();
-        ImGui::Dummy(ImVec2(15, 0));  // Add spacing
-        ImGui::SameLine();
-        ImGui::Text("Stride:");
-        ImGui::SameLine();
-        ImGui::PushItemWidth(100);  // Wider field
-        if (ImGui::InputInt("##Stride", &strideInput)) {
-            viewport.stride = std::max(columnWidth, strideInput);  // Stride must be >= column width
-            strideInput = viewport.stride;
-            needsUpdate = true;
-        }
-        ImGui::PopItemWidth();
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Memory stride (bytes per row). Must be >= column width.");
-        }
+        ImGui::TextDisabled("(Height: window height, Stride: column width)");
     }
     
     // Refresh rate is now automatic based on connection type
@@ -2706,7 +2687,6 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToPixels(const MemoryBlock&
     // Column mode settings
     config.columnMode = columnMode;
     config.columnWidth = columnWidth;
-    config.columnHeight = columnHeight;
     config.columnGap = columnGap;
     
     if (memory.data.empty()) {
