@@ -103,10 +103,6 @@ private:
     void CreateTexture();
     void UpdateTexture();
     std::vector<uint32_t> ConvertMemoryToPixels(const MemoryBlock& memory);
-    // Now handled by unified MemoryRenderer:
-    // std::vector<uint32_t> ConvertMemoryToHexPixels(const MemoryBlock& memory);
-    // std::vector<uint32_t> ConvertMemoryToCharPixels(const MemoryBlock& memory);
-    // std::vector<uint32_t> ConvertMemoryToSplitPixels(const MemoryBlock& memory);
     
     ViewportSettings viewport;
     MemoryBlock currentMemory;
