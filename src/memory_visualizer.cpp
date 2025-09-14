@@ -3363,9 +3363,8 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
             std::min(currentPage + pageSize, maxAddress) :
             (currentPage >= pageSize ? currentPage - pageSize : 0);
 
-        // Scan up to 1000 pages (4MB) to avoid hanging
-        const int maxPagesToScan = 1000;
-        std::vector<uint8_t> pageBuffer(pageSize);
+        // Scan up to 3000 pages (12MB) - completes in ~21ms at 7ms/1k pages
+        const int maxPagesToScan = 3000;
         int pagesScanned = 0;
 
         for (int i = 0; i < maxPagesToScan; i++) {
@@ -3378,23 +3377,8 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
                 break;  // Hit the beginning
             }
 
-            // Read through crunched reader
-            size_t bytesRead = crunchedReader->ReadCrunchedMemory(
-                scanAddress,
-                pageSize,
-                pageBuffer
-            );
-
-            // Check if page has any non-zero bytes
-            bool hasData = false;
-            if (bytesRead > 0) {
-                for (size_t j = 0; j < bytesRead; j++) {
-                    if (pageBuffer[j] != 0) {
-                        hasData = true;
-                        break;
-                    }
-                }
-            }
+            // Test page directly without copying (zero-copy when possible)
+            bool hasData = crunchedReader->TestPageNonZero(scanAddress, pageSize);
 
             if (hasData) {
                 // Found a non-zero page!

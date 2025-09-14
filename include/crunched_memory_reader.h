@@ -42,9 +42,15 @@ public:
     // flatAddress: Position in flattened space (0 to totalMappedSize)
     // size: Number of bytes to read
     // Returns actual bytes read
-    size_t ReadCrunchedMemory(uint64_t flatAddress, size_t size, 
+    size_t ReadCrunchedMemory(uint64_t flatAddress, size_t size,
                              std::vector<uint8_t>& buffer);
-    
+
+    // Test if a page contains any non-zero bytes (zero-copy when possible)
+    // flatAddress: Position in flattened space (0 to totalMappedSize)
+    // size: Number of bytes to test (typically 4096)
+    // Returns true if any non-zero bytes found
+    bool TestPageNonZero(uint64_t flatAddress, size_t size = 4096);
+
     // Get total size of crunched space
     uint64_t GetCrunchedSize() const {
         return flattener ? flattener->GetFlatSize() : 0;

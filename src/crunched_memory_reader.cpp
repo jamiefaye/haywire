@@ -211,4 +211,62 @@ CrunchedMemoryReader::PositionInfo CrunchedMemoryReader::GetPositionInfo(uint64_
     return info;
 }
 
+bool CrunchedMemoryReader::TestPageNonZero(uint64_t flatAddress, size_t size) {
+    if (!flattener || !qemu || targetPid < 0) {
+        return false;
+    }
+
+    if (!translator && !beaconTranslator) {
+        return false;
+    }
+
+    // Find which region we're in
+    const auto* region = flattener->GetRegionForFlat(flatAddress);
+    if (!region) {
+        // Hit unmapped space - consider it zero
+        return false;
+    }
+
+    // Calculate offset within this region
+    uint64_t offsetInRegion = flatAddress - region->flatStart;
+    uint64_t virtualAddr = region->virtualStart + offsetInRegion;
+
+    // Don't cross region boundaries
+    size_t regionSize = region->virtualEnd - region->virtualStart;
+    size_t remainingInRegion = regionSize - offsetInRegion;
+    size_t toTest = std::min(remainingInRegion, size);
+
+    // Process in page-sized chunks as the underlying memory is page-aligned
+    const size_t pageSize = 4096;
+    size_t tested = 0;
+
+    while (tested < toTest) {
+        size_t chunkSize = std::min<size_t>(pageSize, toTest - tested);
+        uint64_t chunkVA = virtualAddr + tested;
+
+        // Translate VA to PA
+        uint64_t physAddr = 0;
+        if (beaconTranslator) {
+            physAddr = beaconTranslator->TranslateAddress(targetPid, chunkVA);
+        } else if (translator) {
+            physAddr = translator->TranslateAddress(targetPid, chunkVA);
+        }
+
+        if (physAddr == 0) {
+            // Page not present - it's all zeros
+            tested += chunkSize;
+            continue;
+        }
+
+        // Use the zero-copy TestPageNonZero on the physical address
+        if (qemu->TestPageNonZero(physAddr, chunkSize)) {
+            return true;  // Found non-zero data
+        }
+
+        tested += chunkSize;
+    }
+
+    return false;  // All zeros or unmapped
+}
+
 }
