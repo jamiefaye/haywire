@@ -1172,7 +1172,32 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     ImGui::SameLine();
 
     // Scan backward for non-zero page
-    if (ImGui::Button("-Scan", ImVec2(buttonWidth, 20))) {
+    bool doScanBack = false;
+    ImGui::Button("-Scan", ImVec2(buttonWidth, 20));
+
+    if (ImGui::IsItemActive()) {
+        if (activeButtonId != 5) {
+            // Just pressed - trigger immediately
+            doScanBack = true;
+            activeButtonId = 5;
+            buttonHoldStart = now;
+            lastRepeatTime = now;
+        } else {
+            // Being held - check for auto-repeat
+            auto holdDuration = now - buttonHoldStart;
+            if (holdDuration > REPEAT_DELAY) {
+                // Start repeating
+                if (now - lastRepeatTime > REPEAT_RATE) {
+                    doScanBack = true;
+                    lastRepeatTime = now;
+                }
+            }
+        }
+    } else if (activeButtonId == 5) {
+        activeButtonId = 0;  // Button released
+    }
+
+    if (doScanBack) {
         uint64_t foundAddress = ScanForNonZeroPage(false);
         if (foundAddress != viewport.baseAddress) {
             viewport.baseAddress = foundAddress;
@@ -1186,8 +1211,9 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
             needsUpdate = true;
         }
     }
+
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Scan backward for non-zero page");
+        ImGui::SetTooltip("Scan backward for non-zero page (hold to repeat)");
     }
 
     // Draw memory map visualization behind the slider
@@ -1401,7 +1427,32 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     ImGui::SameLine();
 
     // Scan forward for non-zero page
-    if (ImGui::Button("+Scan", ImVec2(buttonWidth, 20))) {
+    bool doScanForward = false;
+    ImGui::Button("+Scan", ImVec2(buttonWidth, 20));
+
+    if (ImGui::IsItemActive()) {
+        if (activeButtonId != 6) {
+            // Just pressed - trigger immediately
+            doScanForward = true;
+            activeButtonId = 6;
+            buttonHoldStart = now;
+            lastRepeatTime = now;
+        } else {
+            // Being held - check for auto-repeat
+            auto holdDuration = now - buttonHoldStart;
+            if (holdDuration > REPEAT_DELAY) {
+                // Start repeating
+                if (now - lastRepeatTime > REPEAT_RATE) {
+                    doScanForward = true;
+                    lastRepeatTime = now;
+                }
+            }
+        }
+    } else if (activeButtonId == 6) {
+        activeButtonId = 0;  // Button released
+    }
+
+    if (doScanForward) {
         uint64_t foundAddress = ScanForNonZeroPage(true);
         if (foundAddress != viewport.baseAddress) {
             viewport.baseAddress = foundAddress;
@@ -1415,8 +1466,9 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
             needsUpdate = true;
         }
     }
+
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Scan forward for non-zero page");
+        ImGui::SetTooltip("Scan forward for non-zero page (hold to repeat)");
     }
 
     ImGui::PopItemWidth();
@@ -3373,8 +3425,8 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
         std::min(currentPage + pageSize, maxAddress) :
         (currentPage >= pageSize ? currentPage - pageSize : 0);
 
-    // Scan up to 1000 pages (4MB) to avoid hanging
-    const int maxPagesToScan = 1000;
+    // Scan up to 10000 pages (40MB) to skip over larger unallocated regions
+    const int maxPagesToScan = 10000;
 
     for (int i = 0; i < maxPagesToScan; i++) {
         // Check bounds

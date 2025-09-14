@@ -243,7 +243,7 @@ private:
     
     // Button auto-repeat state
     std::chrono::steady_clock::time_point buttonHoldStart;
-    int activeButtonId = 0;  // Which button is being held (0=none, 1=-Page, 2=-64K, 3=+Page, 4=+64K)
+    int activeButtonId = 0;  // Which button is being held (0=none, 1=-Page, 2=-64K, 3=+Page, 4=+64K, 5=-Scan, 6=+Scan)
     std::chrono::steady_clock::time_point lastRepeatTime;
 };
 
