@@ -47,7 +47,12 @@ struct BitmapViewer {
     PixelFormat format = PixelFormat::RGB888;
     int formatIndex = 0;  // Index for combo box
     bool splitComponents = false;  // Whether to split RGB/RGBA into separate channels
-    
+
+    // Column mode settings
+    bool columnMode = false;
+    int columnWidth = 256;
+    int columnGap = 0;
+
     // Rendering
     GLuint texture = 0;
     std::vector<uint32_t> pixels;

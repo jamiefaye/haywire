@@ -24,7 +24,7 @@ struct RenderConfig {
     // Column mode settings
     bool columnMode = false;
     int columnWidth = 256;    // Width of each column in pixels (same units as main width)
-    int columnGap = 8;        // Gap between columns in pixels
+    int columnGap = 0;        // Gap between columns in pixels
     
     // Calculate memory offset for a display position in column mode
     size_t ColumnDisplayToMemory(int x, int y, int pixelWidth) const {

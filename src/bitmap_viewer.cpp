@@ -442,14 +442,33 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             if (ImGui::InputInt("H", &viewer.memHeight)) {
                 viewer.memHeight = std::max(1, viewer.memHeight);
                 viewer.needsUpdate = true;
-                // Resize pixel buffer  
+                // Resize pixel buffer
                 viewer.pixels.resize(viewer.memWidth * viewer.memHeight);
                 // Update window size to match (minimal padding for small sizes)
                 int padY = viewer.memHeight < 50 ? 25 : 35;  // Need room for title bar
                 viewer.windowSize.y = viewer.memHeight + padY;
                 viewer.forceResize = true;  // Force window resize on next frame
             }
-            
+
+            // Column mode controls
+            ImGui::Separator();
+            if (ImGui::Checkbox("Column Mode", &viewer.columnMode)) {
+                viewer.needsUpdate = true;
+            }
+
+            if (viewer.columnMode) {
+                ImGui::SetNextItemWidth(90);
+                if (ImGui::InputInt("Col Width", &viewer.columnWidth)) {
+                    viewer.columnWidth = std::max(1, viewer.columnWidth);
+                    viewer.needsUpdate = true;
+                }
+                ImGui::SetNextItemWidth(90);
+                if (ImGui::InputInt("Col Gap", &viewer.columnGap)) {
+                    viewer.columnGap = std::max(0, viewer.columnGap);
+                    viewer.needsUpdate = true;
+                }
+            }
+
             ImGui::EndPopup();
         }
         ImGui::PopStyleVar();  // Pop WindowPadding
@@ -756,7 +775,10 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
             config.height = viewer.memHeight;
             config.format = viewer.format;
             config.splitComponents = viewer.splitComponents;
-            
+            config.columnMode = viewer.columnMode;
+            config.columnWidth = viewer.columnWidth;
+            config.columnGap = viewer.columnGap;
+
             viewer.pixels = MemoryRenderer::RenderMemory(
                 buffer.data(),
                 bytesRead,
@@ -859,7 +881,10 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
     config.height = viewer.memHeight;
     config.format = viewer.format;
     config.splitComponents = viewer.splitComponents;
-    
+    config.columnMode = viewer.columnMode;
+    config.columnWidth = viewer.columnWidth;
+    config.columnGap = viewer.columnGap;
+
     viewer.pixels = MemoryRenderer::RenderMemory(
         memPtr,
         totalBytes,
