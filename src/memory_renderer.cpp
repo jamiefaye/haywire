@@ -137,40 +137,39 @@ void MemoryRenderer::RenderCharElement(
     uint32_t* dest,          // Destination buffer
     int destStride)          // Stride in pixels
 {
-    uint8_t ch = *src;
+    uint8_t charCode = *src;
 
-    // Get colors based on character value
-    uint32_t bgColor = PackRGBA((ch & 0xE0) >> 5 << 5,
-                                 (ch & 0x1C) >> 2 << 5,
-                                 (ch & 0x03) << 6,
-                                 255);
-    uint32_t fgColor = CalcHiContrastOpposite(bgColor);
-
-    // Find the font glyph
+    // Find the glyph in Font5x7u array by searching for the character code
     uint64_t glyph = 0;
-    for (size_t i = 0; i < Font5x7u_count; ++i) {
-        uint64_t entry = Font5x7u[i];
-        uint16_t glyphCode = (entry >> 48) & 0xFFFF;
-        if (glyphCode == ch) {
-            glyph = entry;
-            break;
+
+    // Display null characters as blank (just black)
+    if (charCode != 0) {
+        for (size_t i = 0; i < Font5x7u_count; ++i) {
+            uint64_t entry = Font5x7u[i];
+            uint16_t glyphCode = (entry >> 48) & 0xFFFF;  // Character code in top 16 bits
+            if (glyphCode == charCode) {
+                glyph = entry;
+                break;
+            }
         }
     }
 
-    // Draw the 5x7 character in a 6x8 box
+    // Simple color scheme: always white text on black background
+    uint32_t fgColor = 0xFFFFFFFF;  // White
+    uint32_t bgColor = 0xFF000000;  // Black
+
+    // Draw the 5x7 glyph in a 6x8 box
+    // Using the pattern from the reference code:
+    // Start at bit 47 and read sequentially downward
+    uint64_t rotatingBit = 0x0000800000000000ULL;  // bit 47
+
     for (int y = 0; y < 8; ++y) {
         for (int x = 0; x < 6; ++x) {
-            uint32_t color = bgColor;
+            // Check if bit is set
+            bool bit = (glyph & rotatingBit) != 0;
+            dest[y * destStride + x] = bit ? fgColor : bgColor;
 
-            if (y < 7 && x < 5 && glyph) {
-                // Extract the row data from packed glyph
-                int rowShift = 40 - (y * 6);  // Each row uses 6 bits
-                uint8_t row = (glyph >> rowShift) & 0x3F;
-                bool bit = (row >> (4 - x)) & 1;
-                if (bit) color = fgColor;
-            }
-
-            dest[y * destStride + x] = color;
+            rotatingBit >>= 1;  // Move to next bit
         }
     }
 }

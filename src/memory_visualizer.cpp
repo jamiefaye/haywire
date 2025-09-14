@@ -30,7 +30,7 @@ MemoryVisualizer::MemoryVisualizer()
       refreshRate(10.0f), showHexOverlay(false), showNavigator(true), showCorrelation(false),
       showChangeHighlight(true), showMagnifier(false),  // Magnifier off by default
       splitComponents(false),  // Split components off by default
-      columnMode(false), columnWidth(256), columnGap(8),  // Column mode defaults
+      columnMode(false), columnWidth(256), columnGap(0),  // Column mode defaults
       widthInput(512), heightInput(480), strideInput(512),  // Default to 512 width
       pixelFormatIndex(0), mouseX(0), mouseY(0), isDragging(false),
       dragStartX(0), dragStartY(0), dragAxisLocked(false), dragAxis(0),

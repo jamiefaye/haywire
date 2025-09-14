@@ -207,7 +207,7 @@ private:
     // Column mode parameters
     bool columnMode = false;
     int columnWidth = 256;  // In pixels
-    int columnGap = 8;
+    int columnGap = 0;
 };
 
 }  // namespace Haywire
