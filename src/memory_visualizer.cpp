@@ -3341,6 +3341,9 @@ bool MemoryVisualizer::ExportToPNG(const std::string& filename) {
 uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
     const uint64_t pageSize = 0x1000;  // 4KB pages
 
+    // Start timing
+    auto startTime = std::chrono::high_resolution_clock::now();
+
     // Make sure we have a QemuConnection
     if (!qemuConn) {
         return viewport.baseAddress;  // Can't scan without connection
@@ -3395,6 +3398,11 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
 
             if (hasData) {
                 // Found a non-zero page!
+                auto endTime = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+                std::cerr << "VA Scan: Found data at 0x" << std::hex << scanAddress << std::dec
+                          << " after " << i << " pages in " << duration.count() << " µs"
+                          << " (" << duration.count()/1000.0 << " ms)\n";
                 return scanAddress;
             }
 
@@ -3415,7 +3423,12 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
 
         // No non-zero page found in this scan batch
         // Advance by the amount we actually scanned so next scan continues from there
+        auto endTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
         uint64_t jumpDistance = pagesScanned * pageSize;
+        std::cerr << "VA Scan: No data found after " << pagesScanned << " pages in "
+                  << duration.count() << " µs (" << duration.count()/1000.0 << " ms)"
+                  << " - jumping " << (jumpDistance/(1024*1024)) << " MB\n";
         if (forward) {
             return std::min(viewport.baseAddress + jumpDistance, maxAddress - pageSize);
         } else {
@@ -3492,6 +3505,11 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
 
         if (hasData) {
             // Found a non-zero page!
+            auto endTime = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+            std::cerr << "PA Scan: Found data at 0x" << std::hex << scanAddress << std::dec
+                      << " after " << i << " pages in " << duration.count() << " µs"
+                      << " (" << duration.count()/1000.0 << " ms)\n";
             return scanAddress;
         }
 
@@ -3564,6 +3582,9 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
 
     // No non-zero page found in this scan batch
     // Advance by the actual distance we traveled (including region jumps)
+    auto endTime = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+
     uint64_t actualDistance = forward ?
         (scanAddress - startScanAddress) :
         (startScanAddress - scanAddress);
@@ -3572,6 +3593,10 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
     if (actualDistance < (1024 * 1024)) {
         actualDistance = 256 * 1024 * 1024;  // Jump 256MB
     }
+
+    std::cerr << "PA Scan: No data found after " << pagesScanned << " pages in "
+              << duration.count() << " µs (" << duration.count()/1000.0 << " ms)"
+              << " - jumping " << (actualDistance/(1024*1024)) << " MB\n";
 
     if (forward) {
         return std::min(viewport.baseAddress + actualDistance, maxAddress - pageSize);
