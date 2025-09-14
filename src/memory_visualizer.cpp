@@ -3475,6 +3475,7 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
     // Scan up to 10000 pages (40MB) to skip over larger unallocated regions
     const int maxPagesToScan = 10000;
     int pagesScanned = 0;
+    uint64_t startScanAddress = scanAddress;  // Remember where we started
 
     for (int i = 0; i < maxPagesToScan; i++) {
         pagesScanned++;
@@ -3562,12 +3563,20 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
     }
 
     // No non-zero page found in this scan batch
-    // Advance by the amount we actually scanned so next scan continues from there
-    uint64_t jumpDistance = pagesScanned * pageSize;
+    // Advance by the actual distance we traveled (including region jumps)
+    uint64_t actualDistance = forward ?
+        (scanAddress - startScanAddress) :
+        (startScanAddress - scanAddress);
+
+    // If we didn't move much (less than 1MB), force a bigger jump
+    if (actualDistance < (1024 * 1024)) {
+        actualDistance = 256 * 1024 * 1024;  // Jump 256MB
+    }
+
     if (forward) {
-        return std::min(viewport.baseAddress + jumpDistance, maxAddress - pageSize);
+        return std::min(viewport.baseAddress + actualDistance, maxAddress - pageSize);
     } else {
-        return (viewport.baseAddress >= jumpDistance) ? viewport.baseAddress - jumpDistance : 0;
+        return (viewport.baseAddress >= actualDistance) ? viewport.baseAddress - actualDistance : 0;
     }
 }
 
