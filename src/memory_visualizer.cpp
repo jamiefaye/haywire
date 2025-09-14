@@ -1440,7 +1440,9 @@ void MemoryVisualizer::DrawMemoryView() {
                 viewport.baseAddress,
                 viewport.width,
                 viewport.height,
-                viewport.format.bytesPerPixel
+                viewport.format.bytesPerPixel,
+                splitComponents,
+                viewport.format.type
             );
             
             // Also update column mode settings
@@ -2618,8 +2620,24 @@ void MemoryVisualizer::HandleInput() {
                 // Normal pixel formats: 1 display pixel = 1 memory pixel
                 // Vertical: Each pixel of drag = one row of memory
                 verticalDelta = (int64_t)dragDeltaY * viewport.stride * viewport.format.bytesPerPixel;
-                // Horizontal: Each pixel of drag = one pixel worth of memory
-                horizontalDelta = (int64_t)dragDeltaX * viewport.format.bytesPerPixel;
+
+                // Horizontal: Account for split components mode
+                if (splitComponents &&
+                    (viewport.format.type == PixelFormat::RGB888 ||
+                     viewport.format.type == PixelFormat::RGBA8888 ||
+                     viewport.format.type == PixelFormat::BGR888 ||
+                     viewport.format.type == PixelFormat::BGRA8888 ||
+                     viewport.format.type == PixelFormat::ARGB8888 ||
+                     viewport.format.type == PixelFormat::ABGR8888 ||
+                     viewport.format.type == PixelFormat::RGB565)) {
+                    // In split mode, each source pixel expands to multiple display pixels
+                    // So we need to divide the drag delta by the expansion factor
+                    int componentsPerPixel = (viewport.format.type == PixelFormat::RGB565) ? 3 : viewport.format.bytesPerPixel;
+                    horizontalDelta = ((int64_t)dragDeltaX / componentsPerPixel) * viewport.format.bytesPerPixel;
+                } else {
+                    // Normal mode: Each pixel of drag = one pixel worth of memory
+                    horizontalDelta = (int64_t)dragDeltaX * viewport.format.bytesPerPixel;
+                }
             }
             
             int64_t totalDelta = verticalDelta + horizontalDelta;
@@ -2737,38 +2755,54 @@ uint32_t MemoryVisualizer::GetPixelAt(int x, int y) const {
 
 uint64_t MemoryVisualizer::GetAddressAt(int x, int y) const {
     size_t offset;
-    
+
     if (columnMode) {
         // Column mode - columnWidth is now in pixels, like viewport.width
         int bytesPerPixel = viewport.format.bytesPerPixel;
         int totalColumnWidth = columnWidth + columnGap;
-        
+
         // Which column are we in?
         int col = x / totalColumnWidth;
         int xInColumn = x % totalColumnWidth;
-        
+
         // Are we in the gap between columns?
         if (xInColumn >= columnWidth) {
             // Return address of the start of the next column
             col++;
             xInColumn = 0;
         }
-        
+
         // Calculate memory offset using column layout
         // Each column contains (viewport.height * columnWidth * bytesPerPixel) bytes
         size_t bytesPerColumn = viewport.height * columnWidth * bytesPerPixel;
         size_t columnStart = col * bytesPerColumn;
-        
+
         // Position within the column
         size_t byteInRow = xInColumn * bytesPerPixel;
         size_t rowOffset = y * columnWidth * bytesPerPixel;  // columnWidth in pixels * bytesPerPixel = stride in bytes
-        
+
         offset = columnStart + rowOffset + byteInRow;
     } else {
-        // Linear mode - original calculation
-        offset = (y * viewport.stride + x) * viewport.format.bytesPerPixel;
+        // Linear mode - handle split components
+        if (splitComponents &&
+            (viewport.format.type == PixelFormat::RGB888 ||
+             viewport.format.type == PixelFormat::RGBA8888 ||
+             viewport.format.type == PixelFormat::BGR888 ||
+             viewport.format.type == PixelFormat::BGRA8888 ||
+             viewport.format.type == PixelFormat::ARGB8888 ||
+             viewport.format.type == PixelFormat::ABGR8888 ||
+             viewport.format.type == PixelFormat::RGB565)) {
+            // In split mode, multiple display pixels represent one source pixel
+            int componentsPerPixel = (viewport.format.type == PixelFormat::RGB565) ? 3 : viewport.format.bytesPerPixel;
+            // Divide x by expansion factor to get the actual source pixel
+            int sourcePixelX = x / componentsPerPixel;
+            offset = (y * viewport.stride + sourcePixelX) * viewport.format.bytesPerPixel;
+        } else {
+            // Normal mode - original calculation
+            offset = (y * viewport.stride + x) * viewport.format.bytesPerPixel;
+        }
     }
-    
+
     // Add scroll offset if we're in a scrollable view
     // The viewport.baseAddress already includes scroll offset from mouse wheel/dragging
     // This gives us the actual memory address at the clicked position

@@ -980,9 +980,26 @@ TypedAddress BitmapViewerManager::ScreenToMemoryAddress(ImVec2 screenPos) {
         
         offset = columnStart + rowOffset + byteInRow;
     } else {
-        // Linear mode
-        offset = memY * viewportWidth * viewportBytesPerPixel + 
-                 memX * viewportBytesPerPixel;
+        // Linear mode - handle split components
+        if (viewportSplitMode &&
+            (viewportFormatType == PixelFormat::RGB888 ||
+             viewportFormatType == PixelFormat::RGBA8888 ||
+             viewportFormatType == PixelFormat::BGR888 ||
+             viewportFormatType == PixelFormat::BGRA8888 ||
+             viewportFormatType == PixelFormat::ARGB8888 ||
+             viewportFormatType == PixelFormat::ABGR8888 ||
+             viewportFormatType == PixelFormat::RGB565)) {
+            // In split mode, multiple display pixels represent one source pixel
+            int componentsPerPixel = (viewportFormatType == PixelFormat::RGB565) ? 3 : viewportBytesPerPixel;
+            // Divide memX by expansion factor to get the actual source pixel
+            int sourcePixelX = memX / componentsPerPixel;
+            offset = memY * viewportWidth * viewportBytesPerPixel +
+                     sourcePixelX * viewportBytesPerPixel;
+        } else {
+            // Normal mode
+            offset = memY * viewportWidth * viewportBytesPerPixel +
+                     memX * viewportBytesPerPixel;
+        }
     }
     
     uint64_t address = viewportBaseAddress + offset;

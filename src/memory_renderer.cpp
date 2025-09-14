@@ -291,91 +291,107 @@ std::vector<uint32_t> MemoryRenderer::RenderSplitComponents(
     const RenderConfig& config)
 {
     std::vector<uint32_t> pixels(config.displayWidth * config.displayHeight, 0xFF000000);
-    
+
     if (!data || dataSize == 0) {
         return pixels;
     }
-    
+
     int bytesPerPixel = GetBytesPerPixel(config.format);
     int componentsPerPixel = (config.format.type == PixelFormat::RGB565) ? 3 : bytesPerPixel;
-    
-    // Calculate layout
-    int pixelsPerRow = config.width;
-    int componentWidth = config.displayWidth / componentsPerPixel;
-    
+
+    // Each source pixel expands to componentsPerPixel destination pixels horizontally
     for (int y = 0; y < config.height && y < config.displayHeight; y++) {
-        for (int x = 0; x < pixelsPerRow && x < config.width; x++) {
+        for (int x = 0; x < config.width; x++) {
             size_t offset = y * config.stride + x * bytesPerPixel;
-            
+
             if (offset + bytesPerPixel <= dataSize) {
                 // Extract components based on format
-                uint8_t components[4] = {0, 0, 0, 255};
-                
+                // Order: [0]=Alpha (if present), [1]=Red, [2]=Green, [3]=Blue
+                uint8_t components[4] = {255, 0, 0, 0};  // Default alpha to 255
+                bool hasAlpha = false;
+
                 switch (config.format.type) {
                     case PixelFormat::RGB888:
-                        components[0] = data[offset];
-                        components[1] = data[offset + 1];
-                        components[2] = data[offset + 2];
+                        components[1] = data[offset];      // R
+                        components[2] = data[offset + 1];  // G
+                        components[3] = data[offset + 2];  // B
                         break;
                     case PixelFormat::RGBA8888:
-                        components[0] = data[offset];
-                        components[1] = data[offset + 1];
-                        components[2] = data[offset + 2];
-                        components[3] = data[offset + 3];
+                        components[1] = data[offset];      // R
+                        components[2] = data[offset + 1];  // G
+                        components[3] = data[offset + 2];  // B
+                        components[0] = data[offset + 3];  // A
+                        hasAlpha = true;
                         break;
                     case PixelFormat::BGR888:
-                        components[0] = data[offset + 2];
-                        components[1] = data[offset + 1];
-                        components[2] = data[offset];
+                        components[3] = data[offset];      // B
+                        components[2] = data[offset + 1];  // G
+                        components[1] = data[offset + 2];  // R
                         break;
                     case PixelFormat::BGRA8888:
-                        components[0] = data[offset + 2];
-                        components[1] = data[offset + 1];
-                        components[2] = data[offset];
-                        components[3] = data[offset + 3];
+                        components[3] = data[offset];      // B
+                        components[2] = data[offset + 1];  // G
+                        components[1] = data[offset + 2];  // R
+                        components[0] = data[offset + 3];  // A
+                        hasAlpha = true;
                         break;
                     case PixelFormat::ARGB8888:
-                        components[0] = data[offset + 1];
-                        components[1] = data[offset + 2];
-                        components[2] = data[offset + 3];
-                        components[3] = data[offset];
+                        components[0] = data[offset];      // A
+                        components[1] = data[offset + 1];  // R
+                        components[2] = data[offset + 2];  // G
+                        components[3] = data[offset + 3];  // B
+                        hasAlpha = true;
                         break;
                     case PixelFormat::ABGR8888:
-                        components[0] = data[offset + 3];
-                        components[1] = data[offset + 2];
-                        components[2] = data[offset + 1];
-                        components[3] = data[offset];
+                        components[0] = data[offset];      // A
+                        components[3] = data[offset + 1];  // B
+                        components[2] = data[offset + 2];  // G
+                        components[1] = data[offset + 3];  // R
+                        hasAlpha = true;
                         break;
                     case PixelFormat::RGB565: {
                         uint16_t pixel = *(uint16_t*)(data + offset);
-                        components[0] = ((pixel >> 11) & 0x1F) << 3;
-                        components[1] = ((pixel >> 5) & 0x3F) << 2;
-                        components[2] = (pixel & 0x1F) << 3;
+                        components[1] = ((pixel >> 11) & 0x1F) << 3;  // R
+                        components[2] = ((pixel >> 5) & 0x3F) << 2;   // G
+                        components[3] = (pixel & 0x1F) << 3;          // B
                         break;
                     }
                 }
-                
-                // Draw each component in its section
-                for (int comp = 0; comp < componentsPerPixel; comp++) {
-                    int destX = comp * componentWidth + (x % componentWidth);
+
+                // Draw the expanded pixels in order: A R G B (or R G B if no alpha)
+                int startComp = hasAlpha ? 0 : 1;  // Skip alpha slot if format has no alpha
+                int outputIdx = 0;
+
+                for (int comp = startComp; comp < 4; comp++) {
+                    int destX = x * componentsPerPixel + outputIdx;
                     int destY = y;
-                    
+
                     if (destX < config.displayWidth && destY < config.displayHeight) {
-                        uint32_t color = 0xFF000000;
-                        if (comp == 0) color |= (components[0] << 16);  // Red channel
-                        else if (comp == 1) color |= (components[1] << 8);  // Green channel
-                        else if (comp == 2) color |= components[2];  // Blue channel
-                        else if (comp == 3) {
-                            // Alpha as grayscale
-                            color |= (components[3] << 16) | (components[3] << 8) | components[3];
+                        uint8_t value = components[comp];
+                        uint32_t color = 0xFF000000;  // Full alpha
+
+                        if (comp == 0) {
+                            // Alpha - show as grayscale
+                            color |= (value << 16) | (value << 8) | value;
+                        } else if (comp == 1) {
+                            // Red - show in red channel only
+                            color |= (value << 16);
+                        } else if (comp == 2) {
+                            // Green - show in green channel only
+                            color |= (value << 8);
+                        } else if (comp == 3) {
+                            // Blue - show in blue channel only
+                            color |= value;
                         }
+
                         pixels[destY * config.displayWidth + destX] = color;
                     }
+                    outputIdx++;
                 }
             }
         }
     }
-    
+
     return pixels;
 }
 

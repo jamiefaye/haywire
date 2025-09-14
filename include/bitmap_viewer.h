@@ -105,13 +105,15 @@ public:
     }
     
     // Set memory visualizer viewport info for coordinate conversion
-    void SetMemoryViewInfo(ImVec2 viewPos, ImVec2 viewSize, uint64_t baseAddr, int width, int height, int bytesPerPixel) {
+    void SetMemoryViewInfo(ImVec2 viewPos, ImVec2 viewSize, uint64_t baseAddr, int width, int height, int bytesPerPixel, bool splitMode = false, PixelFormat::Type formatType = PixelFormat::RGB888) {
         memoryViewPos = viewPos;
         memoryViewSize = viewSize;
         viewportBaseAddress = baseAddr;
         viewportWidth = width;
         viewportHeight = height;
         viewportBytesPerPixel = bytesPerPixel;
+        viewportSplitMode = splitMode;
+        viewportFormatType = formatType;
     }
     
     // Set column mode parameters
@@ -194,6 +196,8 @@ private:
     int viewportWidth = 256;
     int viewportHeight = 256;
     int viewportBytesPerPixel = 1;
+    bool viewportSplitMode = false;
+    PixelFormat::Type viewportFormatType = PixelFormat::RGB888;
     
     // Column mode parameters
     bool columnMode = false;
