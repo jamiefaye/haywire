@@ -249,7 +249,19 @@ bool QemuConnection::TestPageNonZero(uint64_t address, size_t size) {
         }
 
         // Direct scan - no allocation, no copying!
-        for (size_t i = 0; i < size; i++) {
+        // Check 64 bits at a time for better performance
+        const uint64_t* ptr64 = reinterpret_cast<const uint64_t*>(ptr);
+        size_t numQuads = size / 8;
+
+        // Check 8 bytes at a time
+        for (size_t i = 0; i < numQuads; i++) {
+            if (ptr64[i] != 0) {
+                return true;
+            }
+        }
+
+        // Check remaining bytes (if size not divisible by 8)
+        for (size_t i = numQuads * 8; i < size; i++) {
             if (ptr[i] != 0) {
                 return true;
             }
