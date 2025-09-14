@@ -93,17 +93,19 @@ bool BeaconReader::ScanForDiscovery() {
     size_t pagesScanned = 0;
     size_t beaconsFound = 0;
     
-    std::cout << "Scanning " << (memSize / (1024*1024)) << " MB for discovery page...\n";
+    // Commented out scanning message to reduce clutter
+    // std::cout << "Scanning " << (memSize / (1024*1024)) << " MB for discovery page...\n";
     
     // Look for the discovery page (BEACON_CATEGORY_MASTER with index 0)
     for (size_t offset = 0; offset + PAGE_SIZE <= memSize; offset += PAGE_SIZE) {
         pagesScanned++;
         
         // Report progress every 256MB
-        if (pagesScanned % 65536 == 0) {
-            std::cout << "  Scanned " << (pagesScanned * PAGE_SIZE / (1024*1024)) 
-                      << " MB, found " << beaconsFound << " beacon pages so far...\n";
-        }
+        // Commented out to reduce clutter
+        // if (pagesScanned % 65536 == 0) {
+        //     std::cout << "  Scanned " << (pagesScanned * PAGE_SIZE / (1024*1024))
+        //               << " MB, found " << beaconsFound << " beacon pages so far...\n";
+        // }
         // Count all beacon pages we encounter
         if (*reinterpret_cast<uint32_t*>(mem + offset) == BEACON_MAGIC) {
             beaconsFound++;
@@ -133,11 +135,13 @@ bool BeaconReader::ScanForDiscovery() {
             
             discovery.valid = true;
             
-            std::cout << "\nFound discovery page at offset 0x" << std::hex << offset << std::dec
-                      << " (session=" << discovery.pid 
-                      << ", timestamp=" << discovery.timestamp << ")\n";
-            std::cout << "Total pages scanned: " << pagesScanned 
-                      << " (" << beaconsFound << " were beacon pages)\n";
+            // Commented out discovery page found message
+            // std::cout << "\nFound discovery page at offset 0x" << std::hex << offset << std::dec
+            //           << " (session=" << discovery.pid
+            //           << ", timestamp=" << discovery.timestamp << ")\n";
+            // Commented out to reduce clutter
+            // std::cout << "Total pages scanned: " << pagesScanned
+            //           << " (" << beaconsFound << " were beacon pages)\n";
             
             // Now build the category mappings
             BuildCategoryMappings();
@@ -147,56 +151,87 @@ bool BeaconReader::ScanForDiscovery() {
     }
     
     std::cout << "\nDiscovery page not found after scanning " << pagesScanned << " pages\n";
-    std::cout << "Found " << beaconsFound << " beacon pages total (but no discovery page)\n";
+    // Commented out to reduce clutter
+    // std::cout << "Found " << beaconsFound << " beacon pages total (but no discovery page)\n";
     return false;
 }
 
 void BeaconReader::BuildCategoryMappings() {
     uint8_t* mem = static_cast<uint8_t*>(memBase);
-    
+
     // First pass: collect ALL beacon pages and organize by category and index
     std::map<uint32_t, std::map<uint32_t, size_t>> categoryPages; // [category][index] = offset
     int totalBeacons = 0;
     int validBeacons = 0;
     int staleBeacons = 0;  // From different sessions
     int bogusBeacons = 0;  // Invalid category or index
-    
+
+    // Calculate total expected pages
+    size_t totalExpectedPages = 0;
+    for (int cat = 0; cat < BEACON_NUM_CATEGORIES; cat++) {
+        totalExpectedPages += discovery.categories[cat].page_count;
+    }
+
+    // Track found pages per category
+    size_t pagesFoundPerCategory[BEACON_NUM_CATEGORIES] = {0};
+
     for (size_t offset = 0; offset + PAGE_SIZE <= memSize; offset += PAGE_SIZE) {
         uint32_t* magic = reinterpret_cast<uint32_t*>(mem + offset);
         if (*magic == BEACON_MAGIC) {
             totalBeacons++;
             BeaconPage* page = reinterpret_cast<BeaconPage*>(mem + offset);
-            
+
             // Check if page is from current session
             if (page->session_id != discovery.pid) {
                 staleBeacons++;
                 continue;  // Different session, skip this stale beacon
             }
-            
+
             // Extract category and page index
             uint32_t category = page->category;
             uint32_t pageIndex = page->category_index;
-            
+
             // Validate category and index
             if (category >= BEACON_NUM_CATEGORIES || pageIndex >= 10000) {
                 bogusBeacons++;
                 if (bogusBeacons <= 5) {  // Report first few bogus pages
-                    std::cout << "  Bogus beacon at 0x" << std::hex << offset << std::dec 
+                    std::cout << "  Bogus beacon at 0x" << std::hex << offset << std::dec
                               << " (cat=" << category << ", idx=" << pageIndex << ")\n";
                 }
             } else {
                 // Valid beacon page
                 validBeacons++;
+
+                // Track if this is a new page for this category
+                if (categoryPages[category].find(pageIndex) == categoryPages[category].end()) {
+                    pagesFoundPerCategory[category]++;
+                }
+
                 categoryPages[category][pageIndex] = offset;
+
+                // Check if we've found all expected pages
+                size_t totalFoundSoFar = 0;
+                for (int cat = 0; cat < BEACON_NUM_CATEGORIES; cat++) {
+                    totalFoundSoFar += pagesFoundPerCategory[cat];
+                }
+
+                // Stop scanning if we've found all expected pages
+                if (totalFoundSoFar >= totalExpectedPages && totalExpectedPages > 0) {
+                    // Silently stop scanning when all pages found
+                    // std::cout << "Found all " << totalExpectedPages << " expected beacon pages. Stopping scan.\n";
+                    break;
+                }
             }
         }
     }
     
-    std::cout << "\nBeacon Discovery Results:\n";
-    std::cout << "  Total beacon pages found: " << totalBeacons << "\n";
-    std::cout << "  Valid beacon pages (current session): " << validBeacons << "\n";
-    std::cout << "  Stale beacon pages (old sessions): " << staleBeacons << "\n";
-    std::cout << "  Bogus beacon pages (invalid cat/idx): " << bogusBeacons << "\n";
+    // Commented out to reduce clutter
+    // std::cout << "\nBeacon Discovery Results:\n";
+    // Commented out to reduce clutter
+    // std::cout << "  Total beacon pages found: " << totalBeacons << "\n";
+    // std::cout << "  Valid beacon pages (current session): " << validBeacons << "\n";
+    // std::cout << "  Stale beacon pages (old sessions): " << staleBeacons << "\n";
+    // std::cout << "  Bogus beacon pages (invalid cat/idx): " << bogusBeacons << "\n";
     
     // Build the COMPLETE mappings for each category
     for (int cat = 0; cat < 4; cat++) {
@@ -230,14 +265,15 @@ void BeaconReader::BuildCategoryMappings() {
                     }
                 }
                 
-                std::cout << "Category " << cat << ": " << mapping.foundCount 
-                          << "/" << mapping.expectedCount << " pages found";
-                
-                if (mapping.foundCount < mapping.expectedCount) {
-                    std::cout << " (MISSING " << (mapping.expectedCount - mapping.foundCount) 
-                              << " pages - likely torn during scan)";
-                }
-                std::cout << "\n";
+                // Commented out to reduce clutter
+                // std::cout << "Category " << cat << ": " << mapping.foundCount
+                //           << "/" << mapping.expectedCount << " pages found";
+                //
+                // if (mapping.foundCount < mapping.expectedCount) {
+                //     std::cout << " (MISSING " << (mapping.expectedCount - mapping.foundCount)
+                //               << " pages - likely torn during scan)";
+                // }
+                // std::cout << "\n";
                 
                 // Show distribution info
                 if (mapping.foundCount > 0) {
@@ -263,36 +299,39 @@ void BeaconReader::BuildCategoryMappings() {
                         gaps.push_back({gapStart, catInfo.page_count - 1});
                     }
                     
-                    if (!gaps.empty()) {
-                        std::cout << "  Missing pages: ";
-                        for (auto& [start, end] : gaps) {
-                            if (start == end) {
-                                std::cout << start << " ";
-                            } else {
-                                std::cout << start << "-" << end << " ";
-                            }
-                        }
-                        std::cout << "\n";
-                    }
+                    // Commented out missing pages output
+                    // if (!gaps.empty()) {
+                    //     std::cout << "  Missing pages: ";
+                    //     for (auto& [start, end] : gaps) {
+                    //         if (start == end) {
+                    //             std::cout << start << " ";
+                    //         } else {
+                    //             std::cout << start << "-" << end << " ";
+                    //         }
+                    //     }
+                    //     std::cout << "\n";
+                    // }
                     
-                    // Show first few present pages
-                    int shown = 0;
-                    for (size_t i = 0; i < catInfo.page_count && shown < 3; i++) {
-                        if (mapping.sourcePresent[i]) {
-                            std::cout << "  [" << i << "] -> 0x" << std::hex 
-                                      << mapping.sourceOffsets[i] << std::dec << "\n";
-                            shown++;
-                        }
-                    }
+                    // Commented out page offset output
+                    // int shown = 0;
+                    // for (size_t i = 0; i < catInfo.page_count && shown < 3; i++) {
+                    //     if (mapping.sourcePresent[i]) {
+                    //         std::cout << "  [" << i << "] -> 0x" << std::hex
+                    //                   << mapping.sourceOffsets[i] << std::dec << "\n";
+                    //         shown++;
+                    //     }
+                    // }
                 }
                 
                 mapping.valid = (mapping.foundCount > 0);
             } else {
-                std::cout << "Category " << cat << ": 0/" << mapping.expectedCount 
-                          << " pages found (COMPLETELY MISSING!)\n";
+                // Commented out to reduce clutter
+                // std::cout << "Category " << cat << ": 0/" << mapping.expectedCount
+                //           << " pages found (COMPLETELY MISSING!)\n";
             }
         } else {
-            std::cout << "Category " << cat << ": not configured (0 pages expected)\n";
+            // Commented out to reduce clutter
+            // std::cout << "Category " << cat << ": not configured (0 pages expected)\n";
         }
     }
     
@@ -306,11 +345,14 @@ void BeaconReader::BuildCategoryMappings() {
     
     discovery.allPagesFound = (totalFound == totalExpected);
     if (discovery.allPagesFound) {
-        std::cout << "\n✓ All " << totalExpected << " expected beacon pages found!\n";
-        std::cout << "  Switching to fast refresh mode (no more full memory scans)\n";
+        // Commented out to reduce clutter
+        // std::cout << "\n✓ All " << totalExpected << " expected beacon pages found!\n";
+        // Commented out to reduce clutter
+        // std::cout << "  Switching to fast refresh mode (no more full memory scans)\n";
     } else {
-        std::cout << "\n⚠ Found " << totalFound << "/" << totalExpected << " expected pages\n";
-        std::cout << "  Will continue scanning for missing pages\n";
+        // Commented out to reduce clutter
+        // std::cout << "\n⚠ Found " << totalFound << "/" << totalExpected << " expected pages\n";
+        // std::cout << "  Will continue scanning for missing pages\n";
     }
     
     // Now allocate and copy the category arrays
@@ -335,8 +377,9 @@ bool BeaconReader::GetPIDList(std::vector<uint32_t>& pids) {
     for (auto it = generations.rbegin(); it != generations.rend(); ++it) {
         if (it->is_complete) {
             pids = it->pids;
-            std::cout << "Got " << pids.size() << " PIDs from generation " << it->generation 
-                      << " (new beacon format)\n";
+            // Commented out PID generation output
+            // std::cout << "Got " << pids.size() << " PIDs from generation " << it->generation
+            //           << " (new beacon format)\n";
             return true;
         }
     }
@@ -344,8 +387,9 @@ bool BeaconReader::GetPIDList(std::vector<uint32_t>& pids) {
     // If no complete generation, use the most recent one anyway
     if (!generations.empty()) {
         pids = generations.back().pids;
-        std::cout << "Got " << pids.size() << " PIDs from partial generation " 
-                  << generations.back().generation << " (new beacon format)\n";
+        // Commented out partial generation output
+        // std::cout << "Got " << pids.size() << " PIDs from partial generation "
+        //           << generations.back().generation << " (new beacon format)\n";
         return true;
     }
     
@@ -365,8 +409,9 @@ std::vector<PIDGeneration> BeaconReader::GetPIDGenerations() {
         return generations;
     }
     
-    std::cout << "Scanning " << categoryMappings[BEACON_CATEGORY_PID].foundCount 
-              << " available PID pages (of " << categoryMappings[BEACON_CATEGORY_PID].expectedCount << " expected)\n";
+    // Commented out PID page scan output
+    // std::cout << "Scanning " << categoryMappings[BEACON_CATEGORY_PID].foundCount
+    //           << " available PID pages (of " << categoryMappings[BEACON_CATEGORY_PID].expectedCount << " expected)\n";
     
     // Scan all valid pages in PID category array
     auto& pidArray = categoryArrays[BEACON_CATEGORY_PID];
@@ -498,7 +543,8 @@ std::map<uint32_t, BeaconProcessInfo> BeaconReader::GetAllProcessInfo() {
         }
     }
     
-    std::cout << "Found " << processes.size() << " processes with details from PID beacon pages\n";
+    // Commented out process count output
+    // std::cout << "Found " << processes.size() << " processes with details from PID beacon pages\n";
     return processes;
 }
 
@@ -686,8 +732,9 @@ bool BeaconReader::GetCameraProcessSections(int cameraId, uint32_t pid, std::vec
     }
     
     if (!sections.empty()) {
-        std::cout << "GetCameraProcessSections: Found " << sections.size() 
-                  << " sections for PID " << pid << " from camera " << cameraId << "\n";
+        // Commented out section count output
+        // std::cout << "GetCameraProcessSections: Found " << sections.size()
+        //           << " sections for PID " << pid << " from camera " << cameraId << "\n";
     }
     
     return !sections.empty();
@@ -779,8 +826,9 @@ void BeaconReader::AllocateCategoryArrays() {
             array.pageVersions.resize(array.pageCount, 0);
             array.initialized = true;
             
-            std::cout << "Allocated " << array.pageCount << " pages (" 
-                      << (array.pageCount * PAGE_SIZE) / 1024 << " KB) for category " << cat << "\n";
+            // Commented out to reduce clutter
+            // std::cout << "Allocated " << array.pageCount << " pages ("
+            //           << (array.pageCount * PAGE_SIZE) / 1024 << " KB) for category " << cat << "\n";
         }
     }
 }
@@ -827,13 +875,14 @@ void BeaconReader::CopyPagesToArrays() {
             }
         }
         
-        // Only print on first refresh or when there's a change
-        static int lastValidPages[4] = {-1, -1, -1, -1};
-        if (lastValidPages[cat] != array.validPages) {
-            std::cout << "Category " << cat << ": copied " << array.validPages 
-                      << " valid pages (of " << mapping.foundCount << " found)\n";
-            lastValidPages[cat] = array.validPages;
-        }
+        // Commented out to reduce clutter
+        // // Only print on first refresh or when there's a change
+        // static int lastValidPages[4] = {-1, -1, -1, -1};
+        // if (lastValidPages[cat] != array.validPages) {
+        //     std::cout << "Category " << cat << ": copied " << array.validPages
+        //               << " valid pages (of " << mapping.foundCount << " found)\n";
+        //     lastValidPages[cat] = array.validPages;
+        // }
     }
 }
 
