@@ -3360,8 +3360,8 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
             std::min(currentPage + pageSize, maxAddress) :
             (currentPage >= pageSize ? currentPage - pageSize : 0);
 
-        // Scan up to 1000 pages (4MB) to avoid hanging
-        const int maxPagesToScan = 1000;
+        // Scan up to 10000 pages (40MB) to avoid hanging
+        const int maxPagesToScan = 10000;
         std::vector<uint8_t> pageBuffer(pageSize);
         int pagesScanned = 0;
 
@@ -3472,8 +3472,8 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
         }
     }
 
-    // Scan up to 10000 pages (40MB) to skip over larger unallocated regions
-    const int maxPagesToScan = 10000;
+    // Scan up to 100000 pages (400MB) to skip over larger unallocated regions
+    const int maxPagesToScan = 100000;
     int pagesScanned = 0;
 
     for (int i = 0; i < maxPagesToScan; i++) {
