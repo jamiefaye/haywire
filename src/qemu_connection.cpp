@@ -236,6 +236,41 @@ void QemuConnection::Disconnect() {
     }
 }
 
+bool QemuConnection::TestPageNonZero(uint64_t address, size_t size) {
+    if (!connected) {
+        return false;
+    }
+
+    // Use direct memory backend if available (fastest - zero copy!)
+    if (useMemoryBackend && memoryBackend && memoryBackend->IsAvailable()) {
+        const uint8_t* ptr = memoryBackend->GetDirectPointer(address);
+        if (!ptr) {
+            return false;  // Address not in mapped region
+        }
+
+        // Direct scan - no allocation, no copying!
+        for (size_t i = 0; i < size; i++) {
+            if (ptr[i] != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Fallback: read and test (slower - requires copy)
+    std::vector<uint8_t> buffer;
+    if (!ReadMemory(address, size, buffer)) {
+        return false;
+    }
+
+    for (const uint8_t& byte : buffer) {
+        if (byte != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool QemuConnection::ReadMemoryMMap(uint64_t address, size_t size, std::vector<uint8_t>& buffer) {
     if (!connected || qmpSocket < 0) {
         return false;

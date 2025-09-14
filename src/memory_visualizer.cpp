@@ -3360,8 +3360,8 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
             std::min(currentPage + pageSize, maxAddress) :
             (currentPage >= pageSize ? currentPage - pageSize : 0);
 
-        // Scan up to 10000 pages (40MB) to avoid hanging
-        const int maxPagesToScan = 10000;
+        // Scan up to 1000 pages (4MB) to avoid hanging
+        const int maxPagesToScan = 1000;
         std::vector<uint8_t> pageBuffer(pageSize);
         int pagesScanned = 0;
 
@@ -3472,8 +3472,8 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
         }
     }
 
-    // Scan up to 100000 pages (400MB) to skip over larger unallocated regions
-    const int maxPagesToScan = 100000;
+    // Scan up to 10000 pages (40MB) to skip over larger unallocated regions
+    const int maxPagesToScan = 10000;
     int pagesScanned = 0;
 
     for (int i = 0; i < maxPagesToScan; i++) {
@@ -3486,26 +3486,8 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
             break;  // Hit the beginning
         }
 
-        // Read a page using QemuConnection (same as display code)
-        std::vector<uint8_t> pageData;
-        if (!qemuConn->ReadMemory(scanAddress, pageSize, pageData)) {
-            // Failed to read, skip this page
-            if (forward) {
-                scanAddress += pageSize;
-            } else {
-                scanAddress = (scanAddress >= pageSize) ? scanAddress - pageSize : 0;
-            }
-            continue;
-        }
-
-        // Check if page has any non-zero bytes
-        bool hasData = false;
-        for (size_t j = 0; j < pageData.size(); j++) {
-            if (pageData[j] != 0) {
-                hasData = true;
-                break;
-            }
-        }
+        // Test page directly without copying (zero-copy when using memory backend)
+        bool hasData = qemuConn->TestPageNonZero(scanAddress, pageSize);
 
         if (hasData) {
             // Found a non-zero page!
