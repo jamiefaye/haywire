@@ -74,6 +74,44 @@ struct RenderConfig {
 };
 
 // Unified memory renderer for both main and mini viewers
+// Format descriptor for the rendering table
+struct FormatDescriptor {
+    int bytesIn;        // Number of source bytes consumed
+    int pixelsOutX;     // Output width in pixels
+    int pixelsOutY;     // Output height in pixels
+
+    // Constructor for convenience
+    FormatDescriptor(int bytes, int width, int height)
+        : bytesIn(bytes), pixelsOutX(width), pixelsOutY(height) {}
+};
+
+// Extended format type that combines base format with modifiers like split
+enum class ExtendedFormat {
+    // Standard formats
+    GRAYSCALE,
+    RGB565,
+    RGB888,
+    RGBA8888,
+    BGR888,
+    BGRA8888,
+    ARGB8888,
+    ABGR8888,
+
+    // Split component versions
+    RGB565_SPLIT,
+    RGB888_SPLIT,
+    RGBA8888_SPLIT,
+    BGR888_SPLIT,
+    BGRA8888_SPLIT,
+    ARGB8888_SPLIT,
+    ABGR8888_SPLIT,
+
+    // Special display formats
+    BINARY,
+    HEX_PIXEL,
+    CHAR_8BIT
+};
+
 class MemoryRenderer {
 public:
     // Main rendering function
@@ -82,37 +120,50 @@ public:
         size_t dataSize,
         const RenderConfig& config
     );
-    
+
+    // Get format descriptor for a given format
+    static FormatDescriptor GetFormatDescriptor(ExtendedFormat format);
+
+    // Convert from PixelFormat::Type and split flag to ExtendedFormat
+    static ExtendedFormat GetExtendedFormat(PixelFormat::Type format, bool splitComponents);
+
 private:
-    // Format-specific renderers
-    static std::vector<uint32_t> RenderStandard(
-        const uint8_t* data,
-        size_t dataSize,
-        const RenderConfig& config
+    // Inner element renderers - render a single element at destination
+    static void RenderHexElement(
+        const uint8_t* src,      // 4 bytes input
+        uint32_t* dest,          // Destination buffer
+        int destStride           // Stride in pixels
     );
-    
-    static std::vector<uint32_t> RenderHexPixels(
-        const uint8_t* data,
-        size_t dataSize,
-        const RenderConfig& config
+
+    static void RenderCharElement(
+        const uint8_t* src,      // 1 byte input
+        uint32_t* dest,          // Destination buffer
+        int destStride           // Stride in pixels
     );
-    
-    static std::vector<uint32_t> RenderCharPixels(
-        const uint8_t* data,
-        size_t dataSize,
-        const RenderConfig& config
+
+    static void RenderBinaryElement(
+        const uint8_t* src,      // 1 byte input
+        uint32_t* dest           // Destination buffer (8 pixels horizontal)
     );
-    
-    static std::vector<uint32_t> RenderSplitComponents(
-        const uint8_t* data,
-        size_t dataSize,
-        const RenderConfig& config
+
+    static void RenderPixelElement(
+        const uint8_t* src,      // N bytes input (depends on format)
+        uint32_t* dest,          // Destination buffer
+        ExtendedFormat format    // Which pixel format
     );
-    
-    static std::vector<uint32_t> RenderBinaryPixels(
+
+    static void RenderSplitElement(
+        const uint8_t* src,      // N bytes input (depends on format)
+        uint32_t* dest,          // Destination buffer
+        ExtendedFormat format    // Which split format
+    );
+
+    // Layout manager - handles columns and calls element renderers
+    static std::vector<uint32_t> RenderWithLayout(
         const uint8_t* data,
         size_t dataSize,
-        const RenderConfig& config
+        const RenderConfig& config,
+        ExtendedFormat format
     );
     
     // Helper functions

@@ -1,0 +1,107 @@
+
+/* Overview of Haywire internal architecture entered on August 15, 2009.                                                                                       
+._______________.                                                                          
+|               |\ ._____________.  .___________.     ._______________.    .______________.
+|    VMAddress  | \|             |__|           | ___ |               |    |              |
+|     Space     |  |             |  |  Present  |     |               |    |              |
+|               |  |   crunched  |  |  Interval |     |     View      |    |              |
+|MinApplAddress |  |             |  |           |     |    Pattern    |    | Video Buffer |
+|               |  |    space    | /.___________. \   |   Generator   |   /|              |
+|12000.0000     |  |             |/                \  |               |  / |              |
+|               |  ._____________.                  - ._______________. /  .______________.
+|               | /                                          ^ v       /       _/          
+|MaxApplAddress |/                  .____________.      .-----------. /      _/            
+|7FE00.0000     |                   |            | <--  | scan line |      _/              
+|               |                   |  RPM cache |      | image fill|    _/                
+|_______________|                   |            | -->  .___________.  _/                  
+  	                                .____________.                                         
+                                                        .-----------.                      
+                                                        | Filler 2  |                      
+                                                        .___________.                      
+                                                                                           
+                                                        .-----------.                      
+                                                        | Filler N  |                      
+                                                        .___________.                      
+  
+
+Memory dumping architecture.
+
+An AddressSpace object represents a memory object (that could be a disk file as well). 
+
+A standard Windows address space is a page-oriented virtual memory which is usually
+very sparse. To make browsing such spaces easier, we have a notion of a "crunched
+address space", which maintains tables describing the live areas.
+
+A given view specifies the presentation interval that it is interested in being
+informed about. The specifcation can involve either "linear" or "crunched" coordinates.
+
+There are functions that map from one form to the other, and the database is
+designed to handle the most common case, which is scanning from low to high addresses
+in sequence, effeciently.
+
+Update begins with calculating the view parameters for all the active views and combining
+them into a master memory sweep request. This request is described by two bounded intervals:
+"course" and "detailed". The course range is for updating the page table and keeping up with
+virtual memory remapping, while the "detail" level drives the view generators.
+
+The VMView object contains the largest member function in the program, "runInner()", which coordinates
+the efforts of each display generator. Based on the layout each generator determines
+the location and extents of the memory it wishes to dump. An overall request then goes to
+VMParser, which is called via the Pulldata protocol to hand back ranges of address space
+to explore one "run" at a time.
+
+These ranges are then pushed out to the views pattern generators using the PushSymbolInterface
+(PushSymbol has a method for callback notification of each block, as well as calls to
+establish the video buffer base address and the corresponding address for that origin in the
+crunch or linear source address space).
+
+A typical view generator have a scheme for positioning each memory symbol on the display in
+complex cyclic patterns - an example is a multi-column layout which has N scan lines per column,
+m columns per screen, and wraps each column down to the next below. Since the system presents
+data as a 1D ascending range, the view-generatordivides by (colWidth*colHeight( to calculate the
+column number, uses modulo (colWidth*colHeight) to isolate X and Y, and then splits X and Y
+by doing (isolatedAdress mod width) to get X, and (isolatedAdress div width) to get Y.
+
+Ultimately, the rendering of a particular run is broken down to a problem of "do this to the
+successive values in this range this many times", with the repeat count reduced as needed
+to carry the process to the next scan line down.
+
+After a chunk is handled, the next view transform is called with the same parameters, and so on until
+reports having filled their displays or a ending boundary is hit.
+
+Since ReadProcessMemory is called to "snoop" on other process memory, and can be a performance bottleneck,
+we maintain a MRU cache which is hinted by the VMParser. Since there are always at least two consumers (the VM map
+update process and one or more viewers), this always presents benefits.
+
+Each run of runInner involves planning & calculation, then course scanning up to the begin of
+the detail view, then detail scanning for a megabyte or two, and then back to course scanning.
+
+The refresh rate for the overview can be reduced to less than that of the detailed zone
+if time conservation needs dictate. 
+
+Address space crunching is a complex subject. The scheme I use involves keeping a table of 8192 super-page
+zones. Each one describes 128 x 4K pages - or one line of the overview map.
+Both forward and reverse mapping are simple linear look-ups.
+The crunched mapping assigns an incrementing address to the current live page
+which the VMParser includes in the PushSymbol callbacks. Within a callback, the block is guarnteed to be
+linear, although it may cross page boundaries or "wrap around" to the next display line one or more times.
+Beyond a gap caused by unallocated addresses or protection settings, a gap can occur if certain properties
+of a page group change, or an artificial gap might appear in order to break very long runs into smaller chunks
+to avoid thrashing the cache mechanism, blundering into a slow video memory tarpit, etc.
+
+The goal is to make "crunched addresses" relatively invisible. Addresses should be labeled with their
+non-crunched locations, and all commands should accept or indicate uncrunched address locations.
+A mention of an address that isn't legal because it has been crunched-out should go to the nearest valid address.
+Some of the parameter controls are defined as to correspond  to the crunch-range. Reasonably fast query
+routines exist for going from uncrunched to crunched and back, although the highest performance comes
+from following along on the upward sweep when the data is freshest and stepping an iterator is a constant time operation
+rather than an OnLog2 one.
+
+Generally, the worst performance comes from making queries involving inaccessible areas or attempting to read from
+an inaccessible area in another process. This is minimized by taking note of such problems if they arise, and only
+testing them (to see if policy has changed) at a more leasurely pace. Despite this, some access errors are inevitable
+in this sytem and they are caught by the Structured Exception Handling mechanism. Since I never open another process
+with Write-enabled access to their memory, Haywire rarely causes any trouble beyond consuming CPU bandwidth and
+upsetting the status quo regarding VM paging properties.
+
+***/

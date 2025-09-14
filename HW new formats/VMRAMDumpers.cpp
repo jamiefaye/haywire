@@ -114,7 +114,7 @@ in this sytem and they are caught by the Structured Exception Handling mechanism
 with Write-enabled access to their memory, Haywire rarely causes any trouble beyond consuming CPU bandwidth and
 upsetting the status quo regarding VM paging properties.
 
-***/                                                                                       
+***/
 
 
 
