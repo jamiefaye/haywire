@@ -3425,6 +3425,45 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
         std::min(currentPage + pageSize, maxAddress) :
         (currentPage >= pageSize ? currentPage - pageSize : 0);
 
+    // If we have memory mapper info, use it to skip unmapped regions
+    if (memoryMapper && !memoryMapper->GetRegions().empty()) {
+        const auto& regions = memoryMapper->GetRegions();
+
+        // Find which region we're in or near
+        bool inRegion = false;
+        for (const auto& region : regions) {
+            if (scanAddress >= region.gpa_start && scanAddress < region.gpa_end) {
+                inRegion = true;
+                break;
+            }
+        }
+
+        // If not in a region, jump to the next/previous region
+        if (!inRegion) {
+            if (forward) {
+                // Find next region start after current position
+                uint64_t nextRegionStart = maxAddress;
+                for (const auto& region : regions) {
+                    if (region.gpa_start > scanAddress && region.gpa_start < nextRegionStart) {
+                        nextRegionStart = region.gpa_start;
+                    }
+                }
+                if (nextRegionStart < maxAddress) {
+                    scanAddress = nextRegionStart;
+                }
+            } else {
+                // Find previous region end before current position
+                uint64_t prevRegionEnd = 0;
+                for (const auto& region : regions) {
+                    if (region.gpa_end <= scanAddress && region.gpa_end > prevRegionEnd) {
+                        prevRegionEnd = region.gpa_end - pageSize;
+                    }
+                }
+                scanAddress = prevRegionEnd;
+            }
+        }
+    }
+
     // Scan up to 10000 pages (40MB) to skip over larger unallocated regions
     const int maxPagesToScan = 10000;
 
@@ -3469,11 +3508,63 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
             if (scanAddress > maxAddress) {
                 break;
             }
+
+            // If we have region info and we've left the current region, jump to next region
+            if (memoryMapper && !memoryMapper->GetRegions().empty()) {
+                const auto& regions = memoryMapper->GetRegions();
+                bool inRegion = false;
+                for (const auto& region : regions) {
+                    if (scanAddress >= region.gpa_start && scanAddress < region.gpa_end) {
+                        inRegion = true;
+                        break;
+                    }
+                }
+                if (!inRegion) {
+                    // Find next region start
+                    uint64_t nextRegionStart = maxAddress;
+                    for (const auto& region : regions) {
+                        if (region.gpa_start >= scanAddress && region.gpa_start < nextRegionStart) {
+                            nextRegionStart = region.gpa_start;
+                        }
+                    }
+                    if (nextRegionStart < maxAddress) {
+                        scanAddress = nextRegionStart;
+                    } else {
+                        break;  // No more regions
+                    }
+                }
+            }
         } else {
             if (scanAddress >= pageSize) {
                 scanAddress -= pageSize;
             } else {
                 break;  // Can't go below 0
+            }
+
+            // If we have region info and we've left the current region, jump to previous region
+            if (memoryMapper && !memoryMapper->GetRegions().empty()) {
+                const auto& regions = memoryMapper->GetRegions();
+                bool inRegion = false;
+                for (const auto& region : regions) {
+                    if (scanAddress >= region.gpa_start && scanAddress < region.gpa_end) {
+                        inRegion = true;
+                        break;
+                    }
+                }
+                if (!inRegion) {
+                    // Find previous region end
+                    uint64_t prevRegionEnd = 0;
+                    for (const auto& region : regions) {
+                        if (region.gpa_end <= scanAddress && region.gpa_end > prevRegionEnd) {
+                            prevRegionEnd = region.gpa_end - pageSize;
+                        }
+                    }
+                    if (prevRegionEnd > 0) {
+                        scanAddress = prevRegionEnd;
+                    } else {
+                        break;  // No more regions
+                    }
+                }
             }
         }
     }
