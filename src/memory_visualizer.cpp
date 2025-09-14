@@ -39,7 +39,7 @@ MemoryVisualizer::MemoryVisualizer()
       magnifierSize(32), magnifierLockPos(0, 0), memoryViewPos(0, 0), memoryViewSize(0, 0),
       targetPid(-1), useVirtualAddresses(false), guestAgent(nullptr),
       searchType(SEARCH_ASCII), currentSearchResult(0), searchActive(false), searchFromCurrent(false),
-      searchFullRange(true), memFd(-1), memBase(nullptr), memSize(0) {
+      searchFullRange(true), memFd(-1), memBase(nullptr), memSize(0), qemuConn(nullptr) {
     
     memset(searchPattern, 0, sizeof(searchPattern));
     
@@ -142,6 +142,9 @@ void MemoryVisualizer::CreateTexture() {
 }
 
 void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
+    // Store QemuConnection for use in other methods like ScanForNonZeroPage
+    qemuConn = &qemu;
+
     // Ensure crunched reader has the connection
     if (crunchedReader && !crunchedReader->GetConnection()) {
         crunchedReader->SetConnection(&qemu);
@@ -1076,7 +1079,7 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     ImGui::PushItemWidth(-1);  // Full width
     
     // Top navigation buttons (- buttons side by side)
-    float buttonWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
+    float buttonWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2) / 3.0f;
     
     // Auto-repeat parameters
     const auto REPEAT_DELAY = std::chrono::milliseconds(500);  // Initial delay before repeat starts
@@ -1125,7 +1128,7 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     }
     
     ImGui::SameLine();
-    
+
     // -64K button
     bool do64kUp = false;
     ImGui::Button("-64K", ImVec2(buttonWidth, 20));
@@ -1165,7 +1168,28 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
             needsUpdate = true;
         }
     }
-    
+
+    ImGui::SameLine();
+
+    // Scan backward for non-zero page
+    if (ImGui::Button("-Scan", ImVec2(buttonWidth, 20))) {
+        uint64_t foundAddress = ScanForNonZeroPage(false);
+        if (foundAddress != viewport.baseAddress) {
+            viewport.baseAddress = foundAddress;
+
+            if (useVirtualAddresses && addressFlattener) {
+                uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
+                strcpy(addressInput, AddressParser::Format(virtualAddr, AddressSpace::VIRTUAL).c_str());
+            } else {
+                strcpy(addressInput, AddressParser::Format(viewport.baseAddress, AddressSpace::PHYSICAL).c_str());
+            }
+            needsUpdate = true;
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Scan backward for non-zero page");
+    }
+
     // Draw memory map visualization behind the slider
     ImVec2 sliderPos = ImGui::GetCursorScreenPos();
     
@@ -1373,7 +1397,28 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
             needsUpdate = true;
         }
     }
-    
+
+    ImGui::SameLine();
+
+    // Scan forward for non-zero page
+    if (ImGui::Button("+Scan", ImVec2(buttonWidth, 20))) {
+        uint64_t foundAddress = ScanForNonZeroPage(true);
+        if (foundAddress != viewport.baseAddress) {
+            viewport.baseAddress = foundAddress;
+
+            if (useVirtualAddresses && addressFlattener) {
+                uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
+                strcpy(addressInput, AddressParser::Format(virtualAddr, AddressSpace::VIRTUAL).c_str());
+            } else {
+                strcpy(addressInput, AddressParser::Format(viewport.baseAddress, AddressSpace::PHYSICAL).c_str());
+            }
+            needsUpdate = true;
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Scan forward for non-zero page");
+    }
+
     ImGui::PopItemWidth();
     
     // Restore style
@@ -3239,6 +3284,150 @@ bool MemoryVisualizer::ExportToPNG(const std::string& filename) {
         std::cerr << "Failed to export PNG to " << filename << std::endl;
         return false;
     }
+}
+
+uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
+    const uint64_t pageSize = 0x1000;  // 4KB pages
+
+    // Make sure we have a QemuConnection
+    if (!qemuConn) {
+        return viewport.baseAddress;  // Can't scan without connection
+    }
+
+    // In VA mode, we need to scan through the crunched address space
+    if (useVirtualAddresses && addressFlattener && crunchedReader && targetPid > 0) {
+        // Get the total crunched size
+        uint64_t maxAddress = addressFlattener->GetFlatSize();
+        if (maxAddress == 0) {
+            return viewport.baseAddress;  // No crunched space available
+        }
+
+        // Start from next/previous page relative to current position
+        uint64_t currentPage = (viewport.baseAddress / pageSize) * pageSize;
+        uint64_t scanAddress = forward ?
+            std::min(currentPage + pageSize, maxAddress) :
+            (currentPage >= pageSize ? currentPage - pageSize : 0);
+
+        // Scan up to 1000 pages (4MB) to avoid hanging
+        const int maxPagesToScan = 1000;
+        std::vector<uint8_t> pageBuffer(pageSize);
+
+        for (int i = 0; i < maxPagesToScan; i++) {
+            // Check bounds
+            if (forward && scanAddress >= maxAddress) {
+                break;  // Hit the end
+            }
+            if (!forward && scanAddress == 0 && i > 0) {
+                break;  // Hit the beginning
+            }
+
+            // Read through crunched reader
+            size_t bytesRead = crunchedReader->ReadCrunchedMemory(
+                scanAddress,
+                pageSize,
+                pageBuffer
+            );
+
+            // Check if page has any non-zero bytes
+            bool hasData = false;
+            if (bytesRead > 0) {
+                for (size_t j = 0; j < bytesRead; j++) {
+                    if (pageBuffer[j] != 0) {
+                        hasData = true;
+                        break;
+                    }
+                }
+            }
+
+            if (hasData) {
+                // Found a non-zero page!
+                return scanAddress;
+            }
+
+            // Move to next page
+            if (forward) {
+                scanAddress += pageSize;
+                if (scanAddress > maxAddress) {
+                    break;
+                }
+            } else {
+                if (scanAddress >= pageSize) {
+                    scanAddress -= pageSize;
+                } else {
+                    break;  // Can't go below 0
+                }
+            }
+        }
+
+        // No non-zero page found, stay where we are
+        return viewport.baseAddress;
+    }
+
+    // Physical address mode - use QemuConnection like the display code does
+    // We'll scan up to 8GB of physical memory
+    const uint64_t maxAddress = 8ULL * 1024 * 1024 * 1024;  // 8GB limit
+
+    // Start from next/previous page relative to current position
+    uint64_t currentPage = (viewport.baseAddress / pageSize) * pageSize;
+    uint64_t scanAddress = forward ?
+        std::min(currentPage + pageSize, maxAddress) :
+        (currentPage >= pageSize ? currentPage - pageSize : 0);
+
+    // Scan up to 1000 pages (4MB) to avoid hanging
+    const int maxPagesToScan = 1000;
+
+    for (int i = 0; i < maxPagesToScan; i++) {
+        // Check bounds
+        if (forward && scanAddress >= maxAddress) {
+            break;  // Hit the end
+        }
+        if (!forward && scanAddress == 0 && i > 0) {
+            break;  // Hit the beginning
+        }
+
+        // Read a page using QemuConnection (same as display code)
+        std::vector<uint8_t> pageData;
+        if (!qemuConn->ReadMemory(scanAddress, pageSize, pageData)) {
+            // Failed to read, skip this page
+            if (forward) {
+                scanAddress += pageSize;
+            } else {
+                scanAddress = (scanAddress >= pageSize) ? scanAddress - pageSize : 0;
+            }
+            continue;
+        }
+
+        // Check if page has any non-zero bytes
+        bool hasData = false;
+        for (size_t j = 0; j < pageData.size(); j++) {
+            if (pageData[j] != 0) {
+                hasData = true;
+                break;
+            }
+        }
+
+        if (hasData) {
+            // Found a non-zero page!
+            return scanAddress;
+        }
+
+        // Move to next page
+        if (forward) {
+            scanAddress += pageSize;
+            if (scanAddress > maxAddress) {
+                break;
+            }
+        } else {
+            if (scanAddress >= pageSize) {
+                scanAddress -= pageSize;
+            } else {
+                break;  // Can't go below 0
+            }
+        }
+    }
+
+    // No non-zero page found, stay where we are
+    return viewport.baseAddress;
 }
 
 }

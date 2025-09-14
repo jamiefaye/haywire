@@ -105,6 +105,7 @@ private:
     void DrawVerticalAddressSlider();
     void DrawFormulaBar();
     void HandleInput();
+    uint64_t ScanForNonZeroPage(bool forward);
     
     void CreateTexture();
     void UpdateTexture();
@@ -236,6 +237,9 @@ private:
     
     // Memory mapper for GPA to file offset translation
     std::shared_ptr<MemoryMapper> memoryMapper;
+
+    // QemuConnection for memory access (same as display uses)
+    QemuConnection* qemuConn;
     
     // Button auto-repeat state
     std::chrono::steady_clock::time_point buttonHoldStart;
