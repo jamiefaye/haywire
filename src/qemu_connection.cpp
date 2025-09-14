@@ -249,12 +249,34 @@ bool QemuConnection::TestPageNonZero(uint64_t address, size_t size) {
         }
 
         // Direct scan - no allocation, no copying!
-        // Check 64 bits at a time for better performance
+        // Check 64 bits at a time, accumulating with OR
         const uint64_t* ptr64 = reinterpret_cast<const uint64_t*>(ptr);
         size_t numQuads = size / 8;
 
-        // Check 8 bytes at a time
-        for (size_t i = 0; i < numQuads; i++) {
+        // Process in blocks of 8 uint64s (64 bytes) for better CPU pipelining
+        // This fits in most CPU cache lines
+        uint64_t accumulator = 0;
+        size_t i = 0;
+
+        // Unrolled loop - check 8 quadwords at a time (64 bytes)
+        for (; i + 8 <= numQuads; i += 8) {
+            accumulator |= ptr64[i];
+            accumulator |= ptr64[i+1];
+            accumulator |= ptr64[i+2];
+            accumulator |= ptr64[i+3];
+            accumulator |= ptr64[i+4];
+            accumulator |= ptr64[i+5];
+            accumulator |= ptr64[i+6];
+            accumulator |= ptr64[i+7];
+
+            // Check accumulated result every 64 bytes
+            if (accumulator != 0) {
+                return true;
+            }
+        }
+
+        // Handle remaining quadwords
+        for (; i < numQuads; i++) {
             if (ptr64[i] != 0) {
                 return true;
             }
