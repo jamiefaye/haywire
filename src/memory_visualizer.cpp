@@ -3411,8 +3411,13 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
             }
         }
 
-        // No non-zero page found, stay where we are
-        return viewport.baseAddress;
+        // No non-zero page found in this scan batch
+        // Still advance by one page so user can step through
+        if (forward) {
+            return std::min(viewport.baseAddress + pageSize, maxAddress - pageSize);
+        } else {
+            return (viewport.baseAddress >= pageSize) ? viewport.baseAddress - pageSize : 0;
+        }
     }
 
     // Physical address mode - use QemuConnection like the display code does
@@ -3569,8 +3574,13 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
         }
     }
 
-    // No non-zero page found, stay where we are
-    return viewport.baseAddress;
+    // No non-zero page found in this scan batch
+    // Still advance by one page so user can step through
+    if (forward) {
+        return std::min(viewport.baseAddress + pageSize, maxAddress - pageSize);
+    } else {
+        return (viewport.baseAddress >= pageSize) ? viewport.baseAddress - pageSize : 0;
+    }
 }
 
 }
