@@ -3485,8 +3485,8 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
         }
     }
 
-    // Scan up to 10000 pages (40MB) to skip over larger unallocated regions
-    const int maxPagesToScan = 10000;
+    // Scan up to 30000 pages (~120MB) - completes in ~24ms, keeps UI responsive at 20Hz
+    const int maxPagesToScan = 30000;
     int pagesScanned = 0;
     uint64_t startScanAddress = scanAddress;  // Remember where we started
 
