@@ -3363,8 +3363,10 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
         // Scan up to 1000 pages (4MB) to avoid hanging
         const int maxPagesToScan = 1000;
         std::vector<uint8_t> pageBuffer(pageSize);
+        int pagesScanned = 0;
 
         for (int i = 0; i < maxPagesToScan; i++) {
+            pagesScanned++;
             // Check bounds
             if (forward && scanAddress >= maxAddress) {
                 break;  // Hit the end
@@ -3412,11 +3414,12 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
         }
 
         // No non-zero page found in this scan batch
-        // Still advance by one page so user can step through
+        // Advance by the amount we actually scanned so next scan continues from there
+        uint64_t jumpDistance = pagesScanned * pageSize;
         if (forward) {
-            return std::min(viewport.baseAddress + pageSize, maxAddress - pageSize);
+            return std::min(viewport.baseAddress + jumpDistance, maxAddress - pageSize);
         } else {
-            return (viewport.baseAddress >= pageSize) ? viewport.baseAddress - pageSize : 0;
+            return (viewport.baseAddress >= jumpDistance) ? viewport.baseAddress - jumpDistance : 0;
         }
     }
 
@@ -3471,8 +3474,10 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
 
     // Scan up to 10000 pages (40MB) to skip over larger unallocated regions
     const int maxPagesToScan = 10000;
+    int pagesScanned = 0;
 
     for (int i = 0; i < maxPagesToScan; i++) {
+        pagesScanned++;
         // Check bounds
         if (forward && scanAddress >= maxAddress) {
             break;  // Hit the end
@@ -3575,11 +3580,12 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
     }
 
     // No non-zero page found in this scan batch
-    // Still advance by one page so user can step through
+    // Advance by the amount we actually scanned so next scan continues from there
+    uint64_t jumpDistance = pagesScanned * pageSize;
     if (forward) {
-        return std::min(viewport.baseAddress + pageSize, maxAddress - pageSize);
+        return std::min(viewport.baseAddress + jumpDistance, maxAddress - pageSize);
     } else {
-        return (viewport.baseAddress >= pageSize) ? viewport.baseAddress - pageSize : 0;
+        return (viewport.baseAddress >= jumpDistance) ? viewport.baseAddress - jumpDistance : 0;
     }
 }
 
