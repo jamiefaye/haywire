@@ -102,6 +102,12 @@ add_executable(haywire
     src/pid_selector.cpp
     src/bitmap_viewer.cpp
     src/address_parser.cpp
+    # Platform abstraction layer
+    src/platform/page_walker.cpp
+    src/platform/process_walker.cpp
+    src/platform/arm64/arm64_page_walker.cpp
+    src/platform/linux/linux_process_walker.cpp
+    src/platform/x86_64/x86_64_page_walker.cpp
     ${IMGUI_SOURCES}
 )
 
@@ -142,3 +148,32 @@ endif()
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
 # Test executables moved to test_attempts/ directory
+
+# Test platform abstraction
+add_executable(test_platform
+    test_platform_abstraction.cpp
+    src/qemu_connection.cpp
+    src/memory_backend.cpp
+    src/memory_utils.cpp
+    src/platform/page_walker.cpp
+    src/platform/process_walker.cpp
+    src/platform/arm64/arm64_page_walker.cpp
+    src/platform/linux/linux_process_walker.cpp
+    src/platform/x86_64/x86_64_page_walker.cpp
+    ${IMGUI_SOURCES}
+)
+
+target_include_directories(test_platform PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+    ${OPENGL_INCLUDE_DIRS}
+)
+
+target_link_libraries(test_platform PRIVATE
+    glfw
+    OpenGL::GL
+    nlohmann_json::nlohmann_json
+    Threads::Threads
+    ${PLATFORM_LIBS}
+)
