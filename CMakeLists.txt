@@ -102,6 +102,7 @@ add_executable(haywire
     src/pid_selector.cpp
     src/bitmap_viewer.cpp
     src/address_parser.cpp
+    src/binary_loader.cpp
     # Platform abstraction layer
     src/platform/page_walker.cpp
     src/platform/process_walker.cpp
@@ -148,6 +149,20 @@ endif()
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
 # Test executables moved to test_attempts/ directory
+
+# Test binary loader
+add_executable(test_binary_loader
+    test_binary_loader.cpp
+    src/binary_loader.cpp
+)
+
+target_include_directories(test_binary_loader PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(test_binary_loader PRIVATE
+    Threads::Threads
+)
 
 # Test platform abstraction
 add_executable(test_platform

@@ -1,8 +1,10 @@
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include <chrono>
 #include <unordered_map>
 #include <unistd.h>
+#include <cstring>
 
 #include <GLFW/glfw3.h>
 #include "imgui.h"
@@ -18,6 +20,7 @@
 #include "beacon_translator.h"
 #include "pid_selector.h"
 #include "memory_mapper.h"
+#include "binary_loader.h"
 
 using namespace Haywire;
 
@@ -295,6 +298,11 @@ int main(int argc, char** argv) {
     bool show_memory_view = true;
     bool show_overview = false;
     bool show_connection_window = !autoConnected;  // Only show if auto-connect failed
+    bool show_binary_loader = false;
+    std::string binary_file_path;
+    BinaryLoader binary_loader;
+    bool binary_loaded = false;
+    std::shared_ptr<std::vector<uint8_t>> loaded_file_data;
     
     float fps = 0.0f;
     auto lastTime = std::chrono::high_resolution_clock::now();
@@ -336,7 +344,8 @@ int main(int argc, char** argv) {
                 if (ImGui::MenuItem("Connect to QEMU")) {
                     show_connection_window = true;
                 }
-                if (ImGui::MenuItem("Load Memory Dump")) {
+                if (ImGui::MenuItem("Load Binary/Core Dump...")) {
+                    show_binary_loader = true;
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Exit")) {
@@ -529,6 +538,147 @@ int main(int argc, char** argv) {
         
         // Draw PID selector window if visible
         pidSelector.Draw();
+
+        // Binary loader dialog
+        if (show_binary_loader) {
+            ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Load Binary/Core Dump", &show_binary_loader);
+
+            static char filepath[256] = "";
+            static std::string load_error;
+
+            ImGui::Text("Enter path to any binary file (ELF executable, shared library, core dump, etc.):");
+            ImGui::InputText("File Path", filepath, sizeof(filepath));
+
+            ImGui::SameLine();
+            if (ImGui::Button("Browse...")) {
+                ImGui::OpenPopup("FileBrowser");
+            }
+
+            // Show popup with example paths
+            if (ImGui::BeginPopup("FileBrowser")) {
+                ImGui::Text("Example paths (or type your own):");
+                ImGui::Separator();
+                if (ImGui::MenuItem("/bin/ls")) strcpy(filepath, "/bin/ls");
+                if (ImGui::MenuItem("/bin/bash")) strcpy(filepath, "/bin/bash");
+                if (ImGui::MenuItem("/usr/bin/python3")) strcpy(filepath, "/usr/bin/python3");
+                if (ImGui::MenuItem("/usr/lib/libc.dylib")) strcpy(filepath, "/usr/lib/libc.dylib");
+                if (ImGui::MenuItem("./haywire")) strcpy(filepath, "./haywire");
+                if (ImGui::MenuItem("./test_binary_loader")) strcpy(filepath, "./test_binary_loader");
+                ImGui::EndPopup();
+            }
+
+            if (ImGui::Button("Load", ImVec2(100, 0))) {
+                if (strlen(filepath) > 0) {
+                    load_error.clear();
+                    if (binary_loader.LoadFile(filepath)) {
+                        binary_loaded = true;
+                        binary_file_path = filepath;
+
+                        // Don't close dialog immediately - let user see what was loaded
+                        // show_binary_loader = false;
+
+                        // Switch to binary viewing mode (file mode, not process mode)
+                        overview.SetProcessMode(false, 0);
+                        visualizer.SetProcessPid(0);
+
+                        // Store the file data for future visualization
+                        loaded_file_data = std::make_shared<std::vector<uint8_t>>(binary_loader.GetRawData());
+
+                        // NOTE: Currently the visualizer requires a QEMU connection to display data.
+                        // File viewing without a VM connection is a TODO feature.
+                        // For now, we can load the file structure for analysis.
+
+                        // Load parsed segments into overview for navigation assistance
+                        std::vector<GuestMemoryRegion> segments;
+                        for (const auto& seg : binary_loader.GetSegments()) {
+                            GuestMemoryRegion region;
+                            region.start = seg.file_offset;  // Use file offset, not VA
+                            region.end = seg.file_offset + seg.file_size;
+
+                            // Convert permissions
+                            std::string perms;
+                            perms += seg.is_readable() ? 'r' : '-';
+                            perms += seg.is_writable() ? 'w' : '-';
+                            perms += seg.is_code() ? 'x' : '-';
+                            perms += 'p';
+                            region.permissions = perms;
+
+                            std::stringstream ss;
+                            ss << seg.name << " (VA: 0x" << std::hex << seg.virtual_addr << ")";
+                            region.name = ss.str();
+                            segments.push_back(region);
+                        }
+                        overview.LoadProcessSections(segments);
+
+                        // Navigate to start of file
+                        visualizer.NavigateToAddress(0);
+                    } else {
+                        load_error = "Failed to load file: " + std::string(filepath);
+                        load_error += "\nFile may not exist or format may not be supported yet.";
+                    }
+                }
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+                show_binary_loader = false;
+            }
+
+            // Show info about loaded binary
+            if (binary_loaded) {
+                ImGui::Separator();
+                ImGui::Text("Loaded: %s", binary_file_path.c_str());
+
+                const auto& info = binary_loader.GetInfo();
+                ImGui::Text("Type: ");
+                ImGui::SameLine();
+                switch (info.type) {
+                    case BinaryType::ELF_EXECUTABLE: ImGui::Text("ELF Executable"); break;
+                    case BinaryType::ELF_SHARED_OBJECT: ImGui::Text("ELF Shared Object"); break;
+                    case BinaryType::ELF_CORE_DUMP: ImGui::Text("ELF Core Dump"); break;
+                    case BinaryType::MACH_O_EXECUTABLE: ImGui::Text("Mach-O Executable"); break;
+                    case BinaryType::PE_EXECUTABLE: ImGui::Text("PE Executable"); break;
+                    case BinaryType::RAW_BINARY: ImGui::Text("Raw Binary"); break;
+                    default: ImGui::Text("Unknown");
+                }
+
+                ImGui::Text("Architecture: %s", info.architecture.c_str());
+                ImGui::Text("Entry Point: 0x%llx", (unsigned long long)info.entry_point);
+
+                ImGui::Separator();
+                ImGui::Text("Segments:");
+
+                if (ImGui::BeginTable("Segments", 5)) {
+                    ImGui::TableSetupColumn("Name");
+                    ImGui::TableSetupColumn("Virtual Address");
+                    ImGui::TableSetupColumn("Size");
+                    ImGui::TableSetupColumn("Permissions");
+                    ImGui::TableSetupColumn("Data");
+                    ImGui::TableHeadersRow();
+
+                    for (const auto& seg : binary_loader.GetSegments()) {
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%s", seg.name.c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::Text("0x%llx", (unsigned long long)seg.virtual_addr);
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%llu", (unsigned long long)seg.memory_size);
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%c%c%c",
+                            seg.is_readable() ? 'R' : '-',
+                            seg.is_writable() ? 'W' : '-',
+                            seg.is_code() ? 'X' : '-');
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%zu bytes", seg.data.size());
+                    }
+                    ImGui::EndTable();
+                }
+            }
+
+            ImGui::End();
+        }
         
         ImGui::Render();
         int display_w, display_h;
