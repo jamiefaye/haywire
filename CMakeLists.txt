@@ -103,6 +103,8 @@ add_executable(haywire
     src/bitmap_viewer.cpp
     src/address_parser.cpp
     src/binary_loader.cpp
+    src/file_memory_source.cpp
+    src/qemu_memory_source.cpp
     # Platform abstraction layer
     src/platform/page_walker.cpp
     src/platform/process_walker.cpp

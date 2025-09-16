@@ -21,6 +21,8 @@
 #include "pid_selector.h"
 #include "memory_mapper.h"
 #include "binary_loader.h"
+#include "file_memory_source.h"
+#include "qemu_memory_source.h"
 
 using namespace Haywire;
 
@@ -582,12 +584,28 @@ int main(int argc, char** argv) {
                         overview.SetProcessMode(false, 0);
                         visualizer.SetProcessPid(0);
 
-                        // Store the file data for future visualization
+                        // Store the file data for visualization
                         loaded_file_data = std::make_shared<std::vector<uint8_t>>(binary_loader.GetRawData());
 
-                        // NOTE: Currently the visualizer requires a QEMU connection to display data.
-                        // File viewing without a VM connection is a TODO feature.
-                        // For now, we can load the file structure for analysis.
+                        // Create a file memory source
+                        auto fileSource = std::make_shared<FileMemorySource>(binary_file_path, loaded_file_data);
+
+                        // Set up memory regions from parsed segments
+                        fileSource->ClearRegions();
+                        for (const auto& seg : binary_loader.GetSegments()) {
+                            FileMemorySource::MemoryRegion region;
+                            region.start = seg.file_offset;
+                            region.end = seg.file_offset + seg.file_size;
+                            region.name = seg.name;
+                            region.permissions = "";
+                            if (seg.is_readable()) region.permissions += "r";
+                            if (seg.is_writable()) region.permissions += "w";
+                            if (seg.is_code()) region.permissions += "x";
+                            fileSource->AddRegion(region);
+                        }
+
+                        // Set the file source as the memory data source
+                        visualizer.SetMemoryDataSource(fileSource);
 
                         // Load parsed segments into overview for navigation assistance
                         std::vector<GuestMemoryRegion> segments;
