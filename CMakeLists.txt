@@ -104,7 +104,10 @@ add_executable(haywire
     src/address_parser.cpp
     src/binary_loader.cpp
     src/file_memory_source.cpp
+    src/mapped_file_memory_source.cpp
     src/qemu_memory_source.cpp
+    src/file_browser.cpp
+    src/macos_mapped_file_enumerator.cpp
     # Platform abstraction layer
     src/platform/page_walker.cpp
     src/platform/process_walker.cpp
@@ -138,6 +141,18 @@ if(CAPSTONE_FOUND)
     else()
         target_link_libraries(haywire PRIVATE ${CAPSTONE_LIBRARIES})
     endif()
+endif()
+
+# Auto-sign on macOS for debugging privileges
+if(APPLE)
+    add_custom_command(
+        TARGET haywire
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E echo "Signing with debugging entitlements..."
+        COMMAND codesign --remove-signature $<TARGET_FILE:haywire> 2>/dev/null || true
+        COMMAND codesign --entitlements ${CMAKE_SOURCE_DIR}/haywire.entitlements --force --sign - $<TARGET_FILE:haywire>
+        COMMENT "Signing haywire with debugging entitlements for task_for_pid access"
+    )
 endif()
 
 # Compile definitions for ImGui
