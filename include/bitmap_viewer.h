@@ -88,6 +88,11 @@ public:
     void SetMemoryMapper(std::shared_ptr<class MemoryMapper> mapper) {
         memoryMapper = mapper;
     }
+
+    // Set memory data source for reading memory (unified interface)
+    void SetMemoryDataSource(std::shared_ptr<class MemoryDataSource> dataSource) {
+        memoryDataSource = dataSource;
+    }
     
     // Set current PID for VA mode
     void SetCurrentPID(int pid) {
@@ -189,6 +194,7 @@ private:
     // Additional dependencies for proper memory access
     class QemuConnection* qemuConnection = nullptr;
     std::shared_ptr<class MemoryMapper> memoryMapper;
+    std::shared_ptr<class MemoryDataSource> memoryDataSource;  // New unified interface
     int currentPid = -1;
     bool useVirtualAddresses = false;
     class CrunchedMemoryReader* crunchedReader = nullptr;

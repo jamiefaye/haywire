@@ -22,7 +22,9 @@
 #include "memory_mapper.h"
 #include "binary_loader.h"
 #include "file_memory_source.h"
+#include "mapped_file_memory_source.h"
 #include "qemu_memory_source.h"
+#include "file_browser.h"
 
 using namespace Haywire;
 
@@ -305,6 +307,7 @@ int main(int argc, char** argv) {
     BinaryLoader binary_loader;
     bool binary_loaded = false;
     std::shared_ptr<std::vector<uint8_t>> loaded_file_data;
+    FileBrowser fileBrowser;
     
     float fps = 0.0f;
     auto lastTime = std::chrono::high_resolution_clock::now();
@@ -549,25 +552,18 @@ int main(int argc, char** argv) {
             static char filepath[256] = "";
             static std::string load_error;
 
-            ImGui::Text("Enter path to any binary file (ELF executable, shared library, core dump, etc.):");
+            // Draw file browser and handle selection
+            if (fileBrowser.Draw()) {
+                // File was selected
+                strcpy(filepath, fileBrowser.GetSelectedPath().c_str());
+            }
+
+            ImGui::Text("Enter path to any file (binary, text, image, etc.):");
             ImGui::InputText("File Path", filepath, sizeof(filepath));
 
             ImGui::SameLine();
             if (ImGui::Button("Browse...")) {
-                ImGui::OpenPopup("FileBrowser");
-            }
-
-            // Show popup with example paths
-            if (ImGui::BeginPopup("FileBrowser")) {
-                ImGui::Text("Example paths (or type your own):");
-                ImGui::Separator();
-                if (ImGui::MenuItem("/bin/ls")) strcpy(filepath, "/bin/ls");
-                if (ImGui::MenuItem("/bin/bash")) strcpy(filepath, "/bin/bash");
-                if (ImGui::MenuItem("/usr/bin/python3")) strcpy(filepath, "/usr/bin/python3");
-                if (ImGui::MenuItem("/usr/lib/libc.dylib")) strcpy(filepath, "/usr/lib/libc.dylib");
-                if (ImGui::MenuItem("./haywire")) strcpy(filepath, "./haywire");
-                if (ImGui::MenuItem("./test_binary_loader")) strcpy(filepath, "./test_binary_loader");
-                ImGui::EndPopup();
+                fileBrowser.Open();
             }
 
             if (ImGui::Button("Load", ImVec2(100, 0))) {
@@ -584,24 +580,42 @@ int main(int argc, char** argv) {
                         overview.SetProcessMode(false, 0);
                         visualizer.SetProcessPid(0);
 
-                        // Store the file data for visualization
-                        loaded_file_data = std::make_shared<std::vector<uint8_t>>(binary_loader.GetRawData());
+                        // Check if using memory mapping for large files
+                        std::shared_ptr<MemoryDataSource> fileSource;
+                        if (binary_loader.IsMemoryMapped()) {
+                            // Use memory-mapped source for large files
+                            auto mappedSource = std::make_shared<MappedFileMemorySource>();
+                            if (mappedSource->OpenFile(filepath)) {
+                                fileSource = mappedSource;
+                            } else {
+                                load_error = "Failed to memory-map file";
+                                binary_loaded = false;
+                            }
+                        } else {
+                            // Store the file data for visualization (small files)
+                            loaded_file_data = std::make_shared<std::vector<uint8_t>>(binary_loader.GetRawData());
 
-                        // Create a file memory source
-                        auto fileSource = std::make_shared<FileMemorySource>(binary_file_path, loaded_file_data);
+                            // Create a file memory source
+                            fileSource = std::make_shared<FileMemorySource>(binary_file_path, loaded_file_data);
+                        }
 
-                        // Set up memory regions from parsed segments
-                        fileSource->ClearRegions();
-                        for (const auto& seg : binary_loader.GetSegments()) {
-                            FileMemorySource::MemoryRegion region;
-                            region.start = seg.file_offset;
-                            region.end = seg.file_offset + seg.file_size;
-                            region.name = seg.name;
-                            region.permissions = "";
-                            if (seg.is_readable()) region.permissions += "r";
-                            if (seg.is_writable()) region.permissions += "w";
-                            if (seg.is_code()) region.permissions += "x";
-                            fileSource->AddRegion(region);
+                        // Set up memory regions from parsed segments (only for FileMemorySource)
+                        if (!binary_loader.IsMemoryMapped() && fileSource) {
+                            auto fileMemSource = std::dynamic_pointer_cast<FileMemorySource>(fileSource);
+                            if (fileMemSource) {
+                                fileMemSource->ClearRegions();
+                                for (const auto& seg : binary_loader.GetSegments()) {
+                                    MemoryDataSource::MemoryRegion region;
+                                    region.start = seg.file_offset;
+                                    region.end = seg.file_offset + seg.file_size;
+                                    region.name = seg.name;
+                                    region.permissions = "";
+                                    if (seg.is_readable()) region.permissions += "r";
+                                    if (seg.is_writable()) region.permissions += "w";
+                                    if (seg.is_code()) region.permissions += "x";
+                                    fileMemSource->AddRegion(region);
+                                }
+                            }
                         }
 
                         // Set the file source as the memory data source
@@ -633,7 +647,7 @@ int main(int argc, char** argv) {
                         visualizer.NavigateToAddress(0);
                     } else {
                         load_error = "Failed to load file: " + std::string(filepath);
-                        load_error += "\nFile may not exist or format may not be supported yet.";
+                        load_error += "\nFile may not exist or is not accessible.";
                     }
                 }
             }

@@ -667,7 +667,7 @@ void QemuConnection::DrawConnectionUI() {
             ImGui::TextColored(ImVec4(0, 1, 0, 1), "✓ Guest Agent Connected");
             
             if (ImGui::Button("List Processes", ImVec2(120, 0))) {
-                std::vector<ProcessInfo> processes;
+                std::vector<GuestProcessInfo> processes;
                 if (guestAgent->GetProcessList(processes)) {
                     std::cout << "\n=== Guest Processes (sorted by memory) ===\n";
                     
@@ -675,7 +675,7 @@ void QemuConnection::DrawConnectionUI() {
                     std::cout << "\n--- User Applications ---\n";
                     int userAppCount = 0;
                     for (const auto& proc : processes) {
-                        if (proc.category == ProcessInfo::USER_APP) {
+                        if (proc.category == GuestProcessInfo::USER_APP) {
                             std::cout << "PID " << std::setw(5) << proc.pid 
                                      << " | MEM: " << std::setw(5) << std::fixed 
                                      << std::setprecision(1) << proc.mem << "%"
@@ -687,7 +687,7 @@ void QemuConnection::DrawConnectionUI() {
                     // Show high-memory services
                     std::cout << "\n--- Services (>0.5% memory) ---\n";
                     for (const auto& proc : processes) {
-                        if (proc.category == ProcessInfo::SERVICE && proc.mem > 0.5) {
+                        if (proc.category == GuestProcessInfo::SERVICE && proc.mem > 0.5) {
                             std::cout << "PID " << std::setw(5) << proc.pid 
                                      << " | MEM: " << std::setw(5) << std::fixed 
                                      << std::setprecision(1) << proc.mem << "%"

@@ -112,7 +112,44 @@ bool BinaryLoader::LoadFile(const std::string& path) {
     size_t size = file.tellg();
     file.seekg(0, std::ios::beg);
 
-    // Read entire file
+    // For large files (> 100MB), use memory mapping instead
+    const size_t LARGE_FILE_THRESHOLD = 100 * 1024 * 1024; // 100MB
+
+    if (size > LARGE_FILE_THRESHOLD) {
+        std::cout << "Large file detected (" << (size / (1024*1024)) << " MB), using memory mapping...\n";
+
+        // Just read the first 64KB for type detection
+        const size_t HEADER_SIZE = 65536;
+        rawData.resize(std::min(size, HEADER_SIZE));
+        file.read(reinterpret_cast<char*>(rawData.data()), rawData.size());
+
+        // Store the file path and size for later memory-mapped access
+        filePath = path;
+        fileSize = size;
+        useMmap = true;
+
+        // Detect type from header only
+        info.type = DetectType(rawData.data(), rawData.size());
+
+        // For non-binary formats, treat as raw
+        if (info.type == BinaryType::UNKNOWN) {
+            info.type = BinaryType::RAW_BINARY;
+        }
+
+        // Create a single segment for the entire file
+        BinarySegment seg;
+        seg.name = "mmap";
+        seg.virtual_addr = 0;
+        seg.file_offset = 0;
+        seg.file_size = size;
+        seg.memory_size = size;
+        seg.permissions = 0x4; // Read-only
+        segments.push_back(seg);
+
+        return true;
+    }
+
+    // For smaller files, read entire file as before
     rawData.resize(size);
     file.read(reinterpret_cast<char*>(rawData.data()), size);
 
@@ -156,9 +193,21 @@ bool BinaryLoader::LoadFromMemory(const uint8_t* data, size_t size) {
             return true;
         }
 
+        case BinaryType::UNKNOWN:
         default:
-            std::cerr << "Unsupported binary type\n";
-            return false;
+            // Treat unknown files as raw binary - load entire file as one blob
+            info.type = BinaryType::RAW_BINARY;
+            BinarySegment seg;
+            seg.name = "raw";
+            seg.virtual_addr = 0;
+            seg.file_offset = 0;
+            seg.file_size = size;
+            seg.memory_size = size;
+            seg.permissions = 0x6;  // RW
+            seg.data = rawData;
+            segments.push_back(seg);
+            std::cout << "Loaded unknown file as raw binary: " << size << " bytes\n";
+            return true;
     }
 }
 

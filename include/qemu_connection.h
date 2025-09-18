@@ -29,7 +29,9 @@ public:
     bool AutoConnect();
     
     bool IsConnected() const { return connected.load(); }
+    bool IsAvailable() const { return IsConnected(); }
     bool IsUsingMemoryBackend() const { return useMemoryBackend; }
+    MemoryBackend* GetMemoryBackend() { return memoryBackend.get(); }
     bool IsGuestAgentConnected() const { return guestAgent && guestAgent->IsConnected(); }
     
     bool ReadMemory(uint64_t address, size_t size, std::vector<uint8_t>& buffer);

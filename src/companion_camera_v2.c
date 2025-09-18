@@ -265,13 +265,15 @@ void scan_process_memory(uint32_t pid) {
         return;
     }
     
-    // Track PID changes for logging
-    static uint32_t last_pid = 0;
+    // Track if we've preloaded libraries for this PID
+    static uint32_t last_preload_pid = 0;
+    static int libraries_preloaded = 0;
     
-    // Log when PID changes
-    if (pid != last_pid) {
-        last_pid = pid;
-        fprintf(stderr, "Camera %d: Switched to PID %u\n", CAMERA_ID, pid);
+    // Reset preload flag when PID changes
+    if (pid != last_preload_pid) {
+        libraries_preloaded = 0;
+        last_preload_pid = pid;
+        fprintf(stderr, "Camera %d: Switched to PID %u, will preload libraries\n", CAMERA_ID, pid);
     }
     
     // Get the appropriate camera pointer
@@ -369,34 +371,27 @@ void scan_process_memory(uint32_t pid) {
             entry_count++;
             section_count++;
             
-            // Library preloading disabled for now - not showing up in pixmap
-            // TODO: Investigate why preloaded pages don't appear in visualization
-            #if 0
-            // Touch shared library pages BEFORE reading PTEs on EVERY pass
-            // This ensures the pages are in memory when we check pagemap
+            // Preload shared library pages if not done yet
             // ONLY do this for our own process to avoid segfaults
-            int preloaded_pages = 0;
-            if (pid == getpid() && strstr(path, ".so")) {
+            if (!libraries_preloaded && pid == getpid() && strstr(path, ".so")) {
                 // Only preload executable sections (most useful for disassembly)
                 if (perms[2] == 'x') {
+                    int pages_touched = 0;
                     volatile uint8_t dummy;
                     
                     // Touch the first byte of each page to trigger page fault
                     for (uint64_t addr = start; addr < end && addr < start + (100 * 4096); addr += 4096) {
                         // Limit to first 100 pages (400KB) per library to avoid excessive delays
                         dummy = *(uint8_t*)addr;
-                        preloaded_pages++;
+                        pages_touched++;
                     }
                     
-                    if (preloaded_pages > 0) {
-                        fprintf(stderr, "Camera %d: Touched %d pages from %s\n", 
-                                CAMERA_ID, preloaded_pages, path);
-                        // Small delay to ensure pages are fully loaded
-                        usleep(1000);  // 1ms delay
+                    if (pages_touched > 0) {
+                        fprintf(stderr, "Camera %d: Preloaded %d pages from %s\n", 
+                                CAMERA_ID, pages_touched, path);
                     }
                 }
             }
-            #endif
             
             // Add real PTEs for all sections with any permissions
             if (section->perms != 0) {  // Any section with permissions (readable, writable, or executable)
@@ -432,6 +427,9 @@ void scan_process_memory(uint32_t pid) {
     }
     
     fclose(fp);
+    
+    // Mark libraries as preloaded for this PID
+    libraries_preloaded = 1;
     
     // Mark end of entries
     if (bytes_used + 1 <= 4060) {
@@ -614,7 +612,7 @@ int main() {
         }
         
         // Sleep before next scan
-        usleep(250000);  // 250ms = 4Hz scan rate
+        sleep(1);
     }
     
     // Cleanup

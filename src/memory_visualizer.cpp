@@ -187,7 +187,8 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
     }
     
     // Simple synchronous refresh for testing
-    if (qemu.IsConnected()) {
+    // Allow reading if we have either a QEMU connection or a custom data source
+    if (qemu.IsConnected() || memoryDataSource_) {
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration<float>(now - lastRefresh).count();
         
@@ -736,6 +737,10 @@ void MemoryVisualizer::SetMemoryMapper(std::shared_ptr<MemoryMapper> mapper) {
 
 void MemoryVisualizer::SetMemoryDataSource(std::shared_ptr<MemoryDataSource> dataSource) {
     memoryDataSource_ = dataSource;
+    // Also pass to bitmap viewer manager
+    if (bitmapViewerManager) {
+        bitmapViewerManager->SetMemoryDataSource(dataSource);
+    }
 }
 
 bool MemoryVisualizer::IsBitmapAnchorDragging() const {

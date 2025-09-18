@@ -11,7 +11,7 @@
 
 namespace Haywire {
 
-struct ProcessInfo {
+struct GuestProcessInfo {
     int pid;
     std::string name;
     std::string user;
@@ -85,7 +85,7 @@ public:
     
     // Guest agent commands
     bool Ping();
-    bool GetProcessList(std::vector<ProcessInfo>& processes);
+    bool GetProcessList(std::vector<GuestProcessInfo>& processes);
     bool GetMemoryMap(int pid, std::vector<GuestMemoryRegion>& regions);
     bool ExecuteCommand(const std::string& command, std::string& output);
     
@@ -110,7 +110,7 @@ private:
     int sock;
     
     bool SendCommand(const std::string& cmd, std::string& response);
-    bool ParseProcessList(const std::string& psOutput, std::vector<ProcessInfo>& processes);
+    bool ParseProcessList(const std::string& psOutput, std::vector<GuestProcessInfo>& processes);
     bool ParseMemoryMap(const std::string& mapsOutput, std::vector<GuestMemoryRegion>& regions);
 };
 

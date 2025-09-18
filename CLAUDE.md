@@ -41,6 +41,7 @@ Haywire is a VM memory introspection tool that bypasses QEMU's memory isolation 
 - `docs/build_qemu.md` - Building modified QEMU
 - `docs/kernel_structs.md` - Kernel structure layouts
 - `docs/rendering_pipeline.md` - Memory rendering pipeline and column mode
+- `docs/gpu_memory_introspection.md` - GPU memory access analysis and limitations
 
 ## Common Tasks
 
@@ -196,10 +197,24 @@ response = json.loads(sock.recv(4096).decode())
 - Host alias: `vm` (localhost:2222)
 - See `docs/vm_setup_guide.md` for complete setup
 
+## Recent Optimizations (September 14, 2024)
+
+### Memory Scanning Performance
+- **Zero-copy page scanning**: Added `TestPageNonZero` methods to avoid memory allocation
+- **PA mode performance**: 45.4ms → 7.8ms for 10k pages (5.8x speedup)
+- **VA mode performance**: 60ms → 7ms for 1k pages (8.5x speedup)
+- **64-bit OR accumulation**: Process 8 bytes at once with loop unrolling
+- **Increased scan ranges**: PA mode 30k pages (120MB), VA mode 3k pages (12MB)
+- **Auto-repeat scanning**: 500ms initial delay, 20Hz repeat rate
+
+### Architecture Improvements
+- Unified memory access through QemuConnection for display and scanning
+- CrunchedMemoryReader now supports zero-copy TestPageNonZero
+- Smart region skipping in PA mode to avoid unmapped memory
+
 ## TODO/Future Work
 
 ### Immediate Tasks
-- Performance optimization for large memory regions
 - Fix remaining switch warnings for HEX_PIXEL and CHAR_8BIT formats
 - Add export functionality for bitmap viewers
 - Implement bookmarks/saved locations

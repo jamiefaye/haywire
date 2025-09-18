@@ -92,11 +92,21 @@ public:
     // Detect file type
     static BinaryType DetectType(const uint8_t* data, size_t size);
 
+    // Check if using memory mapping
+    bool IsMemoryMapped() const { return useMmap; }
+    const std::string& GetFilePath() const { return filePath; }
+    size_t GetFileSize() const { return fileSize; }
+
 private:
     BinaryInfo info;
     std::vector<BinarySegment> segments;
     std::vector<BinarySymbol> symbols;
     std::vector<uint8_t> rawData;
+
+    // For memory-mapped files
+    bool useMmap = false;
+    std::string filePath;
+    size_t fileSize = 0;
 
     // Parsers for different formats
     bool ParseELF();

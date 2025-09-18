@@ -87,7 +87,7 @@ bool GuestAgent::Ping() {
     return SendCommand(cmd, response);
 }
 
-bool GuestAgent::GetProcessList(std::vector<ProcessInfo>& processes) {
+bool GuestAgent::GetProcessList(std::vector<GuestProcessInfo>& processes) {
     processes.clear();
     
     // Execute ps command with better options:
@@ -284,7 +284,7 @@ std::string GuestAgent::DecodeBase64(const std::string& encoded) {
     return decoded;
 }
 
-bool GuestAgent::ParseProcessList(const std::string& psOutput, std::vector<ProcessInfo>& processes) {
+bool GuestAgent::ParseProcessList(const std::string& psOutput, std::vector<GuestProcessInfo>& processes) {
     std::istringstream stream(psOutput);
     std::string line;
     
@@ -294,7 +294,7 @@ bool GuestAgent::ParseProcessList(const std::string& psOutput, std::vector<Proce
     while (std::getline(stream, line)) {
         if (line.empty()) continue;
         
-        ProcessInfo proc;
+        GuestProcessInfo proc;
         std::istringstream lineStream(line);
         
         // Parse: USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND

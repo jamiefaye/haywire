@@ -6,6 +6,7 @@
 #include "qemu_connection.h"
 #include "crunched_memory_reader.h"
 #include "address_space_flattener.h"
+#include "memory_data_source.h"
 #include "font_data.h"
 #include <algorithm>
 #include <cmath>
@@ -751,9 +752,51 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
     // Calculate bytes needed based on format
     size_t bytesPerPixel = viewer.format.bytesPerPixel;
     size_t totalBytes = viewer.stride * viewer.memHeight;
-    
+
+    // First check if we have a memory data source (for file viewing)
+    if (memoryDataSource && memoryDataSource->IsAvailable()) {
+        // Use the unified memory data source interface
+        std::vector<uint8_t> buffer(totalBytes);
+
+        // For file sources, addresses are file offsets
+        uint64_t readAddress = viewer.memoryAddress.value;
+        if (viewer.memoryAddress.space == AddressSpace::SHARED) {
+            // Shared space addresses are already file offsets
+            readAddress = viewer.memoryAddress.value;
+        }
+
+        if (memoryDataSource->ReadMemory(readAddress, buffer.data(), totalBytes)) {
+            // Convert to pixels based on format
+            viewer.pixels.clear();
+
+            // Use the unified renderer
+            RenderConfig config;
+            config.displayWidth = viewer.memWidth;
+            config.displayHeight = viewer.memHeight;
+            config.stride = viewer.stride;
+            config.width = viewer.memWidth;
+            config.height = viewer.memHeight;
+            config.format = viewer.format;
+            config.splitComponents = viewer.splitComponents;
+            config.columnMode = viewer.columnMode;
+            config.columnWidth = viewer.columnWidth;
+            config.columnGap = viewer.columnGap;
+
+            viewer.pixels = MemoryRenderer::RenderMemory(
+                buffer.data(),
+                totalBytes,
+                config
+            );
+            return;
+        } else {
+            // Failed to read from data source
+            FillTestPattern(viewer);
+            return;
+        }
+    }
+
     // If the address is in crunched space and we have a crunched reader, use it
-    if (viewer.memoryAddress.space == AddressSpace::CRUNCHED && 
+    if (viewer.memoryAddress.space == AddressSpace::CRUNCHED &&
         crunchedReader && currentPid > 0) {
             // Allocate buffer for memory
             std::vector<uint8_t> buffer(totalBytes);
