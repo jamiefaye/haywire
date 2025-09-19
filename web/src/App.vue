@@ -131,9 +131,10 @@
     </div>
 
     <!-- Memory Canvas -->
-    <div class="canvas-container">
+    <div class="canvas-container" @contextmenu.prevent="showContextMenu">
       <MemoryCanvas
         v-if="memoryData"
+        ref="memoryCanvasRef"
         :key="`canvas-${currentOffset}-${selectedFormat}`"
         :memory-data="memoryData"
         :width="canvasWidth"
@@ -156,6 +157,43 @@
       </div>
     </div>
 
+    <!-- Context Menu -->
+    <div
+      v-if="contextMenuVisible"
+      class="context-menu"
+      :style="{
+        left: `${contextMenuPosition.x}px`,
+        top: `${contextMenuPosition.y}px`
+      }"
+      @click="hideContextMenu"
+    >
+      <div class="context-menu-item" @click="createMiniViewer">
+        🔍 Create Mini Viewer Here
+      </div>
+      <div class="context-menu-separator"></div>
+      <div class="context-menu-item" @click="copyAddress">
+        📋 Copy Address
+      </div>
+    </div>
+
+    <!-- Mini Bitmap Viewers -->
+    <MiniBitmapViewer
+      v-for="viewer in miniViewers"
+      :key="viewer.id"
+      :id="viewer.id"
+      :memory-data="memoryData"
+      :offset="viewer.offset"
+      :initial-width="viewer.width"
+      :initial-height="viewer.height"
+      :initial-format="viewer.format"
+      :initial-split-components="viewer.splitComponents"
+      :title="viewer.title"
+      :anchor-point="viewer.anchorPoint"
+      :show-leader="true"
+      @close="closeMiniViewer(viewer.id)"
+      @update-config="(config) => updateMiniViewer(viewer.id, config)"
+    />
+
     <!-- Status Bar -->
     <div class="status-bar">
       <span v-if="hoveredOffset !== null">
@@ -174,6 +212,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import MemoryCanvas from './components/MemoryCanvas.vue'
+import MiniBitmapViewer from './components/MiniBitmapViewer.vue'
 import { useFileSystemAPI } from './composables/useFileSystemAPI'
 import { useQmpBridge } from './composables/useQmpBridge'
 import { PixelFormat } from './composables/useWasmRenderer'
@@ -199,12 +238,33 @@ const {
 // Memory data
 const memoryData = ref<Uint8Array | null>(null)
 const isLoadingFile = ref(false)
+const memoryCanvasRef = ref<InstanceType<typeof MemoryCanvas>>()
+
+// Mini viewers
+interface MiniViewer {
+  id: number
+  offset: number
+  width: number
+  height: number
+  format: PixelFormat
+  splitComponents: boolean
+  title: string
+  anchorPoint: { x: number, y: number } | null
+}
+
+const miniViewers = ref<MiniViewer[]>([])
+let nextViewerId = 1
+
+// Context menu
+const contextMenuVisible = ref(false)
+const contextMenuPosition = ref({ x: 0, y: 0 })
+const contextMenuOffset = ref(0)
 
 // Display settings
 const displayWidth = ref(1024)
 const displayHeight = ref(768)
 const stride = ref(0)
-const selectedFormat = ref(PixelFormat.RGB888)
+const selectedFormat = ref(PixelFormat.BGR888) // Start with BGR888 since user said it was working
 const splitComponents = ref(false)
 const columnMode = ref(false)
 const columnWidth = ref(256)
@@ -299,6 +359,64 @@ async function toggleQmpConnection() {
   } else {
     await connectQmp()
   }
+}
+
+// Context menu functions
+function showContextMenu(event: MouseEvent) {
+  if (!memoryData.value) return
+
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const x = event.clientX - rect.left
+  const y = event.clientY - rect.top
+
+  // Calculate memory offset at click position
+  const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
+  const row = Math.floor(y / canvasHeight.value * displayHeight.value)
+  const col = Math.floor(x / canvasWidth.value * displayWidth.value)
+  const clickOffset = row * (stride.value || displayWidth.value) * bytesPerPixel + col * bytesPerPixel
+
+  contextMenuOffset.value = currentOffset.value + clickOffset
+  contextMenuPosition.value = { x: event.clientX, y: event.clientY }
+  contextMenuVisible.value = true
+}
+
+function hideContextMenu() {
+  contextMenuVisible.value = false
+}
+
+// Mini viewer functions
+function createMiniViewer() {
+  const viewer: MiniViewer = {
+    id: nextViewerId++,
+    offset: contextMenuOffset.value,
+    width: 256,
+    height: 256,
+    format: selectedFormat.value,
+    splitComponents: splitComponents.value,
+    title: `Viewer @ 0x${contextMenuOffset.value.toString(16).toUpperCase()}`,
+    anchorPoint: { x: contextMenuPosition.value.x, y: contextMenuPosition.value.y }
+  }
+  miniViewers.value.push(viewer)
+}
+
+function closeMiniViewer(id: number) {
+  miniViewers.value = miniViewers.value.filter(v => v.id !== id)
+}
+
+function updateMiniViewer(id: number, config: any) {
+  const viewer = miniViewers.value.find(v => v.id === id)
+  if (viewer) {
+    viewer.width = config.width
+    viewer.height = config.height
+    viewer.format = config.format
+    viewer.splitComponents = config.splitComponents
+  }
+}
+
+function copyAddress() {
+  const address = `0x${contextMenuOffset.value.toString(16).toUpperCase()}`
+  navigator.clipboard.writeText(address)
+  console.log('Copied address:', address)
 }
 
 // Helper: Get bytes per pixel for format
@@ -490,5 +608,37 @@ button:disabled {
 .status-bar .error {
   color: #ff6b6b;
   margin-left: auto;
+}
+
+/* Context Menu */
+.context-menu {
+  position: fixed;
+  background: #2d2d30;
+  border: 1px solid #555;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  z-index: 10000;
+  padding: 4px 0;
+  min-width: 180px;
+}
+
+.context-menu-item {
+  padding: 8px 16px;
+  color: #e0e0e0;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-menu-item:hover {
+  background: #0e639c;
+}
+
+.context-menu-separator {
+  height: 1px;
+  background: #555;
+  margin: 4px 0;
 }
 </style>

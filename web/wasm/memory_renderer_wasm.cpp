@@ -5,34 +5,14 @@
 #include "memory_renderer.h"
 #include <cstdint>
 #include <cstring>
+#include <vector>
 #include <emscripten/emscripten.h>
 
 using namespace Haywire;
 
-// Static renderer instance to avoid recreation
-static MemoryRenderer* g_renderer = nullptr;
-
 extern "C" {
 
-// Initialize the global renderer
-EMSCRIPTEN_KEEPALIVE
-void initRenderer() {
-    if (!g_renderer) {
-        g_renderer = new MemoryRenderer();
-    }
-}
-
-// Clean up the global renderer
-EMSCRIPTEN_KEEPALIVE
-void cleanupRenderer() {
-    if (g_renderer) {
-        delete g_renderer;
-        g_renderer = nullptr;
-    }
-}
-
-// Direct wrapper around RenderMemoryToCanvas
-// This is the main entry point - it handles all the complex rendering logic
+// Main rendering function using the static RenderMemory method
 EMSCRIPTEN_KEEPALIVE
 void renderMemoryToCanvas(
     const uint8_t* memoryData,
@@ -50,33 +30,49 @@ void renderMemoryToCanvas(
     int columnWidth,
     int columnGap
 ) {
-    if (!g_renderer) {
-        initRenderer();
-    }
+    // Create RenderConfig
+    RenderConfig config;
+    config.displayWidth = displayWidth;
+    config.displayHeight = displayHeight;
+    config.stride = stride;
 
-    // The original function handles all the complexity
-    g_renderer->RenderMemoryToCanvas(
-        memoryData,
-        memorySize,
-        canvasBuffer,
-        canvasWidth,
-        canvasHeight,
-        sourceOffset,
-        displayWidth,
-        displayHeight,
-        stride,
-        static_cast<PixelFormat::Type>(format),
-        splitComponents,
-        columnMode,
-        columnWidth,
-        columnGap
+    // Set PixelFormat with the type
+    config.format.type = static_cast<PixelFormat::Type>(format);
+
+    config.splitComponents = splitComponents;
+    config.columnMode = columnMode;
+    config.columnWidth = columnWidth;
+    config.columnGap = columnGap;
+
+    // Adjust data pointer for source offset
+    const uint8_t* offsetData = memoryData + sourceOffset;
+    size_t adjustedSize = memorySize - sourceOffset;
+
+    // Call the static rendering method
+    std::vector<uint32_t> rendered = MemoryRenderer::RenderMemory(
+        offsetData,
+        adjustedSize,
+        config
     );
+
+    // Copy rendered data to canvas buffer
+    size_t pixelsToCopy = std::min(
+        rendered.size(),
+        static_cast<size_t>(canvasWidth * canvasHeight)
+    );
+
+    if (pixelsToCopy > 0) {
+        memcpy(canvasBuffer, rendered.data(), pixelsToCopy * sizeof(uint32_t));
+    }
 }
 
-// Get format information without modifying any logic
+// Get format information
 EMSCRIPTEN_KEEPALIVE
 int getFormatBytesPerPixel(int format) {
-    return PixelFormat::GetBytesPerPixel(static_cast<PixelFormat::Type>(format));
+    // Create a PixelFormat with the Type enum value
+    PixelFormat pixelFormat;
+    pixelFormat.type = static_cast<PixelFormat::Type>(format);
+    return RenderConfig::GetBytesPerPixel(pixelFormat);
 }
 
 // Get extended format for split components
@@ -101,12 +97,14 @@ void getFormatDescriptor(
     FormatDescriptor desc = MemoryRenderer::GetFormatDescriptor(
         static_cast<ExtendedFormat>(extendedFormat)
     );
-    *bytesPerElement = desc.bytesPerElement;
-    *pixelsPerElementX = desc.pixelsPerElementX;
-    *pixelsPerElementY = desc.pixelsPerElementY;
+    *bytesPerElement = desc.bytesIn;
+    *pixelsPerElementX = desc.pixelsOutX;
+    *pixelsPerElementY = desc.pixelsOutY;
 }
 
-// Memory coordinate conversion for column mode
+// Simple pixel to memory coordinate conversion
+// Note: The actual implementation may not have this method,
+// so we provide a basic implementation
 EMSCRIPTEN_KEEPALIVE
 void pixelToMemoryCoordinate(
     int pixelX, int pixelY,
@@ -119,21 +117,27 @@ void pixelToMemoryCoordinate(
     int columnGap,
     int* memoryX, int* memoryY
 ) {
-    if (!g_renderer) {
-        initRenderer();
-    }
+    // Basic coordinate mapping
+    if (columnMode) {
+        // Column mode calculation
+        int totalColumnWidth = columnWidth + columnGap;
+        int columnIndex = pixelX / totalColumnWidth;
+        int xInColumn = pixelX % totalColumnWidth;
 
-    g_renderer->PixelToMemoryCoordinate(
-        pixelX, pixelY,
-        displayWidth, displayHeight,
-        stride,
-        static_cast<PixelFormat::Type>(format),
-        splitComponents,
-        columnMode,
-        columnWidth,
-        columnGap,
-        memoryX, memoryY
-    );
+        if (xInColumn >= columnWidth) {
+            // Click in gap
+            *memoryX = -1;
+            *memoryY = -1;
+            return;
+        }
+
+        *memoryX = xInColumn;
+        *memoryY = columnIndex * displayHeight + pixelY;
+    } else {
+        // Simple linear mode
+        *memoryX = pixelX;
+        *memoryY = pixelY;
+    }
 }
 
 // Memory allocation helpers for JavaScript

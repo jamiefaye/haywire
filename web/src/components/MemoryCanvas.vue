@@ -37,7 +37,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   width: 1024,
   height: 768,
-  format: PixelFormat.RGB888,
+  format: PixelFormat.BGR888,
   sourceOffset: 0,
   stride: 0,
   splitComponents: false,
@@ -165,6 +165,7 @@ function getBytesPerPixelForFormat(format: PixelFormat): number {
     case PixelFormat.BGRA8888:
     case PixelFormat.ARGB8888:
     case PixelFormat.ABGR8888:
+      return 4
     case PixelFormat.HEX_PIXEL:
       return 4
     default:

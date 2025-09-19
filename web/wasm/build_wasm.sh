@@ -22,8 +22,6 @@ emcc -O3 \
     "$SCRIPT_DIR/memory_renderer_wasm.cpp" \
     -o "$OUTPUT_DIR/memory_renderer.js" \
     -s EXPORTED_FUNCTIONS="[\
-        '_initRenderer',\
-        '_cleanupRenderer',\
         '_renderMemoryToCanvas',\
         '_getFormatBytesPerPixel',\
         '_getExtendedFormat',\
