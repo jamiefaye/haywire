@@ -223,6 +223,9 @@
       :initial-height="viewer.height"
       :initial-format="viewer.format"
       :initial-split-components="viewer.splitComponents"
+      :initial-column-mode="viewer.columnMode"
+      :initial-column-width="viewer.columnWidth"
+      :initial-column-gap="viewer.columnGap"
       :title="viewer.title"
       :anchor-point="viewer.anchorPoint"
       :show-leader="true"
@@ -289,6 +292,9 @@ interface MiniViewer {
   height: number
   format: PixelFormat
   splitComponents: boolean
+  columnMode: boolean
+  columnWidth: number
+  columnGap: number
   title: string
   anchorPoint: { x: number, y: number } | null
   isDragging?: boolean
@@ -623,6 +629,9 @@ async function createMiniViewer() {
     height: 256,
     format: selectedFormat.value,
     splitComponents: splitComponents.value,
+    columnMode: false,
+    columnWidth: 64,
+    columnGap: 4,
     title: `Viewer @ 0x${contextMenuOffset.value.toString(16).toUpperCase()}`,
     anchorPoint: initialAnchor,
     anchorMode: 'address',
@@ -646,6 +655,9 @@ function updateMiniViewer(id: number, config: any) {
     viewer.height = config.height
     viewer.format = config.format
     viewer.splitComponents = config.splitComponents
+    viewer.columnMode = config.columnMode
+    viewer.columnWidth = config.columnWidth
+    viewer.columnGap = config.columnGap
   }
 }
 

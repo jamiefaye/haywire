@@ -1,5 +1,6 @@
 <template>
   <div
+    :id="`mini-viewer-${id}`"
     class="mini-bitmap-viewer"
     :style="{
       left: `${position.x}px`,
@@ -76,6 +77,41 @@
           >
           Split Components
         </label>
+      </div>
+
+      <div class="settings-section">
+        <label class="settings-checkbox">
+          <input
+            type="checkbox"
+            v-model="localColumnMode"
+            @change="updateConfig"
+          >
+          Column Mode
+        </label>
+      </div>
+
+      <div v-if="localColumnMode" class="settings-section">
+        <label class="settings-label">Col Width:</label>
+        <input
+          type="number"
+          v-model.number="localColumnWidth"
+          @change="updateConfig"
+          class="settings-input"
+          min="16"
+          max="512"
+        >
+      </div>
+
+      <div v-if="localColumnMode" class="settings-section">
+        <label class="settings-label">Col Gap:</label>
+        <input
+          type="number"
+          v-model.number="localColumnGap"
+          @change="updateConfig"
+          class="settings-input"
+          min="0"
+          max="32"
+        >
       </div>
     </div>
 
@@ -183,6 +219,9 @@ interface Props {
   initialHeight?: number
   initialFormat?: PixelFormat
   initialSplitComponents?: boolean
+  initialColumnMode?: boolean
+  initialColumnWidth?: number
+  initialColumnGap?: number
   title?: string
   anchorPoint?: { x: number, y: number } | null
   showLeader?: boolean
@@ -195,6 +234,9 @@ const props = withDefaults(defineProps<Props>(), {
   initialHeight: 256,
   initialFormat: PixelFormat.BGR888,
   initialSplitComponents: false,
+  initialColumnMode: false,
+  initialColumnWidth: 64,
+  initialColumnGap: 4,
   title: 'Bitmap Viewer',
   anchorPoint: null,
   showLeader: true,
@@ -208,7 +250,10 @@ const emit = defineEmits<{
     width: number,
     height: number,
     format: PixelFormat,
-    splitComponents: boolean
+    splitComponents: boolean,
+    columnMode: boolean,
+    columnWidth: number,
+    columnGap: number
   }]
   dragStateChanged: [dragging: boolean]
   anchorDrag: [position: { x: number, y: number }]
@@ -229,6 +274,9 @@ const localWidth = ref(props.initialWidth)
 const localHeight = ref(props.initialHeight)
 const localFormat = ref(props.initialFormat)
 const localSplitComponents = ref(props.initialSplitComponents)
+const localColumnMode = ref(props.initialColumnMode)
+const localColumnWidth = ref(props.initialColumnWidth)
+const localColumnGap = ref(props.initialColumnGap)
 
 // Dragging state
 const isDragging = ref(false)
@@ -253,7 +301,10 @@ function doRender() {
       displayHeight: localHeight.value,
       stride: localWidth.value,
       format: localFormat.value,
-      splitComponents: localSplitComponents.value
+      splitComponents: localSplitComponents.value,
+      columnMode: localColumnMode.value,
+      columnWidth: localColumnWidth.value,
+      columnGap: localColumnGap.value
     })
   }
 }
@@ -329,6 +380,30 @@ function startAnchorDrag(e: MouseEvent) {
 // Settings popup
 function toggleSettings() {
   showSettings.value = !showSettings.value
+
+  // If opening settings, check if popup would go off screen and adjust
+  if (showSettings.value) {
+    nextTick(() => {
+      const viewer = document.querySelector(`[id="mini-viewer-${props.id}"]`) as HTMLElement
+      if (!viewer) return
+      const popup = viewer.querySelector('.settings-popup') as HTMLElement
+      if (popup) {
+        const rect = popup.getBoundingClientRect()
+
+        // If popup goes off right edge, position it to the left of viewer instead
+        if (rect.right > window.innerWidth - 10) {
+          popup.style.left = 'auto'
+          popup.style.right = `calc(100% + 8px)`
+        }
+
+        // If popup goes off bottom, position it above the title bar
+        if (rect.bottom > window.innerHeight - 10) {
+          popup.style.top = 'auto'
+          popup.style.bottom = `calc(100% - 28px)`
+        }
+      }
+    })
+  }
 }
 
 // Close settings when clicking outside
@@ -390,24 +465,33 @@ watch(() => props.offset, () => {
   doRender()
 })
 
-// Watch for dimension changes - auto-update when width or height changes
-watch([localWidth, localHeight], () => {
-  size.value = { width: localWidth.value, height: localHeight.value }
+// Update config function
+function updateConfig() {
   emit('updateConfig', {
     width: localWidth.value,
     height: localHeight.value,
     format: localFormat.value,
-    splitComponents: localSplitComponents.value
+    splitComponents: localSplitComponents.value,
+    columnMode: localColumnMode.value,
+    columnWidth: localColumnWidth.value,
+    columnGap: localColumnGap.value
   })
+}
+
+// Watch for dimension changes - auto-update when width or height changes
+watch([localWidth, localHeight], () => {
+  size.value = { width: localWidth.value, height: localHeight.value }
+  updateConfig()
   // Use nextTick to ensure canvas is resized before rendering
   nextTick(() => {
     doRender()
   })
 })
 
-// Watch for format changes
-watch([localFormat, localSplitComponents], () => {
+// Watch for format and column changes
+watch([localFormat, localSplitComponents, localColumnMode, localColumnWidth, localColumnGap], () => {
   doRender()
+  updateConfig()
 })
 </script>
 
@@ -538,7 +622,7 @@ watch([localFormat, localSplitComponents], () => {
 .settings-popup {
   position: absolute;
   top: 28px;
-  left: 8px;
+  left: calc(100% + 8px); /* Position to the right of the viewer */
   background: #2d2d30;
   border: 1px solid #555;
   border-radius: 4px;
@@ -546,6 +630,8 @@ watch([localFormat, localSplitComponents], () => {
   z-index: 1000;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   min-width: 200px;
+  max-height: 400px;
+  overflow-y: auto;
 }
 
 .settings-section {
