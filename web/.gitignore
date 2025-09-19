@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build outputs
+dist/
+public/wasm/*.js
+public/wasm/*.wasm
+bridge/build/
+
+# SSL certificates (keep these private!)
+ssl-stuff/
+*.pem
+*.key
+*.crt
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
