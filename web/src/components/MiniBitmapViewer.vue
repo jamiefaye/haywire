@@ -11,8 +11,72 @@
   >
     <!-- Title Bar -->
     <div class="viewer-header">
+      <button class="settings-btn" @click.stop="toggleSettings" title="Settings">☰</button>
       <span class="viewer-title">{{ title }}</span>
       <button class="close-btn" @click="$emit('close')">×</button>
+    </div>
+
+    <!-- Settings Popup -->
+    <div v-if="showSettings" class="settings-popup" @click.stop>
+      <div class="settings-section">
+        <label class="settings-label">Anchor Mode:</label>
+        <select v-model="anchorMode" class="settings-select">
+          <option value="address">Stick to Address</option>
+          <option value="position">Stick to Position</option>
+        </select>
+      </div>
+
+      <div class="settings-section">
+        <label class="settings-label">Width:</label>
+        <input
+          type="number"
+          v-model.number="localWidth"
+          @change="updateConfig"
+          class="settings-input"
+          min="32"
+          max="2048"
+        >
+      </div>
+
+      <div class="settings-section">
+        <label class="settings-label">Height:</label>
+        <input
+          type="number"
+          v-model.number="localHeight"
+          @change="updateConfig"
+          class="settings-input"
+          min="32"
+          max="2048"
+        >
+      </div>
+
+      <div class="settings-section">
+        <label class="settings-label">Format:</label>
+        <select v-model.number="localFormat" @change="updateConfig" class="settings-select">
+          <option :value="PixelFormat.GRAYSCALE">Grayscale</option>
+          <option :value="PixelFormat.RGB565">RGB565</option>
+          <option :value="PixelFormat.RGB888">RGB888</option>
+          <option :value="PixelFormat.RGBA8888">RGBA8888</option>
+          <option :value="PixelFormat.BGR888">BGR888</option>
+          <option :value="PixelFormat.BGRA8888">BGRA8888</option>
+          <option :value="PixelFormat.ARGB8888">ARGB8888</option>
+          <option :value="PixelFormat.ABGR8888">ABGR8888</option>
+          <option :value="PixelFormat.BINARY">Binary</option>
+          <option :value="PixelFormat.HEX_PIXEL">Hex Pixel</option>
+          <option :value="PixelFormat.CHAR_8BIT">Char 8-bit</option>
+        </select>
+      </div>
+
+      <div class="settings-section">
+        <label class="settings-checkbox">
+          <input
+            type="checkbox"
+            v-model="localSplitComponents"
+            @change="updateConfig"
+          >
+          Split Components
+        </label>
+      </div>
     </div>
 
     <!-- Controls -->
@@ -122,6 +186,8 @@ interface Props {
   title?: string
   anchorPoint?: { x: number, y: number } | null
   showLeader?: boolean
+  initialAnchorMode?: 'address' | 'position'
+  relativeAnchorPos?: { x: number, y: number }
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -131,7 +197,9 @@ const props = withDefaults(defineProps<Props>(), {
   initialSplitComponents: false,
   title: 'Bitmap Viewer',
   anchorPoint: null,
-  showLeader: true
+  showLeader: true,
+  initialAnchorMode: 'address',
+  relativeAnchorPos: () => ({ x: 0.5, y: 0.5 })
 })
 
 const emit = defineEmits<{
@@ -144,12 +212,17 @@ const emit = defineEmits<{
   }]
   dragStateChanged: [dragging: boolean]
   anchorDrag: [position: { x: number, y: number }]
+  anchorModeChanged: [mode: 'address' | 'position', relativePos?: { x: number, y: number }]
 }>()
 
 // Component state
 const canvasRef = ref<HTMLCanvasElement>()
 const position = ref({ x: 100, y: 100 })
 const size = ref({ width: props.initialWidth, height: props.initialHeight })
+
+// Settings popup
+const showSettings = ref(false)
+const anchorMode = ref<'address' | 'position'>(props.initialAnchorMode)
 
 // Configuration state
 const localWidth = ref(props.initialWidth)
@@ -253,8 +326,39 @@ function startAnchorDrag(e: MouseEvent) {
   e.stopPropagation()
 }
 
+// Settings popup
+function toggleSettings() {
+  showSettings.value = !showSettings.value
+}
+
+// Close settings when clicking outside
+function handleClickOutside(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (!target.closest('.settings-popup') && !target.closest('.settings-btn')) {
+    showSettings.value = false
+  }
+}
+
+// Watch anchor mode changes
+watch(anchorMode, (newMode) => {
+  if (newMode === 'position' && props.anchorPoint) {
+    // Calculate relative position when switching to position mode
+    const canvas = document.querySelector('.memory-canvas') as HTMLCanvasElement
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect()
+      const relX = (props.anchorPoint.x - rect.left) / rect.width
+      const relY = (props.anchorPoint.y - rect.top) / rect.height
+      emit('anchorModeChanged', newMode, { x: relX, y: relY })
+    }
+  } else {
+    emit('anchorModeChanged', newMode)
+  }
+})
+
 // Set initial random position
 onMounted(() => {
+  // Add click outside listener for settings popup
+  document.addEventListener('click', handleClickOutside)
   // Position randomly within viewport
   const margin = 50
   position.value = {
@@ -273,6 +377,7 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('mousemove', handleMouseMove)
   document.removeEventListener('mouseup', handleMouseUp)
+  document.removeEventListener('click', handleClickOutside)
 })
 
 // Watch for data changes
@@ -412,5 +517,75 @@ watch([localFormat, localSplitComponents], () => {
 
 .leader-line-svg {
   pointer-events: none;
+}
+
+.settings-btn {
+  background: transparent;
+  border: 1px solid #555;
+  color: #e0e0e0;
+  font-size: 14px;
+  width: 24px;
+  height: 20px;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.settings-btn:hover {
+  background: #3c3c3c;
+}
+
+.settings-popup {
+  position: absolute;
+  top: 28px;
+  left: 8px;
+  background: #2d2d30;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 8px;
+  z-index: 1000;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  min-width: 200px;
+}
+
+.settings-section {
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-section:last-child {
+  margin-bottom: 0;
+}
+
+.settings-label {
+  font-size: 11px;
+  color: #e0e0e0;
+  min-width: 80px;
+}
+
+.settings-select,
+.settings-input {
+  flex: 1;
+  background: #3c3c3c;
+  border: 1px solid #555;
+  color: #e0e0e0;
+  padding: 2px 4px;
+  border-radius: 2px;
+  font-size: 11px;
+}
+
+.settings-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #e0e0e0;
+  cursor: pointer;
+}
+
+.settings-checkbox input {
+  cursor: pointer;
 }
 </style>

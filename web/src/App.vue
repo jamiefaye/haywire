@@ -230,6 +230,9 @@
       @update-config="(config) => updateMiniViewer(viewer.id, config)"
       @drag-state-changed="(dragging) => viewer.isDragging = dragging"
       @anchor-drag="(pos) => handleAnchorDrag(viewer.id, pos)"
+      @anchor-mode-changed="(mode, relPos) => handleAnchorModeChange(viewer.id, mode, relPos)"
+      :initial-anchor-mode="viewer.anchorMode || 'address'"
+      :relative-anchor-pos="viewer.relativeAnchorPos"
     />
 
     <!-- Status Bar -->
@@ -290,6 +293,8 @@ interface MiniViewer {
   anchorPoint: { x: number, y: number } | null
   isDragging?: boolean
   memoryData?: Uint8Array
+  anchorMode?: 'address' | 'position'
+  relativeAnchorPos?: { x: number, y: number }
 }
 
 const miniViewers = ref<MiniViewer[]>([])
@@ -612,7 +617,9 @@ async function createMiniViewer() {
     format: selectedFormat.value,
     splitComponents: splitComponents.value,
     title: `Viewer @ 0x${contextMenuOffset.value.toString(16).toUpperCase()}`,
-    anchorPoint: initialAnchor
+    anchorPoint: initialAnchor,
+    anchorMode: 'address',
+    relativeAnchorPos: { x: 0.5, y: 0.5 }
   }
 
   // Load initial data for the viewer
@@ -848,12 +855,53 @@ watch([displayWidth, selectedFormat, splitComponents, columnMode, columnWidth, c
 })
 
 // Update mini viewer anchor points
-function updateMiniViewerAnchors() {
+async function updateMiniViewerAnchors() {
   // Always update anchors, even during canvas drag
-  miniViewers.value.forEach(viewer => {
-    const newAnchor = getCanvasPositionFromOffset(viewer.offset)
-    viewer.anchorPoint = newAnchor // Set to null if not visible
-  })
+  for (const viewer of miniViewers.value) {
+    if (viewer.anchorMode === 'position' && viewer.relativeAnchorPos) {
+      // In position mode, calculate anchor based on relative position
+      const canvas = document.querySelector('.memory-canvas') as HTMLCanvasElement
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect()
+        viewer.anchorPoint = {
+          x: rect.left + viewer.relativeAnchorPos.x * rect.width,
+          y: rect.top + viewer.relativeAnchorPos.y * rect.height
+        }
+
+        // Also update the offset to show what's at this position
+        const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
+        const relY = viewer.relativeAnchorPos.y
+        const relX = viewer.relativeAnchorPos.x
+        const row = Math.floor(relY * displayHeight.value)
+        const col = Math.floor(relX * displayWidth.value)
+        const newOffset = currentOffset.value + row * displayWidth.value * bytesPerPixel + col * bytesPerPixel
+
+        if (viewer.offset !== newOffset) {
+          viewer.offset = newOffset
+          viewer.title = `Viewer @ 0x${newOffset.toString(16).toUpperCase()}`
+          // Reload data for the new offset
+          await loadMiniViewerData(viewer)
+        }
+      }
+    } else {
+      // In address mode, anchor follows the memory address
+      const newAnchor = getCanvasPositionFromOffset(viewer.offset)
+      viewer.anchorPoint = newAnchor // Set to null if not visible
+    }
+  }
+}
+
+// Handle anchor mode changes
+async function handleAnchorModeChange(id: number, mode: 'address' | 'position', relativePos?: { x: number, y: number }) {
+  const viewer = miniViewers.value.find(v => v.id === id)
+  if (viewer) {
+    viewer.anchorMode = mode
+    if (mode === 'position' && relativePos) {
+      viewer.relativeAnchorPos = relativePos
+    }
+    // Update anchor immediately
+    await updateMiniViewerAnchors()
+  }
 }
 
 // Update anchors when offset changes
