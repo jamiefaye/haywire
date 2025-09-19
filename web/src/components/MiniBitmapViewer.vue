@@ -98,9 +98,11 @@
     <circle
       :cx="anchorPoint.x"
       :cy="anchorPoint.y"
-      r="5"
+      r="8"
       fill="#00ff00"
       opacity="0.8"
+      :style="{ pointerEvents: 'auto', cursor: isDraggingAnchor ? 'grabbing' : 'grab' }"
+      @mousedown.stop="startAnchorDrag"
     />
   </svg>
 </template>
@@ -140,6 +142,8 @@ const emit = defineEmits<{
     format: PixelFormat,
     splitComponents: boolean
   }]
+  dragStateChanged: [dragging: boolean]
+  anchorDrag: [position: { x: number, y: number }]
 }>()
 
 // Component state
@@ -156,6 +160,9 @@ const localSplitComponents = ref(props.initialSplitComponents)
 // Dragging state
 const isDragging = ref(false)
 const dragStart = ref({ x: 0, y: 0 })
+
+// Anchor dragging state
+const isDraggingAnchor = ref(false)
 
 // Resizing state
 const isResizing = ref(false)
@@ -183,6 +190,7 @@ function startDrag(e: MouseEvent) {
   if ((e.target as HTMLElement).classList.contains('viewer-header') ||
       (e.target as HTMLElement).classList.contains('viewer-title')) {
     isDragging.value = true
+    emit('dragStateChanged', true)
     dragStart.value = {
       x: e.clientX - position.value.x,
       y: e.clientY - position.value.y
@@ -203,17 +211,31 @@ function handleMouseMove(e: MouseEvent) {
     size.value = { width: newWidth, height: newHeight }
     localWidth.value = newWidth
     localHeight.value = newHeight
+  } else if (isDraggingAnchor.value) {
+    // When dragging anchor, update the viewer's offset based on mouse position
+    emit('anchorDrag', { x: e.clientX, y: e.clientY })
   }
 }
 
 function handleMouseUp() {
-  isDragging.value = false
-  isResizing.value = false
+  if (isDragging.value) {
+    isDragging.value = false
+    emit('dragStateChanged', false)
+  }
+  if (isResizing.value) {
+    isResizing.value = false
+    emit('dragStateChanged', false)
+  }
+  if (isDraggingAnchor.value) {
+    isDraggingAnchor.value = false
+    emit('dragStateChanged', false)
+  }
 }
 
 // Resize handling
 function startResize(e: MouseEvent) {
   isResizing.value = true
+  emit('dragStateChanged', true)
   resizeStart.value = {
     x: e.clientX,
     y: e.clientY,
@@ -221,6 +243,14 @@ function startResize(e: MouseEvent) {
     height: size.value.height
   }
   e.preventDefault()
+}
+
+// Anchor dragging
+function startAnchorDrag(e: MouseEvent) {
+  isDraggingAnchor.value = true
+  emit('dragStateChanged', true)
+  e.preventDefault()
+  e.stopPropagation()
 }
 
 // Set initial random position

@@ -217,8 +217,8 @@
       v-for="viewer in miniViewers"
       :key="viewer.id"
       :id="viewer.id"
-      :memory-data="memoryData"
-      :offset="viewer.offset"
+      :memory-data="viewer.memoryData || memoryData"
+      :offset="0"
       :initial-width="viewer.width"
       :initial-height="viewer.height"
       :initial-format="viewer.format"
@@ -228,6 +228,8 @@
       :show-leader="true"
       @close="closeMiniViewer(viewer.id)"
       @update-config="(config) => updateMiniViewer(viewer.id, config)"
+      @drag-state-changed="(dragging) => viewer.isDragging = dragging"
+      @anchor-drag="(pos) => handleAnchorDrag(viewer.id, pos)"
     />
 
     <!-- Status Bar -->
@@ -286,6 +288,8 @@ interface MiniViewer {
   splitComponents: boolean
   title: string
   anchorPoint: { x: number, y: number } | null
+  isDragging?: boolean
+  memoryData?: Uint8Array
 }
 
 const miniViewers = ref<MiniViewer[]>([])
@@ -597,7 +601,7 @@ function getCanvasPositionFromOffset(offset: number): { x: number, y: number } |
 }
 
 // Mini viewer functions
-function createMiniViewer() {
+async function createMiniViewer() {
   const initialAnchor = getCanvasPositionFromOffset(contextMenuOffset.value) || contextMenuPosition.value
 
   const viewer: MiniViewer = {
@@ -610,6 +614,10 @@ function createMiniViewer() {
     title: `Viewer @ 0x${contextMenuOffset.value.toString(16).toUpperCase()}`,
     anchorPoint: initialAnchor
   }
+
+  // Load initial data for the viewer
+  await loadMiniViewerData(viewer)
+
   miniViewers.value.push(viewer)
 }
 
@@ -624,6 +632,67 @@ function updateMiniViewer(id: number, config: any) {
     viewer.height = config.height
     viewer.format = config.format
     viewer.splitComponents = config.splitComponents
+  }
+}
+
+async function handleAnchorDrag(id: number, mousePos: { x: number, y: number }) {
+  const viewer = miniViewers.value.find(v => v.id === id)
+  if (!viewer || !memoryData.value) return
+
+  // Convert mouse position to memory offset
+  const canvas = document.querySelector('.memory-canvas') as HTMLCanvasElement
+  if (!canvas) return
+
+  const rect = canvas.getBoundingClientRect()
+  const relX = mousePos.x - rect.left
+  const relY = mousePos.y - rect.top
+
+  // Calculate which memory offset this corresponds to
+  const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
+  const row = Math.floor((relY / canvasHeight.value) * displayHeight.value)
+  const col = Math.floor((relX / canvasWidth.value) * displayWidth.value)
+  const newOffset = currentOffset.value + row * displayWidth.value * bytesPerPixel + col * bytesPerPixel
+
+  // Update the viewer's offset
+  viewer.offset = newOffset
+  viewer.title = `Viewer @ 0x${newOffset.toString(16).toUpperCase()}`
+
+  // Load new data for this offset
+  await loadMiniViewerData(viewer)
+
+  // Update anchor position
+  viewer.anchorPoint = { x: mousePos.x, y: mousePos.y }
+}
+
+// Load data for a mini viewer at its offset
+async function loadMiniViewerData(viewer: MiniViewer) {
+  if (!isFileOpen.value) return
+
+  const bytesPerPixel = getBytesPerPixel(viewer.format)
+  const memorySize = viewer.width * viewer.height * bytesPerPixel
+
+  // Check if we have a dropped file
+  if ((window as any).__droppedFileData) {
+    const fullData = (window as any).__droppedFileData as Uint8Array
+    const endOffset = Math.min(viewer.offset + memorySize, fullData.length)
+    let data = fullData.slice(viewer.offset, endOffset)
+    if (data.length < memorySize) {
+      const padded = new Uint8Array(memorySize)
+      padded.set(data)
+      data = padded
+    }
+    viewer.memoryData = data
+  } else {
+    const data = await readMemoryChunk(viewer.offset, memorySize)
+    if (data) {
+      if (data.length < memorySize) {
+        const padded = new Uint8Array(memorySize)
+        padded.set(data)
+        viewer.memoryData = padded
+      } else {
+        viewer.memoryData = data
+      }
+    }
   }
 }
 
@@ -708,7 +777,17 @@ function formatHex(value: number): string {
 function startCanvasDrag(event: MouseEvent) {
   // Only start drag with left mouse button and if not clicking on controls
   if (event.button !== 0) return
-  if ((event.target as HTMLElement).tagName !== 'CANVAS') return
+
+  // Check if the click originated from within a mini viewer
+  const target = event.target as HTMLElement
+  if (target.closest('.mini-bitmap-viewer')) return // Don't drag if clicking on mini viewer
+
+  // Check if the target is the main memory canvas
+  if (target.tagName !== 'CANVAS') return
+  if (!target.classList.contains('memory-canvas')) return // Only drag on main canvas
+
+  // Don't start canvas drag if any mini viewer is being dragged
+  if (miniViewers.value.some(v => v.isDragging)) return
 
   isCanvasDragging.value = true
   canvasDragStart.value = {
@@ -721,6 +800,12 @@ function startCanvasDrag(event: MouseEvent) {
 
 function handleCanvasDrag(event: MouseEvent) {
   if (!isCanvasDragging.value) return
+
+  // Stop dragging if any mini viewer starts being dragged
+  if (miniViewers.value.some(v => v.isDragging)) {
+    stopCanvasDrag()
+    return
+  }
 
   const deltaX = event.clientX - canvasDragStart.value.x
   const deltaY = event.clientY - canvasDragStart.value.y
@@ -744,6 +829,8 @@ function handleCanvasDrag(event: MouseEvent) {
     sliderPosition.value = newOffset
     offsetInput.value = formatHex(newOffset)
     refreshMemory()
+    // Update anchors while dragging
+    updateMiniViewerAnchors()
   }
 }
 
@@ -760,22 +847,18 @@ watch([displayWidth, selectedFormat, splitComponents, columnMode, columnWidth, c
   }
 })
 
-// Update mini viewer anchor points when not dragging
+// Update mini viewer anchor points
 function updateMiniViewerAnchors() {
-  if (isCanvasDragging.value) return // Don't update while dragging
-
+  // Always update anchors, even during canvas drag
   miniViewers.value.forEach(viewer => {
     const newAnchor = getCanvasPositionFromOffset(viewer.offset)
     viewer.anchorPoint = newAnchor // Set to null if not visible
   })
 }
 
-// Update anchors when scrolling completes
+// Update anchors when offset changes
 watch(currentOffset, () => {
-  // Only update if not currently dragging
-  if (!isCanvasDragging.value) {
-    updateMiniViewerAnchors()
-  }
+  updateMiniViewerAnchors()
 })
 
 // Export for template
