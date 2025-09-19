@@ -334,10 +334,8 @@ const displayHeight = computed(() => {
 
 // Canvas dimensions (may differ from display dimensions)
 const canvasWidth = computed(() => {
-  if (columnMode.value) {
-    const numColumns = Math.ceil(displayHeight.value / canvasHeight.value)
-    return numColumns * (columnWidth.value + columnGap.value) - columnGap.value
-  }
+  // In column mode, canvas width should still be the full display width
+  // The renderer will handle column layout internally
   return displayWidth.value
 })
 
