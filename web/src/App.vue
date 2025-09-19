@@ -559,14 +559,23 @@ async function toggleQmpConnection() {
 function showContextMenu(event: MouseEvent) {
   if (!memoryData.value) return
 
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  const x = event.clientX - rect.left
-  const y = event.clientY - rect.top
+  // Get the actual canvas element, not the container
+  const canvas = document.querySelector('.memory-canvas') as HTMLCanvasElement
+  if (!canvas) return
+
+  const canvasRect = canvas.getBoundingClientRect()
+  const x = event.clientX - canvasRect.left
+  const y = event.clientY - canvasRect.top
+
+  // Check if click is actually on the canvas
+  if (x < 0 || y < 0 || x > canvasRect.width || y > canvasRect.height) {
+    return // Click was outside canvas
+  }
 
   // Calculate memory offset at click position
   const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
-  const row = Math.floor(y / canvasHeight.value * displayHeight.value)
-  const col = Math.floor(x / canvasWidth.value * displayWidth.value)
+  const row = Math.floor((y / canvasRect.height) * displayHeight.value)
+  const col = Math.floor((x / canvasRect.width) * displayWidth.value)
   const clickOffset = row * displayWidth.value * bytesPerPixel + col * bytesPerPixel
 
   contextMenuOffset.value = currentOffset.value + clickOffset
@@ -599,8 +608,8 @@ function getCanvasPositionFromOffset(offset: number): { x: number, y: number } |
   if (!canvas) return null
 
   const rect = canvas.getBoundingClientRect()
-  const x = rect.left + (col / displayWidth.value) * canvasWidth.value
-  const y = rect.top + (row / displayHeight.value) * canvasHeight.value
+  const x = rect.left + (col / displayWidth.value) * rect.width
+  const y = rect.top + (row / displayHeight.value) * rect.height
 
   return { x, y }
 }
@@ -654,10 +663,14 @@ async function handleAnchorDrag(id: number, mousePos: { x: number, y: number }) 
   const relX = mousePos.x - rect.left
   const relY = mousePos.y - rect.top
 
+  // Clamp to canvas bounds
+  const clampedX = Math.max(0, Math.min(rect.width - 1, relX))
+  const clampedY = Math.max(0, Math.min(rect.height - 1, relY))
+
   // Calculate which memory offset this corresponds to
   const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
-  const row = Math.floor((relY / canvasHeight.value) * displayHeight.value)
-  const col = Math.floor((relX / canvasWidth.value) * displayWidth.value)
+  const row = Math.floor((clampedY / rect.height) * displayHeight.value)
+  const col = Math.floor((clampedX / rect.width) * displayWidth.value)
   const newOffset = currentOffset.value + row * displayWidth.value * bytesPerPixel + col * bytesPerPixel
 
   // Update the viewer's offset
