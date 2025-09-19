@@ -1,5 +1,6 @@
 // Vue composable for WebAssembly memory renderer
-import { ref, onUnmounted } from 'vue'
+import { onUnmounted } from 'vue'
+import { wasmModule, wasmIsLoading, wasmError, sharedMemoryState, loadWasmModule } from './wasmSingleton'
 
 // Pixel format enum matching C++ PixelFormat::Type from common.h
 export enum PixelFormat {
@@ -17,115 +18,15 @@ export enum PixelFormat {
   CUSTOM = 11
 }
 
-interface MemoryRendererModule {
-  _renderMemoryToCanvas(
-    memoryData: number,  // Pointer to memory data
-    memorySize: number,
-    canvasBuffer: number,  // Pointer to canvas pixel buffer
-    canvasWidth: number,
-    canvasHeight: number,
-    sourceOffset: number,
-    displayWidth: number,
-    displayHeight: number,
-    stride: number,
-    format: number,
-    splitComponents: boolean,
-    columnMode: boolean,
-    columnWidth: number,
-    columnGap: number
-  ): void
-  _getFormatBytesPerPixel(format: number): number
-  _getExtendedFormat(format: number, splitComponents: boolean): number
-  _getFormatDescriptor(
-    extendedFormat: number,
-    bytesPerElement: number,
-    pixelsPerElementX: number,
-    pixelsPerElementY: number
-  ): void
-  _pixelToMemoryCoordinate(
-    pixelX: number, pixelY: number,
-    displayWidth: number, displayHeight: number,
-    stride: number,
-    format: number,
-    splitComponents: boolean,
-    columnMode: boolean,
-    columnWidth: number,
-    columnGap: number,
-    memoryX: number, memoryY: number
-  ): void
-  _allocateMemory(size: number): number
-  _allocatePixelBuffer(pixelCount: number): number
-  _freeMemory(ptr: number): void
-
-  HEAPU8: Uint8Array
-  HEAPU32: Uint32Array
-  ccall: Function
-  cwrap: Function
-}
-
 export function useWasmRenderer() {
-  const module = ref<MemoryRendererModule | null>(null)
-  const isLoading = ref(true)
-  const error = ref<string | null>(null)
+  // Use singleton module and state
+  const module = wasmModule
+  const isLoading = wasmIsLoading
+  const error = wasmError
 
-  // Pointers for allocated memory
-  let memoryPtr: number = 0
-  let canvasPtr: number = 0
-  let allocatedMemorySize = 0
-  let allocatedCanvasSize = 0
-
-  // Load the WASM module
-  async function loadModule() {
-    try {
-      console.log('Starting WASM module load...')
-      // Load the WASM module from public directory using script injection
-      // This will be created by running: npm run build-wasm
-      await loadWasmScript()
-      console.log('Script loaded, checking for MemoryRendererModule...')
-
-      // The script should have created a global MemoryRendererModule
-      if (typeof (window as any).MemoryRendererModule === 'undefined') {
-        throw new Error('MemoryRendererModule not found on window')
-      }
-
-      console.log('Found MemoryRendererModule, initializing...')
-      module.value = await (window as any).MemoryRendererModule() as MemoryRendererModule
-      console.log('WASM module initialized successfully:', module.value)
-
-      // No need to initialize - removed from wrapper
-
-      isLoading.value = false
-    } catch (err) {
-      error.value = `WASM module not found. Run "npm run build-wasm" to build it.`
-      console.error('Failed to load WASM module:', err)
-      isLoading.value = false
-    }
-  }
-
-  // Helper to load WASM script dynamically
-  function loadWasmScript(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Check if already loaded
-      if ((window as any).MemoryRendererModule) {
-        console.log('MemoryRendererModule already loaded')
-        resolve()
-        return
-      }
-
-      const script = document.createElement('script')
-      script.src = '/wasm/memory_renderer.js'
-      console.log('Loading WASM script from:', script.src)
-      script.onload = () => {
-        console.log('WASM script loaded successfully')
-        resolve()
-      }
-      script.onerror = (err) => {
-        console.error('Failed to load WASM script:', err)
-        reject(new Error('Failed to load WASM script'))
-      }
-      document.head.appendChild(script)
-    })
-  }
+  // Use shared memory pointers
+  const memoryPtr = () => sharedMemoryState.memoryPtr
+  const canvasPtr = () => sharedMemoryState.canvasPtr
 
   // Render memory to canvas
   function renderMemory(
@@ -143,21 +44,33 @@ export function useWasmRenderer() {
       columnGap?: number
     } = {}
   ) {
-    if (!module.value) {
-      console.warn('WASM module not loaded yet')
-      return
-    }
+    try {
+      if (!canvas) {
+        console.warn('Canvas element not provided')
+        return
+      }
 
-    if (!canvas) {
-      console.warn('Canvas element not provided')
-      return
-    }
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        console.error('Could not get canvas context')
+        return
+      }
 
-    const ctx = canvas.getContext('2d')
-    if (!ctx) {
-      console.error('Could not get canvas context')
-      return
-    }
+      // If module isn't loaded or has issues, show placeholder
+      if (!module.value || !module.value.HEAPU8) {
+        // Don't set error here - module might still be loading
+        // Draw a simple placeholder pattern
+        const imageData = ctx.createImageData(canvas.width, canvas.height)
+        const data = imageData.data
+        for (let i = 0; i < data.length; i += 4) {
+          data[i] = 64     // R
+          data[i + 1] = 64 // G
+          data[i + 2] = 64 // B
+          data[i + 3] = 255 // A
+        }
+        ctx.putImageData(imageData, 0, 0)
+        return
+      }
 
     // Check if this is the placeholder module
     if (!module.value.HEAPU8 || module.value.HEAPU8.length === 0) {
@@ -206,33 +119,60 @@ export function useWasmRenderer() {
       columnGap = 0
     } = params
 
-    // Ensure memory is allocated with correct size
-    if (memoryData.length > allocatedMemorySize) {
-      if (memoryPtr) {
-        module.value._freeMemory(memoryPtr)
-      }
-      memoryPtr = module.value._allocateMemory(memoryData.length)
-      allocatedMemorySize = memoryData.length
+    // Validate memory data
+    if (!memoryData || memoryData.length === 0) {
+      console.warn('No memory data to render')
+      // Clear canvas
+      ctx.clearRect(0, 0, canvasWidth, canvasHeight)
+      return
     }
 
-    // Ensure canvas buffer is allocated
-    const requiredCanvasSize = canvasWidth * canvasHeight
-    if (requiredCanvasSize > allocatedCanvasSize) {
-      if (canvasPtr) {
-        module.value._freeMemory(canvasPtr)
+    // Only reallocate if size changed
+    if (memoryData.length > sharedMemoryState.allocatedMemorySize || sharedMemoryState.allocatedMemorySize === 0) {
+      if (sharedMemoryState.memoryPtr) {
+        module.value._freeMemory(sharedMemoryState.memoryPtr)
+        sharedMemoryState.memoryPtr = 0
       }
-      canvasPtr = module.value._allocatePixelBuffer(requiredCanvasSize)
-      allocatedCanvasSize = requiredCanvasSize
+
+      // Allocate a bit extra to avoid frequent reallocations
+      const allocSize = Math.max(memoryData.length, 1024 * 1024) // At least 1MB
+      sharedMemoryState.memoryPtr = module.value._allocateMemory(allocSize)
+      sharedMemoryState.allocatedMemorySize = allocSize
+
+      if (!sharedMemoryState.memoryPtr) {
+        console.error('Failed to allocate memory for data')
+        return
+      }
+    }
+
+    // Only reallocate canvas buffer if size changed
+    const requiredCanvasSize = canvasWidth * canvasHeight
+    if (requiredCanvasSize > sharedMemoryState.allocatedCanvasSize || sharedMemoryState.allocatedCanvasSize === 0) {
+      if (sharedMemoryState.canvasPtr) {
+        module.value._freeMemory(sharedMemoryState.canvasPtr)
+        sharedMemoryState.canvasPtr = 0
+      }
+
+      // Allocate exact size for canvas
+      sharedMemoryState.canvasPtr = module.value._allocatePixelBuffer(requiredCanvasSize)
+      sharedMemoryState.allocatedCanvasSize = requiredCanvasSize
+
+      if (!sharedMemoryState.canvasPtr) {
+        console.error('Failed to allocate canvas buffer')
+        return
+      }
     }
 
     // Copy memory data to WASM heap
-    module.value.HEAPU8.set(memoryData, memoryPtr)
+    if (memoryData.length > 0) {
+      module.value.HEAPU8.set(memoryData, sharedMemoryState.memoryPtr)
+    }
 
     // Call the renderer
     module.value._renderMemoryToCanvas(
-      memoryPtr,
+      sharedMemoryState.memoryPtr,
       memoryData.length,
-      canvasPtr,
+      sharedMemoryState.canvasPtr,
       canvasWidth,
       canvasHeight,
       sourceOffset,
@@ -250,7 +190,7 @@ export function useWasmRenderer() {
     const imageData = ctx.createImageData(canvasWidth, canvasHeight)
     const pixels = new Uint32Array(
       module.value.HEAPU32.buffer,
-      canvasPtr,
+      sharedMemoryState.canvasPtr,
       canvasWidth * canvasHeight
     )
 
@@ -259,6 +199,15 @@ export function useWasmRenderer() {
     data32.set(pixels)
 
     ctx.putImageData(imageData, 0, 0)
+    } catch (err) {
+      console.warn('Error rendering memory:', err)
+      // Don't set error.value here - this is a rendering issue, not a module loading issue
+      // Just clear the canvas
+      const ctx = canvas.getContext('2d')
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+      }
+    }
   }
 
   // Convert pixel coordinates to memory coordinates
@@ -285,7 +234,7 @@ export function useWasmRenderer() {
       return { x: pixelX, y: pixelY }
     }
 
-    // Allocate space for output values
+    // Allocate space for output values (use temporary allocations)
     const memXPtr = module.value._allocateMemory(4)
     const memYPtr = module.value._allocateMemory(4)
 
@@ -320,20 +269,8 @@ export function useWasmRenderer() {
     return module.value._getFormatBytesPerPixel(format)
   }
 
-  // Cleanup on unmount
-  onUnmounted(() => {
-    if (module.value) {
-      if (memoryPtr) {
-        module.value._freeMemory(memoryPtr)
-      }
-      if (canvasPtr) {
-        module.value._freeMemory(canvasPtr)
-      }
-    }
-  })
-
-  // Load module on creation
-  loadModule()
+  // No cleanup needed - shared memory is managed by singleton
+  // Load is handled by singleton on first import
 
   return {
     isLoading,

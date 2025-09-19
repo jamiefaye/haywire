@@ -17,7 +17,7 @@
 
     <!-- Controls -->
     <div class="viewer-controls">
-      <select v-model.number="localFormat" @change="updateFormat" class="format-select">
+      <select v-model.number="localFormat" class="format-select">
         <option :value="PixelFormat.RGB888">RGB888</option>
         <option :value="PixelFormat.RGBA8888">RGBA8888</option>
         <option :value="PixelFormat.BGR888">BGR888</option>
@@ -32,14 +32,13 @@
       </select>
 
       <label class="checkbox-label">
-        <input type="checkbox" v-model="localSplitComponents" @change="updateSplitComponents">
+        <input type="checkbox" v-model="localSplitComponents">
         Split
       </label>
 
       <input
         type="number"
         v-model.number="localWidth"
-        @change="updateDimensions"
         class="dimension-input"
         min="1"
         max="1024"
@@ -49,7 +48,6 @@
       <input
         type="number"
         v-model.number="localHeight"
-        @change="updateDimensions"
         class="dimension-input"
         min="1"
         max="1024"
@@ -108,7 +106,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useWasmRenderer, PixelFormat } from '../composables/useWasmRenderer'
 
 interface Props {
@@ -180,26 +178,6 @@ function doRender() {
   }
 }
 
-// Update functions
-function updateFormat() {
-  emit('updateConfig', {
-    width: localWidth.value,
-    height: localHeight.value,
-    format: localFormat.value,
-    splitComponents: localSplitComponents.value
-  })
-  doRender()
-}
-
-function updateSplitComponents() {
-  updateFormat()
-}
-
-function updateDimensions() {
-  size.value = { width: localWidth.value, height: localHeight.value }
-  updateFormat()
-}
-
 // Drag handling
 function startDrag(e: MouseEvent) {
   if ((e.target as HTMLElement).classList.contains('viewer-header') ||
@@ -229,9 +207,6 @@ function handleMouseMove(e: MouseEvent) {
 }
 
 function handleMouseUp() {
-  if (isResizing.value) {
-    updateDimensions()
-  }
   isDragging.value = false
   isResizing.value = false
 }
@@ -277,6 +252,26 @@ watch(() => props.memoryData, () => {
 
 // Watch for offset changes
 watch(() => props.offset, () => {
+  doRender()
+})
+
+// Watch for dimension changes - auto-update when width or height changes
+watch([localWidth, localHeight], () => {
+  size.value = { width: localWidth.value, height: localHeight.value }
+  emit('updateConfig', {
+    width: localWidth.value,
+    height: localHeight.value,
+    format: localFormat.value,
+    splitComponents: localSplitComponents.value
+  })
+  // Use nextTick to ensure canvas is resized before rendering
+  nextTick(() => {
+    doRender()
+  })
+})
+
+// Watch for format changes
+watch([localFormat, localSplitComponents], () => {
   doRender()
 })
 </script>

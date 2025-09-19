@@ -74,7 +74,7 @@ function doRender() {
 // Re-render when memory data changes
 watch(() => props.memoryData, () => {
   nextTick(doRender)
-})
+}, { deep: true })
 
 // Also re-render when other props change
 watch([
@@ -82,7 +82,8 @@ watch([
   () => props.splitComponents,
   () => props.columnMode,
   () => props.columnWidth,
-  () => props.columnGap
+  () => props.columnGap,
+  () => props.sourceOffset
 ], () => {
   nextTick(doRender)
 })

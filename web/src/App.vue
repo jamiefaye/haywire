@@ -47,27 +47,6 @@
           >
         </label>
 
-        <label>
-          Height:
-          <input
-            type="number"
-            v-model.number="displayHeight"
-            min="1"
-            max="4096"
-            class="number-input"
-          >
-        </label>
-
-        <label>
-          Stride:
-          <input
-            type="number"
-            v-model.number="stride"
-            min="0"
-            max="8192"
-            class="number-input"
-          >
-        </label>
       </div>
 
       <div class="control-group">
@@ -116,7 +95,6 @@
           🔄 Refresh
         </button>
       </div>
-
       <div class="control-group status">
         <span v-if="qmpConnected" class="status-indicator connected">
           ● QMP Connected
@@ -130,18 +108,75 @@
       </div>
     </div>
 
-    <!-- Memory Canvas -->
-    <div class="canvas-container" @contextmenu.prevent="showContextMenu">
+    <!-- Main Content Area -->
+    <div class="main-content">
+      <!-- Left Sidebar with Address Slider -->
+      <div v-if="isFileOpen" class="address-slider-sidebar">
+        <button
+          @mousedown="startAutoRepeat(pageUp)"
+          @mouseup="stopAutoRepeat"
+          @mouseleave="stopAutoRepeat"
+          @touchstart="startAutoRepeat(pageUp)"
+          @touchend="stopAutoRepeat"
+          class="nav-button"
+          title="Page up (↑) - Hold to repeat"
+        >
+          ⬆
+        </button>
+
+        <div class="slider-container">
+          <input
+            type="range"
+            :value="invertedSliderPosition"
+            @input="onInvertedSliderChange"
+            :min="0"
+            :max="maxSliderPosition"
+            :step="1"
+            class="address-slider-vertical"
+            orient="vertical"
+          >
+          <div class="slider-track"></div>
+        </div>
+
+        <button
+          @mousedown="startAutoRepeat(pageDown)"
+          @mouseup="stopAutoRepeat"
+          @mouseleave="stopAutoRepeat"
+          @touchstart="startAutoRepeat(pageDown)"
+          @touchend="stopAutoRepeat"
+          class="nav-button"
+          title="Page down (↓) - Hold to repeat"
+        >
+          ⬇
+        </button>
+
+        <div class="slider-address">
+          <div>{{ formatHex(currentOffset) }}</div>
+          <div class="separator">━</div>
+          <div>{{ formatHex(fileSize) }}</div>
+        </div>
+      </div>
+
+      <!-- Memory Canvas -->
+    <div
+      class="canvas-container"
+      @contextmenu.prevent="showContextMenu"
+      @dragover.prevent="onDragOver"
+      @drop.prevent="onDrop"
+      @dragleave="onDragLeave"
+      @mousedown="startCanvasDrag"
+      :class="{ 'drag-over': isDraggingFile, 'dragging': isCanvasDragging }"
+    >
       <MemoryCanvas
         v-if="memoryData"
         ref="memoryCanvasRef"
-        :key="`canvas-${currentOffset}-${selectedFormat}`"
+        :key="`canvas-${selectedFormat}`"
         :memory-data="memoryData"
         :width="canvasWidth"
         :height="canvasHeight"
         :format="selectedFormat"
-        :source-offset="currentOffset"
-        :stride="stride || displayWidth"
+        :source-offset="0"
+        :stride="displayWidth"
         :split-components="splitComponents"
         :column-mode="columnMode"
         :column-width="columnWidth"
@@ -156,6 +191,7 @@
         Open a memory file to begin
       </div>
     </div>
+    </div> <!-- End of main-content -->
 
     <!-- Context Menu -->
     <div
@@ -210,7 +246,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import MemoryCanvas from './components/MemoryCanvas.vue'
 import MiniBitmapViewer from './components/MiniBitmapViewer.vue'
 import { useFileSystemAPI } from './composables/useFileSystemAPI'
@@ -260,15 +296,32 @@ const contextMenuVisible = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
 const contextMenuOffset = ref(0)
 
+// Drag and drop
+const isDraggingFile = ref(false)
+
+// Canvas dragging for scrolling
+const isCanvasDragging = ref(false)
+const canvasDragStart = ref({ x: 0, y: 0, offset: 0 })
+
+// Auto-repeat for navigation buttons
+let autoRepeatInterval: number | null = null
+let autoRepeatTimeout: number | null = null
+
 // Display settings
 const displayWidth = ref(1024)
-const displayHeight = ref(768)
-const stride = ref(0)
+// Height will be computed based on canvas container
+const canvasContainerHeight = ref(768)
 const selectedFormat = ref(PixelFormat.BGR888) // Start with BGR888 since user said it was working
 const splitComponents = ref(false)
 const columnMode = ref(false)
 const columnWidth = ref(256)
 const columnGap = ref(8)
+
+// Display height is based on actual canvas container size
+const displayHeight = computed(() => {
+  // Use the container height, but reasonable default
+  return canvasContainerHeight.value
+})
 
 // Canvas dimensions (may differ from display dimensions)
 const canvasWidth = computed(() => {
@@ -286,6 +339,23 @@ const canvasHeight = computed(() => {
 // Offset handling
 const currentOffset = ref(0)
 const offsetInput = ref('0x0')
+const sliderPosition = ref(0)
+
+// Slider computed values
+const pageSize = computed(() => {
+  const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
+  return displayWidth.value * displayHeight.value * bytesPerPixel
+})
+
+const maxSliderPosition = computed(() => {
+  // Simply use the full file size
+  return fileSize.value || 0
+})
+
+// Inverted slider position (top = 0, bottom = max)
+const invertedSliderPosition = computed(() => {
+  return maxSliderPosition.value - sliderPosition.value
+})
 
 // Interaction state
 const hoveredOffset = ref<number | null>(null)
@@ -318,12 +388,42 @@ async function refreshMemory() {
 
   // Calculate how much memory to read based on display settings
   const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
-  const effectiveStride = stride.value || displayWidth.value
-  const memorySize = effectiveStride * displayHeight.value * bytesPerPixel
+  const memorySize = displayWidth.value * displayHeight.value * bytesPerPixel
 
-  const data = await readMemoryChunk(currentOffset.value, memorySize)
-  if (data) {
+  // Ensure offset is within bounds (0 to file size)
+  if (currentOffset.value < 0) {
+    currentOffset.value = 0
+  }
+  if (currentOffset.value >= fileSize.value) {
+    // Allow viewing at the end of file, but clamp to last valid position
+    currentOffset.value = Math.max(0, fileSize.value - 1)
+  }
+
+  // Check if we have a dropped file
+  if ((window as any).__droppedFileData) {
+    const fullData = (window as any).__droppedFileData as Uint8Array
+    const endOffset = Math.min(currentOffset.value + memorySize, fullData.length)
+
+    // If we're at the end and don't have enough data, pad with zeros
+    let data = fullData.slice(currentOffset.value, endOffset)
+    if (data.length < memorySize) {
+      const padded = new Uint8Array(memorySize)
+      padded.set(data)
+      data = padded
+    }
     memoryData.value = data
+  } else {
+    const data = await readMemoryChunk(currentOffset.value, memorySize)
+    if (data) {
+      // Ensure we have the full size requested, pad if necessary
+      if (data.length < memorySize) {
+        const padded = new Uint8Array(memorySize)
+        padded.set(data)
+        memoryData.value = padded
+      } else {
+        memoryData.value = data
+      }
+    }
   }
 }
 
@@ -338,7 +438,92 @@ function updateOffset() {
     currentOffset.value = parseInt(value, 10) || 0
   }
 
+  // Update slider position
+  sliderPosition.value = currentOffset.value
+
   refreshMemory()
+}
+
+// Slider control functions
+function onSliderChange() {
+  const newOffset = Math.floor(sliderPosition.value)
+  if (newOffset !== currentOffset.value) {
+    currentOffset.value = newOffset
+    offsetInput.value = `0x${newOffset.toString(16).toUpperCase()}`
+    refreshMemory()
+  }
+}
+
+function onInvertedSliderChange(event: Event) {
+  // Get the inverted value from the slider
+  const invertedValue = parseInt((event.target as HTMLInputElement).value)
+  // Convert inverted position back to normal position
+  const newOffset = Math.floor(maxSliderPosition.value - invertedValue)
+  if (newOffset !== currentOffset.value) {
+    currentOffset.value = newOffset
+    sliderPosition.value = newOffset
+    offsetInput.value = `0x${newOffset.toString(16).toUpperCase()}`
+    refreshMemory()
+  }
+}
+
+function jumpToStart() {
+  currentOffset.value = 0
+  sliderPosition.value = 0
+  offsetInput.value = '0x0'
+  refreshMemory()
+}
+
+function jumpToEnd() {
+  // Jump to the last page that shows data
+  const lastPageOffset = Math.max(0, fileSize.value - pageSize.value)
+  currentOffset.value = lastPageOffset
+  sliderPosition.value = lastPageOffset
+  offsetInput.value = `0x${lastPageOffset.toString(16).toUpperCase()}`
+  refreshMemory()
+}
+
+function pageUp() {
+  const newOffset = Math.max(0, currentOffset.value - pageSize.value)
+  currentOffset.value = newOffset
+  sliderPosition.value = newOffset
+  offsetInput.value = `0x${newOffset.toString(16).toUpperCase()}`
+  refreshMemory()
+}
+
+function pageDown() {
+  const newOffset = Math.min(fileSize.value - 1, currentOffset.value + pageSize.value)
+  currentOffset.value = newOffset
+  sliderPosition.value = newOffset
+  offsetInput.value = `0x${newOffset.toString(16).toUpperCase()}`
+  refreshMemory()
+}
+
+// Auto-repeat navigation functions
+function startAutoRepeat(action: () => void) {
+  // Clear any existing intervals
+  stopAutoRepeat()
+
+  // Execute the action immediately
+  action()
+
+  // Start auto-repeat after initial delay
+  autoRepeatTimeout = window.setTimeout(() => {
+    autoRepeatInterval = window.setInterval(() => {
+      action()
+    }, 50) // Repeat every 50ms (20Hz)
+  }, 300) // Initial delay of 300ms
+}
+
+function stopAutoRepeat() {
+  if (autoRepeatTimeout) {
+    window.clearTimeout(autoRepeatTimeout)
+    autoRepeatTimeout = null
+  }
+  if (autoRepeatInterval) {
+    window.clearInterval(autoRepeatInterval)
+    autoRepeatInterval = null
+  }
 }
 
 // Handle memory click
@@ -373,7 +558,7 @@ function showContextMenu(event: MouseEvent) {
   const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
   const row = Math.floor(y / canvasHeight.value * displayHeight.value)
   const col = Math.floor(x / canvasWidth.value * displayWidth.value)
-  const clickOffset = row * (stride.value || displayWidth.value) * bytesPerPixel + col * bytesPerPixel
+  const clickOffset = row * displayWidth.value * bytesPerPixel + col * bytesPerPixel
 
   contextMenuOffset.value = currentOffset.value + clickOffset
   contextMenuPosition.value = { x: event.clientX, y: event.clientY }
@@ -384,8 +569,37 @@ function hideContextMenu() {
   contextMenuVisible.value = false
 }
 
+// Calculate canvas position from memory offset
+function getCanvasPositionFromOffset(offset: number): { x: number, y: number } | null {
+  // Check if offset is visible in current view
+  const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
+  const bytesPerRow = displayWidth.value * bytesPerPixel
+  const viewSize = displayWidth.value * displayHeight.value * bytesPerPixel
+
+  if (offset < currentOffset.value || offset >= currentOffset.value + viewSize) {
+    return null // Offset not visible in current view
+  }
+
+  // Calculate position relative to current view
+  const relativeOffset = offset - currentOffset.value
+  const row = Math.floor(relativeOffset / bytesPerRow)
+  const col = Math.floor((relativeOffset % bytesPerRow) / bytesPerPixel)
+
+  // Get canvas element position
+  const canvas = document.querySelector('.memory-canvas') as HTMLCanvasElement
+  if (!canvas) return null
+
+  const rect = canvas.getBoundingClientRect()
+  const x = rect.left + (col / displayWidth.value) * canvasWidth.value
+  const y = rect.top + (row / displayHeight.value) * canvasHeight.value
+
+  return { x, y }
+}
+
 // Mini viewer functions
 function createMiniViewer() {
+  const initialAnchor = getCanvasPositionFromOffset(contextMenuOffset.value) || contextMenuPosition.value
+
   const viewer: MiniViewer = {
     id: nextViewerId++,
     offset: contextMenuOffset.value,
@@ -394,7 +608,7 @@ function createMiniViewer() {
     format: selectedFormat.value,
     splitComponents: splitComponents.value,
     title: `Viewer @ 0x${contextMenuOffset.value.toString(16).toUpperCase()}`,
-    anchorPoint: { x: contextMenuPosition.value.x, y: contextMenuPosition.value.y }
+    anchorPoint: initialAnchor
   }
   miniViewers.value.push(viewer)
 }
@@ -417,6 +631,41 @@ function copyAddress() {
   const address = `0x${contextMenuOffset.value.toString(16).toUpperCase()}`
   navigator.clipboard.writeText(address)
   console.log('Copied address:', address)
+}
+
+// Drag and drop handlers
+function onDragOver(event: DragEvent) {
+  isDraggingFile.value = true
+}
+
+function onDragLeave() {
+  isDraggingFile.value = false
+}
+
+async function onDrop(event: DragEvent) {
+  isDraggingFile.value = false
+
+  const files = event.dataTransfer?.files
+  if (!files || files.length === 0) return
+
+  const file = files[0]
+  console.log('Dropped file:', file.name, 'Size:', file.size)
+
+  // Create a synthetic file handle from the dropped file
+  isLoadingFile.value = true
+  fileName.value = file.name
+  fileSize.value = file.size
+
+  // Read the file content directly
+  const arrayBuffer = await file.arrayBuffer()
+  const data = new Uint8Array(arrayBuffer)
+
+  // Store for memory reading
+  (window as any).__droppedFileData = data
+
+  isFileOpen.value = true
+  await refreshMemory()
+  isLoadingFile.value = false
 }
 
 // Helper: Get bytes per pixel for format
@@ -450,19 +699,186 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
+// Helper: Format hex address
+function formatHex(value: number): string {
+  return '0x' + value.toString(16).toUpperCase().padStart(8, '0')
+}
+
+// Canvas drag scrolling
+function startCanvasDrag(event: MouseEvent) {
+  // Only start drag with left mouse button and if not clicking on controls
+  if (event.button !== 0) return
+  if ((event.target as HTMLElement).tagName !== 'CANVAS') return
+
+  isCanvasDragging.value = true
+  canvasDragStart.value = {
+    x: event.clientX,
+    y: event.clientY,
+    offset: currentOffset.value
+  }
+  event.preventDefault()
+}
+
+function handleCanvasDrag(event: MouseEvent) {
+  if (!isCanvasDragging.value) return
+
+  const deltaX = event.clientX - canvasDragStart.value.x
+  const deltaY = event.clientY - canvasDragStart.value.y
+
+  const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
+  const bytesPerRow = displayWidth.value * bytesPerPixel
+
+  // Vertical: move by full width (in bytes) per pixel of drag
+  // Horizontal: move by the mouse motion amount in bytes
+  const verticalDelta = -deltaY * bytesPerRow
+  const horizontalDelta = -deltaX * bytesPerPixel  // Negative so dragging right decreases offset
+
+  // Combine both deltas
+  const offsetDelta = verticalDelta + horizontalDelta
+
+  const newOffset = Math.max(0, Math.min(fileSize.value - 1,
+    Math.floor(canvasDragStart.value.offset + offsetDelta)))
+
+  if (newOffset !== currentOffset.value) {
+    currentOffset.value = newOffset
+    sliderPosition.value = newOffset
+    offsetInput.value = formatHex(newOffset)
+    refreshMemory()
+  }
+}
+
+function stopCanvasDrag() {
+  isCanvasDragging.value = false
+  // Update anchor points after drag completes
+  updateMiniViewerAnchors()
+}
+
 // Watch for display changes
-watch([displayWidth, displayHeight, stride, selectedFormat, splitComponents, columnMode, columnWidth, columnGap], () => {
+watch([displayWidth, selectedFormat, splitComponents, columnMode, columnWidth, columnGap], () => {
   if (isFileOpen.value) {
     refreshMemory()
+  }
+})
+
+// Update mini viewer anchor points when not dragging
+function updateMiniViewerAnchors() {
+  if (isCanvasDragging.value) return // Don't update while dragging
+
+  miniViewers.value.forEach(viewer => {
+    const newAnchor = getCanvasPositionFromOffset(viewer.offset)
+    viewer.anchorPoint = newAnchor // Set to null if not visible
+  })
+}
+
+// Update anchors when scrolling completes
+watch(currentOffset, () => {
+  // Only update if not currently dragging
+  if (!isCanvasDragging.value) {
+    updateMiniViewerAnchors()
   }
 })
 
 // Export for template
 const PixelFormatExport = PixelFormat
 
-// Auto-connect to QMP on mount
-onMounted(() => {
-  connectQmp().catch(console.error)
+// Keyboard shortcuts
+function handleKeyboard(event: KeyboardEvent) {
+  if (!isFileOpen.value) return
+
+  switch(event.key) {
+    case 'ArrowUp':
+      if (event.metaKey || event.ctrlKey) {
+        jumpToStart()
+      } else {
+        pageUp()
+      }
+      event.preventDefault()
+      break
+    case 'ArrowDown':
+      if (event.metaKey || event.ctrlKey) {
+        jumpToEnd()
+      } else {
+        pageDown()
+      }
+      event.preventDefault()
+      break
+    case 'PageUp':
+      pageUp()
+      event.preventDefault()
+      break
+    case 'PageDown':
+      pageDown()
+      event.preventDefault()
+      break
+    case 'Home':
+      jumpToStart()
+      event.preventDefault()
+      break
+    case 'End':
+      jumpToEnd()
+      event.preventDefault()
+      break
+  }
+}
+
+// Setup on mount
+onMounted(async () => {
+  // Don't auto-connect to QMP since we're not using VA to PA translation yet
+  // connectQmp().catch(console.error)
+
+  // Add event listeners
+  window.addEventListener('keydown', handleKeyboard)
+  window.addEventListener('mousemove', handleCanvasDrag)
+  window.addEventListener('mouseup', stopCanvasDrag)
+
+  // Wait for DOM to be ready
+  await nextTick()
+
+  // Observe canvas container size
+  const canvasContainer = document.querySelector('.canvas-container')
+  if (canvasContainer) {
+    // Get initial size
+    const rect = canvasContainer.getBoundingClientRect()
+    const initialHeight = Math.floor(rect.height - 40) // Subtract padding
+    if (initialHeight > 0) {
+      canvasContainerHeight.value = initialHeight
+
+      // Refresh if file is already open
+      if (isFileOpen.value) {
+        await refreshMemory()
+      }
+    }
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const newHeight = Math.floor(entry.contentRect.height - 40) // Subtract padding
+        if (newHeight > 0 && newHeight !== canvasContainerHeight.value) {
+          canvasContainerHeight.value = newHeight
+          if (isFileOpen.value) {
+            refreshMemory()
+          }
+        }
+      }
+    })
+    resizeObserver.observe(canvasContainer)
+
+    // Store observer for cleanup
+    (window as any).__canvasResizeObserver = resizeObserver
+  }
+})
+
+// Cleanup
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeyboard)
+  window.removeEventListener('mousemove', handleCanvasDrag)
+  window.removeEventListener('mouseup', stopCanvasDrag)
+  stopAutoRepeat() // Clean up any active auto-repeat
+
+  // Clean up ResizeObserver
+  if ((window as any).__canvasResizeObserver) {
+    (window as any).__canvasResizeObserver.disconnect()
+    delete (window as any).__canvasResizeObserver
+  }
 })
 </script>
 
@@ -578,6 +994,126 @@ button:disabled {
   color: #f48771;
 }
 
+/* Main content layout */
+.main-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Left sidebar with vertical slider */
+.address-slider-sidebar {
+  width: 60px;
+  background: #2d2d30;
+  border-right: 1px solid #3e3e42;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 15px 0;
+  gap: 10px;
+}
+
+.nav-button {
+  background: #3c3c3c;
+  border: 1px solid #555;
+  color: #e0e0e0;
+  width: 40px;
+  height: 32px;
+  font-size: 16px;
+  cursor: pointer;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-button:hover {
+  background: #4c4c4c;
+}
+
+.slider-container {
+  flex: 1;
+  position: relative;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 10px 0;
+}
+
+.slider-track {
+  position: absolute;
+  width: 4px;
+  height: 100%;
+  background: #3c3c3c;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.address-slider-vertical {
+  writing-mode: bt-lr; /* IE */
+  -webkit-appearance: slider-vertical; /* WebKit */
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+}
+
+/* Webkit browsers */
+.address-slider-vertical::-webkit-slider-track {
+  width: 4px;
+  background: transparent;
+}
+
+.address-slider-vertical::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  background: #0e639c;
+  cursor: pointer;
+  border-radius: 50%;
+  border: 2px solid #1177bb;
+  position: relative;
+  z-index: 1;
+}
+
+.address-slider-vertical::-webkit-slider-thumb:hover {
+  background: #1177bb;
+  border-color: #1e8ad6;
+}
+
+/* Firefox */
+.address-slider-vertical::-moz-range-track {
+  width: 4px;
+  background: transparent;
+}
+
+.address-slider-vertical::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  background: #0e639c;
+  cursor: pointer;
+  border-radius: 50%;
+  border: 2px solid #1177bb;
+  border: none;
+}
+
+.slider-address {
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  color: #e0e0e0;
+  text-align: center;
+  padding: 5px;
+}
+
+.slider-address .separator {
+  margin: 2px 0;
+  color: #666;
+  font-size: 8px;
+}
+
 .canvas-container {
   flex: 1;
   overflow: auto;
@@ -586,6 +1122,36 @@ button:disabled {
   justify-content: center;
   align-items: center;
   padding: 20px;
+  position: relative;
+  transition: background-color 0.2s;
+}
+
+.canvas-container.drag-over {
+  background: #2a4a2a;
+  border: 2px dashed #4ec9b0;
+}
+
+.canvas-container.drag-over::after {
+  content: '📁 Drop memory file here';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 24px;
+  color: #4ec9b0;
+  pointer-events: none;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.8);
+  padding: 20px 40px;
+  border-radius: 8px;
+}
+
+.canvas-container.dragging {
+  cursor: grabbing !important;
+}
+
+.canvas-container canvas {
+  cursor: grab;
 }
 
 .placeholder {

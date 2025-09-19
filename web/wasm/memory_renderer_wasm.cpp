@@ -44,6 +44,12 @@ void renderMemoryToCanvas(
     config.columnWidth = columnWidth;
     config.columnGap = columnGap;
 
+    // Validate source offset
+    if (sourceOffset >= memorySize) {
+        // No data to render
+        return;
+    }
+
     // Adjust data pointer for source offset
     const uint8_t* offsetData = memoryData + sourceOffset;
     size_t adjustedSize = memorySize - sourceOffset;
