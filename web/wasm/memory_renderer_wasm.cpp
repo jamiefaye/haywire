@@ -168,6 +168,14 @@ void freeMemory(void* ptr) {
 
 #ifdef __wasm_simd128__
 #include <wasm_simd128.h>
+#endif
+
+#include <cmath>
+#include <algorithm>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // Test if a chunk is all zeros using SIMD
 EMSCRIPTEN_KEEPALIVE
@@ -221,9 +229,14 @@ uint32_t calculateChunkChecksumSIMD(const uint8_t* data, size_t size) {
         offset++;
     }
 
-    // SIMD processing
-    v128_t checksum1 = wasm_i32x4_const(scalar_sum, 0x517cc1b7, 0x27220a95, 0x2b885d7e);
+    // SIMD processing - initialize with constants and then update
+    v128_t checksum1 = wasm_i32x4_const(0x9e3779b9, 0x517cc1b7, 0x27220a95, 0x2b885d7e);
     v128_t checksum2 = wasm_i32x4_const(0x5b2c5926, 0x7119f859, 0xa4426e90, 0x1edc6f25);
+
+    // Update first lane with scalar_sum if we processed unaligned data
+    if (offset > 0) {
+        checksum1 = wasm_i32x4_replace_lane(checksum1, 0, scalar_sum);
+    }
 
     size_t simd_end = offset + ((size - offset) & ~15);
     for (size_t i = offset; i < simd_end; i += 16) {
@@ -272,34 +285,6 @@ uint32_t calculateChunkChecksumSIMD(const uint8_t* data, size_t size) {
     return result;
 }
 
-#else
-// Fallback non-SIMD versions
-
-EMSCRIPTEN_KEEPALIVE
-int testChunkZeroSIMD(const uint8_t* data, size_t size) {
-    if (!data || size == 0) return 1;
-    for (size_t i = 0; i < size; i++) {
-        if (data[i] != 0) return 0;
-    }
-    return 1;
-}
-
-EMSCRIPTEN_KEEPALIVE
-uint32_t calculateChunkChecksumSIMD(const uint8_t* data, size_t size) {
-    if (!data || size == 0) return 0;
-    uint32_t checksum = 0x9e3779b9;
-    for (size_t i = 0; i < size; i++) {
-        checksum = ((checksum << 5) | (checksum >> 27)) ^ data[i];
-    }
-    checksum ^= checksum >> 16;
-    checksum *= 0x85ebca6b;
-    checksum ^= checksum >> 13;
-    checksum *= 0xc2b2ae35;
-    checksum ^= checksum >> 16;
-    return checksum;
-}
-
-#endif  // __wasm_simd128__
 
 // Optimized functions for specific sizes
 EMSCRIPTEN_KEEPALIVE
@@ -330,6 +315,201 @@ int testChunk1MBZero(const uint8_t* data) {
 EMSCRIPTEN_KEEPALIVE
 uint32_t calculateChunk1MBChecksum(const uint8_t* data) {
     return calculateChunkChecksumSIMD(data, 1048576);
+}
+
+// ============================================================================
+// FFT Auto-Correlator Functions - Based on C++ autocorrelator
+// ============================================================================
+
+// Cooley-Tukey FFT implementation
+static void fft_internal(float* real, float* imag, int n, bool inverse) {
+    if (n <= 1) return;
+
+    // Bit reversal
+    int j = 0;
+    for (int i = 1; i < n - 1; i++) {
+        int bit = n >> 1;
+        for (; j & bit; bit >>= 1) {
+            j ^= bit;
+        }
+        j ^= bit;
+
+        if (i < j) {
+            std::swap(real[i], real[j]);
+            std::swap(imag[i], imag[j]);
+        }
+    }
+
+    // Cooley-Tukey NTT
+    for (int len = 2; len <= n; len <<= 1) {
+        float angle = 2 * M_PI / len * (inverse ? 1 : -1);
+        float wlen_real = cosf(angle);
+        float wlen_imag = sinf(angle);
+
+        for (int i = 0; i < n; i += len) {
+            float w_real = 1;
+            float w_imag = 0;
+            for (int j = 0; j < len / 2; j++) {
+                float u_real = real[i + j];
+                float u_imag = imag[i + j];
+                float v_real = real[i + j + len/2] * w_real - imag[i + j + len/2] * w_imag;
+                float v_imag = real[i + j + len/2] * w_imag + imag[i + j + len/2] * w_real;
+
+                real[i + j] = u_real + v_real;
+                imag[i + j] = u_imag + v_imag;
+                real[i + j + len/2] = u_real - v_real;
+                imag[i + j + len/2] = u_imag - v_imag;
+
+                float w_temp = w_real;
+                w_real = w_real * wlen_real - w_imag * wlen_imag;
+                w_imag = w_temp * wlen_imag + w_imag * wlen_real;
+            }
+        }
+    }
+
+    // Scale for inverse transform
+    if (inverse) {
+        float scale = 1.0f / n;
+        for (int i = 0; i < n; i++) {
+            real[i] *= scale;
+            imag[i] *= scale;
+        }
+    }
+}
+
+// Auto-correlation using FFT
+EMSCRIPTEN_KEEPALIVE
+void autoCorrelate(const uint8_t* data, int dataSize, float* output, int outputSize) {
+    // Find next power of 2 >= 2 * dataSize for zero padding
+    int fftSize = 1;
+    while (fftSize < dataSize * 2) {
+        fftSize <<= 1;
+    }
+
+    // Limit FFT size to something reasonable (16384 like the C++ version)
+    if (fftSize > 16384) fftSize = 16384;
+
+    // Allocate working arrays
+    float* real = (float*)calloc(fftSize, sizeof(float));
+    float* imag = (float*)calloc(fftSize, sizeof(float));
+
+    if (!real || !imag) {
+        free(real);
+        free(imag);
+        return;
+    }
+
+    // Calculate mean for DC removal
+    float sum = 0;
+    for (int i = 0; i < dataSize; i++) {
+        sum += data[i];
+    }
+    float mean = sum / dataSize;
+
+    // Copy data with DC removal (mean subtraction)
+    int sampleCount = (dataSize < fftSize) ? dataSize : fftSize;
+    for (int i = 0; i < sampleCount; i++) {
+        real[i] = data[i] - mean;
+    }
+
+    // Forward FFT
+    fft_internal(real, imag, fftSize, false);
+
+    // Compute power spectrum (magnitude squared)
+    for (int i = 0; i < fftSize; i++) {
+        float magnitude = sqrtf(real[i] * real[i] + imag[i] * imag[i]);
+        real[i] = magnitude / fftSize;
+        imag[i] = 0;
+    }
+
+    // Inverse FFT to get autocorrelation
+    fft_internal(real, imag, fftSize, true);
+
+    // Normalize by the zero-lag value (peak)
+    float maxVal = real[0];
+    if (maxVal == 0) maxVal = 1.0f;
+
+    // Copy normalized results to output
+    int copySize = (outputSize < fftSize) ? outputSize : fftSize;
+    for (int i = 0; i < copySize; i++) {
+        output[i] = real[i] / maxVal;
+    }
+
+    free(real);
+    free(imag);
+}
+
+// Find repeating patterns using autocorrelation peaks
+EMSCRIPTEN_KEEPALIVE
+int findRepeatPeriod(const uint8_t* data, int dataSize, float threshold) {
+    const int correlationSize = 2048;
+    float* correlation = (float*)calloc(correlationSize, sizeof(float));
+
+    if (!correlation) return -1;
+
+    // Compute autocorrelation
+    autoCorrelate(data, dataSize, correlation, correlationSize);
+
+    // Find first significant peak after lag 16 (skip small periodicities)
+    int bestPeriod = -1;
+    for (int lag = 16; lag < correlationSize - 1; lag++) {
+        // Check for local maximum above threshold
+        if (correlation[lag] > threshold &&
+            correlation[lag] > correlation[lag-1] &&
+            correlation[lag] > correlation[lag+1]) {
+            bestPeriod = lag;
+            break;
+        }
+    }
+
+    free(correlation);
+    return bestPeriod;
+}
+
+// Get autocorrelation peaks for visualization
+EMSCRIPTEN_KEEPALIVE
+void getCorrelationPeaks(const uint8_t* data, int dataSize, int* peaks, int maxPeaks, float threshold) {
+    const int correlationSize = 2048;
+    float* correlation = (float*)calloc(correlationSize, sizeof(float));
+
+    if (!correlation) {
+        for (int i = 0; i < maxPeaks; i++) peaks[i] = -1;
+        return;
+    }
+
+    // Compute autocorrelation
+    autoCorrelate(data, dataSize, correlation, correlationSize);
+
+    // Find peaks
+    int peakCount = 0;
+    for (int lag = 16; lag < correlationSize - 1 && peakCount < maxPeaks; lag++) {
+        // Check for local maximum above threshold
+        if (correlation[lag] > threshold &&
+            correlation[lag] > correlation[lag-1] &&
+            correlation[lag] > correlation[lag+1]) {
+            peaks[peakCount++] = lag;
+            // Skip nearby points to avoid duplicate peaks
+            lag += 8;
+        }
+    }
+
+    // Fill remaining slots with -1
+    for (int i = peakCount; i < maxPeaks; i++) {
+        peaks[i] = -1;
+    }
+
+    free(correlation);
+}
+
+// Memory allocation helpers for FFT
+EMSCRIPTEN_KEEPALIVE
+float* allocateFloatBuffer(size_t count) {
+    return (float*)malloc(count * sizeof(float));
+}
+
+EMSCRIPTEN_KEEPALIVE
+void freeFloatBuffer(float* ptr) {
+    free(ptr);
 }
 
 } // extern "C"

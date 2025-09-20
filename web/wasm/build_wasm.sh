@@ -17,6 +17,7 @@ echo "Building memory_renderer.wasm..."
 # Compile with Emscripten
 # Note: We include the actual renderer source files, not reimplementing them
 emcc -O3 \
+    -msimd128 \
     -I"$PROJECT_ROOT/include" \
     "$PROJECT_ROOT/src/memory_renderer.cpp" \
     "$SCRIPT_DIR/memory_renderer_wasm.cpp" \
@@ -29,9 +30,22 @@ emcc -O3 \
         '_pixelToMemoryCoordinate',\
         '_allocateMemory',\
         '_allocatePixelBuffer',\
-        '_freeMemory'\
+        '_freeMemory',\
+        '_testChunkZeroSIMD',\
+        '_calculateChunkChecksumSIMD',\
+        '_testPageZero',\
+        '_calculatePageChecksum',\
+        '_testChunk64KZero',\
+        '_calculateChunk64KChecksum',\
+        '_testChunk1MBZero',\
+        '_calculateChunk1MBChecksum',\
+        '_autoCorrelate',\
+        '_findRepeatPeriod',\
+        '_getCorrelationPeaks',\
+        '_allocateFloatBuffer',\
+        '_freeFloatBuffer'\
     ]" \
-    -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','HEAP8','HEAPU8','HEAP32','HEAPU32']" \
+    -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','HEAP8','HEAPU8','HEAP32','HEAPU32','HEAPF32']" \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s MODULARIZE=1 \
     -s EXPORT_NAME="MemoryRendererModule" \

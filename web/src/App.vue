@@ -58,6 +58,10 @@
           <input type="checkbox" v-model="changeDetectionEnabled">
           Change Detection
         </label>
+        <label>
+          <input type="checkbox" v-model="showCorrelation">
+          Auto-Correlation
+        </label>
 
         <template v-if="columnMode">
           <label>
@@ -180,38 +184,51 @@
         </div>
       </div>
 
-      <!-- Memory Canvas -->
-    <div
-      class="canvas-container"
-      @contextmenu.prevent="showContextMenu"
-      @dragover.prevent="onDragOver"
-      @drop.prevent="onDrop"
-      @dragleave="onDragLeave"
-      @mousedown="startCanvasDrag"
-      :class="{ 'drag-over': isDraggingFile, 'dragging': isCanvasDragging }"
-    >
-      <MemoryCanvas
-        v-if="memoryData"
-        ref="memoryCanvasRef"
-        :key="`canvas-${selectedFormat}`"
-        :memory-data="memoryData"
-        :width="canvasWidth"
-        :height="canvasHeight"
-        :format="selectedFormat"
-        :source-offset="0"
-        :stride="displayWidth"
-        :split-components="splitComponents"
-        :column-mode="columnMode"
-        :column-width="columnWidth"
-        :column-gap="columnGap"
-        @memory-click="handleMemoryClick"
-        @memory-hover="handleMemoryHover"
-      />
-      <div v-else-if="isFileOpen" class="placeholder">
-        Loading memory data...
+      <!-- Memory Canvas and Correlator Container -->
+    <div class="canvas-and-correlator">
+      <div
+        class="canvas-container"
+        @contextmenu.prevent="showContextMenu"
+        @dragover.prevent="onDragOver"
+        @drop.prevent="onDrop"
+        @dragleave="onDragLeave"
+        @mousedown="startCanvasDrag"
+        :class="{ 'drag-over': isDraggingFile, 'dragging': isCanvasDragging }"
+      >
+        <MemoryCanvas
+          v-if="memoryData"
+          ref="memoryCanvasRef"
+          :key="`canvas-${selectedFormat}`"
+          :memory-data="memoryData"
+          :width="canvasWidth"
+          :height="canvasHeight"
+          :format="selectedFormat"
+          :source-offset="0"
+          :stride="displayWidth"
+          :split-components="splitComponents"
+          :column-mode="columnMode"
+          :column-width="columnWidth"
+          :column-gap="columnGap"
+          @memory-click="handleMemoryClick"
+          @memory-hover="handleMemoryHover"
+        />
+        <div v-else-if="isFileOpen" class="placeholder">
+          Loading memory data...
+        </div>
+        <div v-else class="placeholder">
+          Open a memory file to begin
+        </div>
       </div>
-      <div v-else class="placeholder">
-        Open a memory file to begin
+
+      <!-- Auto-Correlator Pane -->
+      <div v-if="memoryData && showCorrelation" class="correlator-wrapper">
+        <AutoCorrelator
+          :memory-data="memoryData"
+          :width="canvasWidth"
+          :height="100"
+          :enabled="showCorrelation"
+          @peak-detected="handleCorrelationPeak"
+        />
       </div>
     </div>
     </div> <!-- End of main-content -->
@@ -281,6 +298,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import MemoryCanvas from './components/MemoryCanvas.vue'
 import MiniBitmapViewer from './components/MiniBitmapViewer.vue'
 import MemoryOverviewPane from './components/MemoryOverviewPane.vue'
+import AutoCorrelator from './components/AutoCorrelator.vue'
 import { useFileSystemAPI } from './composables/useFileSystemAPI'
 import { useQmpBridge } from './composables/useQmpBridge'
 import { PixelFormat } from './composables/useWasmRenderer'
@@ -378,6 +396,7 @@ const selectedFormat = ref(PixelFormat.BGR888) // Start with BGR888 since user s
 const splitComponents = ref(false)
 const columnMode = ref(false)
 const changeDetectionEnabled = ref(false)  // Disabled by default - opt-in feature
+const showCorrelation = ref(false)  // Autocorrelation display
 
 // Watch for change detection toggle
 watch(changeDetectionEnabled, (enabled) => {
@@ -761,6 +780,13 @@ function handleMemoryClick(offset: number) {
 // Handle memory hover
 function handleMemoryHover(offset: number) {
   hoveredOffset.value = offset
+}
+
+// Handle correlation peak detection
+function handleCorrelationPeak(offset: number) {
+  console.log('Correlation peak detected at offset:', offset)
+  // Could automatically set width based on detected peak
+  // displayWidth.value = offset
 }
 
 // Toggle QMP connection
@@ -1519,6 +1545,21 @@ button:disabled {
   margin: 2px 0;
   color: #666;
   font-size: 8px;
+}
+
+.canvas-and-correlator {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.correlator-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 0 20px;
+  background: #1e1e1e;
 }
 
 .canvas-container {
