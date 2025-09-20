@@ -878,7 +878,7 @@ bool BeaconReader::RefreshCompanion(GuestAgent* agent, uint32_t focusPid) {
 
     // Run companion_oneshot with request ID and optional focus PID
     std::stringstream cmd;
-    cmd << "cd /home/ubuntu && ./companion_oneshot --once --request=0x"
+    cmd << "cd /home/ubuntu && sudo ./companion_oneshot --once --request=0x"
         << std::hex << requestCounter;
 
     if (focusPid > 0) {

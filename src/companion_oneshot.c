@@ -329,18 +329,8 @@ void scan_process_memory(uint32_t pid) {
 
     FILE* fp = fopen(maps_path, "r");
     if (!fp) {
-        // Try to scan ourselves instead if we can't access the target
-        if (pid != getpid()) {
-            fprintf(stderr, "Cannot open %s: %s, falling back to self (PID %d)\n",
-                    maps_path, strerror(errno), getpid());
-            pid = getpid();
-            snprintf(maps_path, sizeof(maps_path), "/proc/%u/maps", pid);
-            fp = fopen(maps_path, "r");
-        }
-        if (!fp) {
-            fprintf(stderr, "Cannot open %s: %s\n", maps_path, strerror(errno));
-            return;
-        }
+        fprintf(stderr, "Cannot open %s: %s\n", maps_path, strerror(errno));
+        return;
     }
     
     // Track if we've preloaded libraries for this PID
