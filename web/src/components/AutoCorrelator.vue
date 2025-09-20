@@ -22,6 +22,7 @@ const props = defineProps<{
   width: number
   height?: number
   enabled?: boolean
+  sampleOffset?: number
 }>()
 
 const emit = defineEmits<{
@@ -58,13 +59,23 @@ function computeCorrelation() {
   }
 
   try {
+    // Use sample offset or 0
+    const offset = props.sampleOffset || 0
+
+    // Check if we have enough data from the offset
+    if (offset >= props.memoryData.length) {
+      console.warn('Sample offset exceeds memory size')
+      return
+    }
+
     // Allocate memory for input and output
-    const dataSize = Math.min(props.memoryData.length, 16384) // Limit to 16K samples
+    const remainingData = props.memoryData.length - offset
+    const dataSize = Math.min(remainingData, 16384) // Limit to 16K samples
     const dataPtr = wasmModule.value._allocateMemory(dataSize)
     const outputPtr = wasmModule.value._allocateFloatBuffer(2048)
 
-    // Copy data to WASM heap
-    wasmModule.value.HEAPU8.set(props.memoryData.subarray(0, dataSize), dataPtr)
+    // Copy data to WASM heap starting from offset
+    wasmModule.value.HEAPU8.set(props.memoryData.subarray(offset, offset + dataSize), dataPtr)
 
     // Compute autocorrelation
     wasmModule.value._autoCorrelate(dataPtr, dataSize, outputPtr, 2048)
@@ -160,10 +171,18 @@ function drawCorrelation() {
     ctx.fillText(peak.toString(), x + 2, 12)
   })
 
-  // Draw label
+  // Draw label with offset info
   ctx.fillStyle = '#c8c8c8'
   ctx.font = '11px sans-serif'
-  ctx.fillText('Autocorrelation (Width Detection)', 5, 15)
+  const offsetText = props.sampleOffset ? ` @ 0x${props.sampleOffset.toString(16).toUpperCase()}` : ''
+  ctx.fillText(`Autocorrelation (Width Detection)${offsetText}`, 5, 15)
+
+  // If there's a sample offset, show a reset hint
+  if (props.sampleOffset && props.sampleOffset > 0) {
+    ctx.fillStyle = '#888888'
+    ctx.font = '10px sans-serif'
+    ctx.fillText('[Right-click to change sample point]', props.width - 180, 15)
+  }
 }
 
 // Mouse interaction
@@ -192,6 +211,7 @@ function onMouseLeave() {
 // Watch for changes
 watch(() => props.memoryData, computeCorrelation)
 watch(() => props.enabled, computeCorrelation)
+watch(() => props.sampleOffset, computeCorrelation)
 watch(() => props.width, () => {
   if (props.enabled) {
     drawCorrelation()

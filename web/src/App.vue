@@ -195,6 +195,38 @@
         @mousedown="startCanvasDrag"
         :class="{ 'drag-over': isDraggingFile, 'dragging': isCanvasDragging }"
       >
+        <!-- FFT Sample Point Indicator -->
+        <svg
+          v-if="showCorrelation && fftSampleOffset > 0 && fftIndicatorPosition"
+          class="fft-indicator-overlay"
+          :style="{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            pointerEvents: 'none',
+            zIndex: 10
+          }"
+        >
+          <circle
+            :cx="fftIndicatorPosition.x"
+            :cy="fftIndicatorPosition.y"
+            r="8"
+            fill="none"
+            stroke="#ffaa00"
+            stroke-width="2"
+            opacity="0.8"
+          />
+          <circle
+            :cx="fftIndicatorPosition.x"
+            :cy="fftIndicatorPosition.y"
+            r="3"
+            fill="#ffaa00"
+            opacity="0.8"
+          />
+        </svg>
+
         <MemoryCanvas
           v-if="memoryData"
           ref="memoryCanvasRef"
@@ -227,6 +259,7 @@
           :width="canvasWidth"
           :height="100"
           :enabled="showCorrelation"
+          :sample-offset="fftSampleOffset"
           @peak-detected="handleCorrelationPeak"
         />
       </div>
@@ -247,6 +280,9 @@
         🔍 Create Mini Viewer Here
       </div>
       <div class="context-menu-separator"></div>
+      <div class="context-menu-item" @click="setFFTSamplePoint">
+        📊 Set FFT Sample Point Here
+      </div>
       <div class="context-menu-item" @click="copyAddress">
         📋 Copy Address
       </div>
@@ -397,6 +433,9 @@ const splitComponents = ref(false)
 const columnMode = ref(false)
 const changeDetectionEnabled = ref(false)  // Disabled by default - opt-in feature
 const showCorrelation = ref(false)  // Autocorrelation display
+const fftSampleOffset = ref<number>(0)  // Offset for FFT sampling
+const fftRelativePosition = ref<{ x: number, y: number } | null>(null)  // Relative position (0-1)
+const fftIndicatorPosition = ref<{ x: number, y: number } | null>(null)  // Absolute pixel position
 
 // Watch for change detection toggle
 watch(changeDetectionEnabled, (enabled) => {
@@ -815,11 +854,33 @@ function showContextMenu(event: MouseEvent) {
     return // Click was outside canvas
   }
 
-  // Calculate memory offset at click position
+  // Calculate memory offset at click position, accounting for column mode
   const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
-  const row = Math.floor((y / canvasRect.height) * displayHeight.value)
-  const col = Math.floor((x / canvasRect.width) * displayWidth.value)
-  const clickOffset = row * displayWidth.value * bytesPerPixel + col * bytesPerPixel
+  let clickOffset = 0
+
+  if (columnMode.value) {
+    // Column mode calculation
+    const pixelX = Math.floor((x / canvasRect.width) * canvasWidth.value)
+    const pixelY = Math.floor((y / canvasRect.height) * canvasHeight.value)
+
+    const totalColumnWidth = columnWidth.value + columnGap.value
+    const columnIndex = Math.floor(pixelX / totalColumnWidth)
+    const xInColumn = pixelX % totalColumnWidth
+
+    if (xInColumn >= columnWidth.value) {
+      // Click in gap - ignore
+      return
+    }
+
+    const memoryX = xInColumn
+    const memoryY = columnIndex * canvasHeight.value + pixelY
+    clickOffset = memoryY * displayWidth.value * bytesPerPixel + memoryX * bytesPerPixel
+  } else {
+    // Simple linear mode
+    const row = Math.floor((y / canvasRect.height) * displayHeight.value)
+    const col = Math.floor((x / canvasRect.width) * displayWidth.value)
+    clickOffset = row * displayWidth.value * bytesPerPixel + col * bytesPerPixel
+  }
 
   contextMenuOffset.value = currentOffset.value + clickOffset
   contextMenuPosition.value = { x: event.clientX, y: event.clientY }
@@ -969,6 +1030,49 @@ function copyAddress() {
   const address = `0x${contextMenuOffset.value.toString(16).toUpperCase()}`
   navigator.clipboard.writeText(address)
   console.log('Copied address:', address)
+}
+
+function setFFTSamplePoint() {
+  fftSampleOffset.value = contextMenuOffset.value
+  console.log('Set FFT sample point at:', `0x${contextMenuOffset.value.toString(16).toUpperCase()}`)
+
+  // Store relative position for the indicator
+  const canvasEl = document.querySelector('.canvas-container')
+  if (canvasEl && contextMenuPosition.value) {
+    const rect = canvasEl.getBoundingClientRect()
+    fftRelativePosition.value = {
+      x: (contextMenuPosition.value.x - rect.left) / rect.width,
+      y: (contextMenuPosition.value.y - rect.top) / rect.height
+    }
+    updateFFTIndicatorPosition()
+  }
+
+  // Enable correlation if not already enabled
+  if (!showCorrelation.value) {
+    showCorrelation.value = true
+  }
+}
+
+// Update FFT indicator position based on relative position
+function updateFFTIndicatorPosition() {
+  if (!fftRelativePosition.value) return
+
+  const canvasEl = document.querySelector('.canvas-container')
+  if (canvasEl) {
+    const rect = canvasEl.getBoundingClientRect()
+    fftIndicatorPosition.value = {
+      x: fftRelativePosition.value.x * rect.width,
+      y: fftRelativePosition.value.y * rect.height
+    }
+  }
+}
+
+// Clear FFT sample point
+function clearFFTSamplePoint() {
+  fftSampleOffset.value = 0
+  fftRelativePosition.value = null
+  fftIndicatorPosition.value = null
+  console.log('Cleared FFT sample point')
 }
 
 // Drag and drop handlers
@@ -1169,6 +1273,7 @@ async function handleAnchorModeChange(id: number, mode: 'address' | 'position', 
 // Update anchors when offset changes
 watch(currentOffset, () => {
   updateMiniViewerAnchors()
+  updateFFTIndicatorPosition()
 })
 
 // Export for template
@@ -1222,6 +1327,9 @@ onMounted(async () => {
   // Initialize change detection module
   loadChangeDetectionModule().catch(console.error)
 
+  // Update FFT indicator on window resize
+  window.addEventListener('resize', updateFFTIndicatorPosition)
+
   // Add event listeners
   window.addEventListener('keydown', handleKeyboard)
   window.addEventListener('mousemove', handleCanvasDrag)
@@ -1270,6 +1378,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyboard)
   window.removeEventListener('mousemove', handleCanvasDrag)
   window.removeEventListener('mouseup', stopCanvasDrag)
+  window.removeEventListener('resize', updateFFTIndicatorPosition)
   stopAutoRepeat() // Clean up any active auto-repeat
 
   // Clean up ResizeObserver
