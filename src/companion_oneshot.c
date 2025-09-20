@@ -22,27 +22,20 @@ static int run_once = 0;           // Run single cycle then exit
 static uint32_t request_id = 0;    // Optional request ID for tracking
 static int need_keeper = 0;        // Whether we need to spawn keeper daemon
 
-// Control page structure for h2g communication (must match beacon_protocol.h)
-typedef struct {
-    uint32_t magic;
-    uint32_t version_top;
-    uint32_t target_pid;
-    uint32_t version_bottom;
-    uint32_t current_pid;
-} CameraControlPage;
+// Control pages removed - all pages are data pages now
 
 // Four separate memory allocations (no round-robin)
 static void* master_page = NULL;           // 1 page for discovery/master
 static void* pids_ptr = NULL;              // 16 pages for PID lists  
-static void* camera1_ptr = NULL;           // 1 control + 199 data pages
-static void* camera2_ptr = NULL;           // 1 control + 199 data pages
+static void* camera1_ptr = NULL;           // 200 data pages (no control page)
+static void* camera2_ptr = NULL;           // 200 data pages (no control page)
 
 // Current target PID for this camera
 static uint32_t target_pid = 0;
 
 // Camera data writing state
 static uint32_t camera_sequence = 0;  // Sequence number for camera data pages
-static uint32_t camera_write_index = 1;  // Which data page to write next (1-199, 0 is control)
+static uint32_t camera_write_index = 0;  // Which data page to write next (0-199, no control page)
 
 // Signal handler for clean shutdown
 static volatile int keep_running = 1;
@@ -171,49 +164,24 @@ int init_memory() {
     
     // Initialize BOTH camera beacon pages (even though we only use camera1 for data)
     // This ensures Haywire can find all expected beacon pages
-    
-    // Initialize Camera1 pages
-    BeaconCameraControlPage* control1 = (BeaconCameraControlPage*)camera1_ptr;
-    control1->magic = BEACON_MAGIC;
-    control1->version_top = 1;
-    control1->version_bottom = 1;
-    control1->session_id = request_id ? request_id : getpid();
-    control1->category = BEACON_CATEGORY_CAMERA1;
-    control1->category_index = 0;  // Control page is always index 0
-    control1->timestamp = discovery->timestamp;
-    control1->target_pid = 1;  // Default to init
-    control1->status = BEACON_CAMERA_STATUS_IDLE;
-    control1->current_pid = 0;
-    
-    // Initialize camera1 data pages (pages 1-199)
-    for (int i = 1; i < BEACON_CAMERA1_PAGES; i++) {
+
+    // Initialize Camera1 pages - ALL as data pages now (no control page)
+    // We keep page 0 as a placeholder but don't use it as a control page
+    for (int i = 0; i < BEACON_CAMERA1_PAGES; i++) {
         BeaconPage* data_page = (BeaconPage*)((uint8_t*)camera1_ptr + i * 4096);
         data_page->magic = BEACON_MAGIC;
         data_page->version_top = 1;
         data_page->version_bottom = 1;
         data_page->session_id = request_id ? request_id : getpid();
         data_page->category = BEACON_CATEGORY_CAMERA1;
-        data_page->category_index = i;  // Data pages are indices 1-199
+        data_page->category_index = i;
         data_page->timestamp = discovery->timestamp;
         data_page->sequence = 0;
         data_page->data_size = 0;
     }
-    
-    // Initialize Camera2 pages (even though we only actively use camera1)
-    BeaconCameraControlPage* control2 = (BeaconCameraControlPage*)camera2_ptr;
-    control2->magic = BEACON_MAGIC;
-    control2->version_top = 1;
-    control2->version_bottom = 1;
-    control2->session_id = request_id ? request_id : getpid();
-    control2->category = BEACON_CATEGORY_CAMERA2;
-    control2->category_index = 0;
-    control2->timestamp = discovery->timestamp;
-    control2->target_pid = 0;  // Not active
-    control2->status = BEACON_CAMERA_STATUS_IDLE;
-    control2->current_pid = 0;
-    
-    // Initialize camera2 data pages
-    for (int i = 1; i < BEACON_CAMERA2_PAGES; i++) {
+
+    // Initialize Camera2 pages - ALL as data pages now (no control page)
+    for (int i = 0; i < BEACON_CAMERA2_PAGES; i++) {
         BeaconPage* data_page = (BeaconPage*)((uint8_t*)camera2_ptr + i * 4096);
         data_page->magic = BEACON_MAGIC;
         data_page->version_top = 1;
@@ -347,8 +315,8 @@ void scan_process_memory(uint32_t pid) {
     // Get the appropriate camera pointer
     void* camera_ptr = (CAMERA_ID == 1) ? camera1_ptr : camera2_ptr;
     
-    // Start fresh from page 1 (page 0 is control)
-    camera_write_index = 1;
+    // Start fresh from page 0 (all pages are data pages now)
+    camera_write_index = 0;
     camera_sequence++;
     
     // Current page being written
