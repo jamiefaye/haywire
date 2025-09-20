@@ -585,8 +585,11 @@ bool BeaconReader::GetCameraProcessSections(int cameraId, uint32_t pid, std::vec
     auto& camArray = categoryArrays[category];
     
     if (!camArray.initialized) {
+        std::cout << "GetCameraPTEs: Camera array not initialized\n";
         return false;
     }
+
+    int pteCount = 0;
     
     // Camera data pages start at index 1 (index 0 is control page)
     for (size_t pageIdx = 1; pageIdx < camArray.pageCount; pageIdx++) {
@@ -661,16 +664,23 @@ bool BeaconReader::GetCameraProcessSections(int cameraId, uint32_t pid, std::vec
 
 bool BeaconReader::GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<uint64_t, uint64_t>& ptes) {
     ptes.clear();
-    
-    if (!memBase || !discovery.valid) return false;
+
+    if (!memBase || !discovery.valid) {
+        std::cout << "GetCameraPTEs: No memBase or invalid discovery\n";
+        return false;
+    }
     if (cameraId < 1 || cameraId > 2) return false;
-    
+
     uint32_t category = (cameraId == 1) ? BEACON_CATEGORY_CAMERA1 : BEACON_CATEGORY_CAMERA2;
+    std::cout << "GetCameraPTEs: Camera " << cameraId << " PID " << pid << " category " << category << "\n";
     auto& camArray = categoryArrays[category];
     
     if (!camArray.initialized) {
+        std::cout << "GetCameraPTEs: Camera array not initialized\n";
         return false;
     }
+
+    int pteCount = 0;
     
     // Camera data pages start at index 1 (index 0 is control page)
     for (size_t pageIdx = 1; pageIdx < camArray.pageCount; pageIdx++) {
@@ -709,6 +719,7 @@ bool BeaconReader::GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<
                 // Add PTE to map (only if physical address is non-zero, indicating it's allocated)
                 if (beaconPTE->pa != 0) {
                     ptes[beaconPTE->va] = beaconPTE->pa;
+                    pteCount++;
                 }
                 
                 dataPtr += sizeof(BeaconPTEEntry);
@@ -725,7 +736,8 @@ bool BeaconReader::GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<
             break;
         }
     }
-    
+
+    std::cout << "GetCameraPTEs: Collected " << pteCount << " PTEs for PID " << pid << "\n";
     return true;
 }
 

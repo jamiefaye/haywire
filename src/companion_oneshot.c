@@ -248,6 +248,11 @@ int read_ptes_for_region(uint32_t pid, uint64_t start_va, uint64_t end_va,
     int pagemap_fd = open(pagemap_path, O_RDONLY);
     if (pagemap_fd < 0) {
         // Can't read pagemap (might need root)
+        static int warned = 0;
+        if (!warned) {
+            fprintf(stderr, "Cannot open %s: %s (using fake PTEs)\n", pagemap_path, strerror(errno));
+            warned = 1;
+        }
         return 0;
     }
     
@@ -319,11 +324,23 @@ int read_ptes_for_region(uint32_t pid, uint64_t start_va, uint64_t end_va,
 void scan_process_memory(uint32_t pid) {
     char maps_path[256];
     snprintf(maps_path, sizeof(maps_path), "/proc/%u/maps", pid);
-    
+
+    fprintf(stderr, "scan_process_memory: Scanning PID %u from %s\n", pid, maps_path);
+
     FILE* fp = fopen(maps_path, "r");
     if (!fp) {
-        // Process might have exited
-        return;
+        // Try to scan ourselves instead if we can't access the target
+        if (pid != getpid()) {
+            fprintf(stderr, "Cannot open %s: %s, falling back to self (PID %d)\n",
+                    maps_path, strerror(errno), getpid());
+            pid = getpid();
+            snprintf(maps_path, sizeof(maps_path), "/proc/%u/maps", pid);
+            fp = fopen(maps_path, "r");
+        }
+        if (!fp) {
+            fprintf(stderr, "Cannot open %s: %s\n", maps_path, strerror(errno));
+            return;
+        }
     }
     
     // Track if we've preloaded libraries for this PID
@@ -465,6 +482,7 @@ void scan_process_memory(uint32_t pid) {
                     // write_ptr, bytes_used, and entry_count already updated by read_ptes_for_region
                 } else {
                     // Fallback: Add a few fake PTEs if pagemap not available
+                    static int fake_pte_count = 0;
                     for (int i = 0; i < 3 && (start + i * 0x1000) < end; i++) {
                         // Check if we have room for a PTE entry (24 bytes)
                         if (bytes_used + sizeof(BeaconPTEEntry) > 4060) {
@@ -481,6 +499,10 @@ void scan_process_memory(uint32_t pid) {
                         write_ptr += sizeof(BeaconPTEEntry);
                         bytes_used += sizeof(BeaconPTEEntry);
                         entry_count++;
+                        fake_pte_count++;
+                    }
+                    if (fake_pte_count <= 10) {
+                        fprintf(stderr, "Added fake PTEs for section at 0x%lx\n", start);
                     }
                 }
             }
