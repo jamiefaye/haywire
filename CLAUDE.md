@@ -197,6 +197,34 @@ response = json.loads(sock.recv(4096).decode())
 - Host alias: `vm` (localhost:2222)
 - See `docs/vm_setup_guide.md` for complete setup
 
+## Web UI Features (September 2025)
+
+### Change Detection System
+- **SIMD-optimized memory scanning**: Uses WebAssembly SIMD (wasm_simd128) for performance
+- **Incremental scanning**: Processes 6.4MB per frame to handle large files without freezing UI
+- **Visual change indicators**: Green for changed chunks, dark gray for zeros, blue gradient for data
+- **Opt-in feature**: Disabled by default to avoid user confusion
+- **64KB chunk granularity**: Balances performance vs precision
+- **Checksum-based tracking**: Rotation-based mixing for better collision resistance
+- **Overview pane visualization**: Memory map showing change patterns at a glance
+
+### Browser Limitations Discovered
+- **File System Access API issues**:
+  - Permissions revoked when files modified externally
+  - Cannot monitor shared files without user gesture
+  - No true file watching capability in browsers
+- **WebSocket requirement for QEMU**: Direct TCP connections blocked by browser security
+- **Workarounds**:
+  - Manual file re-open required after external modifications
+  - Browser reload counts as "user gesture" for permissions
+  - Future Electron version will bypass these limitations
+
+### WASM Module Architecture
+- Consolidated change detection into existing `memory_renderer.js` module
+- Functions added: `testChunkZeroSIMD`, `calculateChunkChecksumSIMD`
+- Specific optimized versions for common sizes (4KB, 64KB, 1MB)
+- Compiled with Emscripten `-msimd128` flag for SIMD support
+
 ## Recent Optimizations (September 14, 2024)
 
 ### Memory Scanning Performance
@@ -219,11 +247,13 @@ response = json.loads(sock.recv(4096).decode())
 - Add export functionality for bitmap viewers
 - Implement bookmarks/saved locations
 
-### Medium-term Goals  
+### Medium-term Goals
 - Windows guest support via EPROCESS structures
 - Additional h2g control pages for dynamic buffer resizing
 - Search history and persistent settings
 - Memory diff/comparison between snapshots
+- Electron version for native file access and QEMU communication
+- WebSocket proxy for browser-to-QMP bridging
 
 ### Long-term Vision
 - Multi-VM support with synchronized views

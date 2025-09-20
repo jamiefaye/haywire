@@ -46,12 +46,14 @@ web/
 │   ├── components/
 │   │   ├── MemoryCanvas.vue      # Main memory visualization
 │   │   ├── ProcessSelector.vue   # Process selection from beacons
-│   │   └── BitmapViewer.vue      # Mini floating viewers
+│   │   ├── BitmapViewer.vue      # Mini floating viewers
+│   │   └── MemoryOverviewPane.vue # Change detection visualization
 │   │
 │   ├── composables/
 │   │   ├── useWasmRenderer.ts    # WASM module interface
 │   │   ├── useFileSystemAPI.ts   # File System API for memory access
-│   │   └── useQmpBridge.ts       # WebSocket to QMP bridge
+│   │   ├── useQmpBridge.ts       # WebSocket to QMP bridge
+│   │   └── useChangeDetection.ts # SIMD memory scanning
 │   │
 │   └── App.vue                   # Main application
 │
@@ -66,6 +68,9 @@ web/
 - **Local Only**: All data stays on your machine, no cloud backend
 - **Direct Memory Access**: Uses File System API to read VM memory file
 - **Real-time Updates**: WebSocket connection for live memory changes
+- **Change Detection**: SIMD-optimized memory scanning to highlight modified regions (opt-in feature)
+- **Mini Viewers**: Spawn floating bitmap viewers at any memory location
+- **Column Mode**: Vertical memory layout for better data visualization
 
 ## Important Notes
 
