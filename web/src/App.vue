@@ -328,7 +328,7 @@ const scanProgress = ref({
   pendingData: null as Uint8Array | null,
   chunkSize: 65536, // 64KB per chunk
   chunksPerFrame: 100, // Process 100 chunks (6.4MB) per frame
-  autoRefresh: true, // Auto-repeat scans
+  autoRefresh: false, // Auto-repeat scans (off by default due to permission issues)
   refreshDelay: 2000 // Wait 2 seconds between scans
 })
 
@@ -377,7 +377,7 @@ const canvasContainerHeight = ref(768)
 const selectedFormat = ref(PixelFormat.BGR888) // Start with BGR888 since user said it was working
 const splitComponents = ref(false)
 const columnMode = ref(false)
-const changeDetectionEnabled = ref(true)  // Enable by default
+const changeDetectionEnabled = ref(false)  // Disabled by default - opt-in feature
 
 // Watch for change detection toggle
 watch(changeDetectionEnabled, (enabled) => {
