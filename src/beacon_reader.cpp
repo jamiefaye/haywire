@@ -549,89 +549,7 @@ std::map<uint32_t, BeaconProcessInfo> BeaconReader::GetAllProcessInfo() {
     return processes;
 }
 
-bool BeaconReader::SetCameraFocus(int cameraId, uint32_t pid) {
-    if (!memBase || !memSize) return false;
-    if (cameraId < 1 || cameraId > 2) return false;
-    
-    uint8_t* mem = static_cast<uint8_t*>(memBase);
-    
-    // Look for the camera control page using new beacon protocol
-    // Camera control pages have:
-    // - magic == BEACON_MAGIC (0x3142FACE)
-    // - category == BEACON_CATEGORY_CAMERA1 or BEACON_CATEGORY_CAMERA2
-    // - category_index == 0 (control page is always index 0)
-    uint32_t targetCategory = (cameraId == 1) ? BEACON_CATEGORY_CAMERA1 : BEACON_CATEGORY_CAMERA2;
-    bool foundControlPage = false;
-    size_t maxInitialScan = std::min(memSize, size_t(100 * 1024 * 1024)); // First 100MB
-    
-    // First pass: Check likely locations (every 1MB in first 100MB)
-    for (size_t offset = 0; offset < maxInitialScan && !foundControlPage; offset += (1024 * 1024)) {
-        if (offset + PAGE_SIZE > memSize) break;
-        
-        const BeaconCameraControlPage* control = reinterpret_cast<const BeaconCameraControlPage*>(mem + offset);
-        
-        // Check if this is a valid camera control page
-        if (control->magic == BEACON_MAGIC && 
-            control->category == targetCategory &&
-            control->category_index == 0) {
-            
-            // Found the control page - update it
-            BeaconCameraControlPage* writableControl = reinterpret_cast<BeaconCameraControlPage*>(mem + offset);
-            
-            // Increment version for tear detection
-            uint32_t newVersion = control->version_top + 1;
-            
-            // Update the control page
-            writableControl->version_top = newVersion;
-            writableControl->target_pid = pid;
-            writableControl->version_bottom = newVersion;  // Must match version_top for valid write
-            
-            std::cout << "SetCameraFocus: Camera " << cameraId << " -> PID " << pid 
-                      << " (control page at offset 0x" << std::hex << offset << std::dec 
-                      << ", version=" << newVersion << ")\n";
-            foundControlPage = true;
-            
-            // Remember this location for next time
-            static size_t cachedControlOffset = 0;
-            cachedControlOffset = offset;
-        }
-    }
-    
-    // If not found in likely locations, do full scan (but warn)
-    if (!foundControlPage) {
-        std::cout << "SetCameraFocus: Control page not in expected location, scanning all memory...\n";
-        for (size_t offset = 0; offset + PAGE_SIZE <= memSize; offset += PAGE_SIZE) {
-            const BeaconCameraControlPage* control = reinterpret_cast<const BeaconCameraControlPage*>(mem + offset);
-            
-            if (control->magic == BEACON_MAGIC && 
-                control->category == targetCategory &&
-                control->category_index == 0) {
-                
-                BeaconCameraControlPage* writableControl = reinterpret_cast<BeaconCameraControlPage*>(mem + offset);
-                
-                uint32_t newVersion = control->version_top + 1;
-                
-                writableControl->version_top = newVersion;
-                writableControl->target_pid = pid;
-                writableControl->version_bottom = newVersion;
-                
-                std::cout << "SetCameraFocus: Camera " << cameraId << " -> PID " << pid 
-                          << " (control page at offset 0x" << std::hex << offset << std::dec 
-                          << ", version=" << newVersion << ")\n";
-                foundControlPage = true;
-                break;
-            }
-        }
-    }
-    
-    if (!foundControlPage) {
-        std::cout << "SetCameraFocus: No camera " << cameraId 
-                  << " control page found (category=" << targetCategory << ")\n";
-        return false;
-    }
-    
-    return true;
-}
+// SetCameraFocus removed - camera control is now done via RefreshCompanion with target PID
 
 uint32_t BeaconReader::GetCameraFocus(int cameraId) {
     if (!memBase || !discovery.valid) return 0;
@@ -974,47 +892,6 @@ bool BeaconReader::RefreshCompanion(GuestAgent* agent, uint32_t focusPid) {
     return false;
 }
 
-bool BeaconReader::StartCompanion(GuestAgent* agent) {
-    if (!agent) {
-        std::cout << "No guest agent available for companion startup\n";
-        return false;
-    }
-
-    if (!agent->IsConnected()) {
-        std::cout << "Guest agent not connected\n";
-        return false;
-    }
-
-    // For oneshot mode, we just trigger a refresh
-    return RefreshCompanion(agent);
-}
-
-bool BeaconReader::IsCompanionRunning() {
-    // For companion_oneshot, we check if we have valid beacon data
-    // companionPid holds the last request ID we used
-    if (companionPid >= 0x42000000) {
-        // Check if discovery page exists with our request ID
-        return discovery.valid && discovery.pid == companionPid;
-    }
-
-    return false;
-}
-
-bool BeaconReader::StopCompanion(GuestAgent* agent) {
-    if (!agent || companionPid == 0) return true;
-    
-    std::cout << "Stopping companion PID " << companionPid << "...\n";
-    
-    std::string output;
-    std::string killCmd = "kill " + std::to_string(companionPid) + " 2>/dev/null || killall companion_camera 2>/dev/null || true";
-    agent->ExecuteCommand(killCmd, output);
-    
-    companionPid = 0;
-    lastCompanionCheck = 0;
-    discovery.valid = false;
-    
-    std::cout << "Companion stopped\n";
-    return true;
-}
+// StartCompanion, IsCompanionRunning, and StopCompanion removed - no longer needed with oneshot mode
 
 } // namespace Haywire

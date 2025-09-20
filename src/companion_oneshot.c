@@ -606,37 +606,7 @@ void scan_all_pids() {
            CAMERA_ID, total_pids, generation);
 }
 
-// Check for camera control updates
-void check_camera_control() {
-    static uint32_t last_version = 0;
-    
-    // Get the appropriate camera pointer
-    void* camera_ptr = (CAMERA_ID == 1) ? camera1_ptr : camera2_ptr;
-    
-    // Control page is always at page 0
-    BeaconCameraControlPage* control = (BeaconCameraControlPage*)camera_ptr;
-    
-    // Check if control page was updated by Haywire
-    if (control->version_top == control->version_bottom && 
-        control->version_top > last_version) {
-        
-        // Check if target PID changed
-        if (control->target_pid != target_pid && control->target_pid > 0) {
-            printf("Camera %d: Switching focus from PID %u to %u (version %u)\n", 
-                   CAMERA_ID, target_pid, control->target_pid, control->version_top);
-            target_pid = control->target_pid;
-            
-            // Update status
-            control->status = BEACON_CAMERA_STATUS_SWITCHING;
-            control->current_pid = target_pid;
-            
-            // After switching, mark as active
-            control->status = BEACON_CAMERA_STATUS_ACTIVE;
-        }
-        
-        last_version = control->version_top;
-    }
-}
+// check_camera_control removed - target PID now comes from command line
 
 void print_usage(const char* prog_name) {
     printf("Usage: %s [options]\n", prog_name);
@@ -755,7 +725,6 @@ int main(int argc, char* argv[]) {
 
         // Main loop
         while (keep_running) {
-            check_camera_control();
             scan_all_pids();
 
             if (target_pid > 0) {

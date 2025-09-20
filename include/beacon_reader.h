@@ -58,10 +58,7 @@ public:
     // Get all processes with details from beacons
     std::map<uint32_t, BeaconProcessInfo> GetAllProcessInfo();
     
-    // Write to camera control page
-    bool SetCameraFocus(int cameraId, uint32_t pid);
-    
-    // Get current camera focus
+    // Get current camera focus (reads from beacon data)
     uint32_t GetCameraFocus(int cameraId);
     
     // Get process sections from camera data
@@ -70,11 +67,8 @@ public:
     // Get process PTEs from camera data (for crunched view)
     bool GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<uint64_t, uint64_t>& ptes);
     
-    // Companion management
-    bool StartCompanion(class GuestAgent* agent);
+    // Companion management - oneshot mode only
     bool RefreshCompanion(class GuestAgent* agent, uint32_t focusPid = 0);
-    bool IsCompanionRunning();
-    bool StopCompanion(class GuestAgent* agent);
     
     // Get the decoder for external use
     std::shared_ptr<BeaconDecoder> GetDecoder() const { 

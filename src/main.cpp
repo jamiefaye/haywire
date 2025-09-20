@@ -99,17 +99,17 @@ int main(int argc, char** argv) {
     if (beaconReader->Initialize()) {
         std::cout << "Beacon reader initialized successfully\n";
         
-        // Try to start companion automatically if beacon data is not found
+        // Try to refresh beacon data if not found
         if (!beaconReader->FindDiscovery()) {
-            std::cout << "No beacon data found - attempting to start companion...\n";
+            std::cout << "No beacon data found - attempting to refresh...\n";
             if (qemu.IsGuestAgentConnected()) {
-                beaconReader->StartCompanion(qemu.GetGuestAgent());
-                // Give companion time to start and create beacon data
+                beaconReader->RefreshCompanion(qemu.GetGuestAgent());
+                // Give companion time to write beacon data
                 sleep(2);
                 beaconReader->FindDiscovery();
             } else {
-                std::cout << "Guest agent not connected - cannot auto-start companion\n";
-                std::cout << "You can manually start the companion in the VM or ensure QGA is running\n";
+                std::cout << "Guest agent not connected - cannot refresh beacon data\n";
+                std::cout << "Ensure QGA is running in the VM\n";
             }
         }
         
