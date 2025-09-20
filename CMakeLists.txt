@@ -187,6 +187,17 @@ add_executable(test_platform
     src/qemu_connection.cpp
     src/memory_backend.cpp
     src/memory_utils.cpp
+    src/guest_agent.cpp
+    src/gdb_connection.cpp
+    src/memory_mapper.cpp
+    src/crunched_memory_reader.cpp
+    src/mmap_reader.cpp
+    src/beacon_reader.cpp
+    src/beacon_decoder.cpp
+    src/beacon_translator.cpp
+    src/address_space_flattener.cpp
+    src/viewport_translator.cpp
+    src/pagemap_cache.cpp
     src/platform/page_walker.cpp
     src/platform/process_walker.cpp
     src/platform/arm64/arm64_page_walker.cpp
