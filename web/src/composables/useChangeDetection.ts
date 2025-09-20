@@ -38,14 +38,32 @@ export function useChangeDetection() {
       isLoading.value = true
       error.value = null
 
-      // @ts-ignore - Dynamic import
-      const ChangeDetectionModule = (await import('../../wasm/change_detection.js')).default
-      wasmInstance = await ChangeDetectionModule()
+      // Check if script is already loaded
+      // @ts-ignore
+      if (typeof window.MemoryRendererModule === 'undefined') {
+        // Load the script
+        await new Promise<void>((resolve, reject) => {
+          const script = document.createElement('script')
+          script.src = '/wasm/memory_renderer.js'
+          script.onload = () => resolve()
+          script.onerror = () => reject(new Error('Failed to load WASM script'))
+          document.head.appendChild(script)
+        })
+      }
+
+      // Initialize the module
+      // @ts-ignore
+      wasmInstance = await window.MemoryRendererModule()
       wasmModule = wasmInstance
+
+      // Ensure the module is fully initialized
+      if (!wasmModule._allocateMemory) {
+        throw new Error('WASM module functions not available')
+      }
 
       // Allocate shared buffer (1MB for processing chunks)
       sharedBufferSize = 1048576
-      sharedBuffer = wasmModule._allocateBuffer(sharedBufferSize)
+      sharedBuffer = wasmModule._allocateMemory(sharedBufferSize)
     } catch (err) {
       error.value = `Failed to load change detection module: ${err}`
       console.error('Change detection load error:', err)
@@ -196,7 +214,7 @@ export function useChangeDetection() {
   // Cleanup
   function cleanup() {
     if (wasmModule && sharedBuffer) {
-      wasmModule._freeBuffer(sharedBuffer)
+      wasmModule._freeMemory(sharedBuffer)
       sharedBuffer = 0
     }
   }

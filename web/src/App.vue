@@ -54,6 +54,10 @@
           <input type="checkbox" v-model="columnMode">
           Column Mode
         </label>
+        <label>
+          <input type="checkbox" v-model="changeDetectionEnabled">
+          Change Detection
+        </label>
 
         <template v-if="columnMode">
           <label>
@@ -111,14 +115,23 @@
     <!-- Main Content Area -->
     <div class="main-content">
       <!-- Overview Pane -->
-      <MemoryOverviewPane
-        v-if="isFileOpen && changeDetectionState"
-        :width="128"
-        :state="changeDetectionState"
-        :current-offset="currentOffset"
-        :view-size="canvasWidth * canvasHeight * bytesPerPixel"
-        @jump-to-offset="jumpToOffset"
-      />
+      <div v-if="isFileOpen && changeDetectionEnabled" class="overview-container">
+        <!-- Show progress bar during scan -->
+        <div v-if="scanProgress.scanning" class="scan-progress">
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: scanProgressPercent + '%' }"></div>
+          </div>
+          <div class="progress-text">Scanning... {{ scanProgressPercent }}%</div>
+        </div>
+        <MemoryOverviewPane
+          v-if="changeDetectionState"
+          :width="128"
+          :state="changeDetectionState"
+          :current-offset="currentOffset"
+          :view-size="canvasWidth * canvasHeight * bytesPerPixel"
+          @jump-to-offset="jumpToOffset"
+        />
+      </div>
 
       <!-- Left Sidebar with Address Slider -->
       <div v-if="isFileOpen" class="address-slider-sidebar">
@@ -275,6 +288,7 @@ import { useChangeDetection } from './composables/useChangeDetection'
 
 // File System API
 const {
+  fileHandle,
   isFileOpen,
   fileName,
   fileSize,
@@ -306,6 +320,17 @@ const memoryData = ref<Uint8Array | null>(null)
 const isLoadingFile = ref(false)
 const memoryCanvasRef = ref<InstanceType<typeof MemoryCanvas>>()
 const lastScanTime = ref<number>(0)
+// Incremental scanning state
+const scanProgress = ref({
+  currentChunk: 0,
+  totalChunks: 0,
+  scanning: false,
+  pendingData: null as Uint8Array | null,
+  chunkSize: 65536, // 64KB per chunk
+  chunksPerFrame: 100, // Process 100 chunks (6.4MB) per frame
+  autoRefresh: true, // Auto-repeat scans
+  refreshDelay: 2000 // Wait 2 seconds between scans
+})
 
 // Mini viewers
 interface MiniViewer {
@@ -352,6 +377,22 @@ const canvasContainerHeight = ref(768)
 const selectedFormat = ref(PixelFormat.BGR888) // Start with BGR888 since user said it was working
 const splitComponents = ref(false)
 const columnMode = ref(false)
+const changeDetectionEnabled = ref(true)  // Enable by default
+
+// Watch for change detection toggle
+watch(changeDetectionEnabled, (enabled) => {
+  if (!enabled) {
+    // Stop any ongoing scan
+    scanProgress.value.scanning = false
+    scanProgress.value.pendingData = null
+    // Note: We keep the file handle open - it stays valid
+    console.log('Change detection disabled, file remains open')
+  } else if (enabled && memoryData.value) {
+    // Re-enable scanning with current data
+    console.log('Change detection enabled, starting scan...')
+    performChangeDetectionScan(memoryData.value)
+  }
+})
 const columnWidth = ref(256)
 const columnGap = ref(8)
 
@@ -385,6 +426,12 @@ const sliderPosition = ref(0)
 const pageSize = computed(() => {
   const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
   return displayWidth.value * displayHeight.value * bytesPerPixel
+})
+
+// Computed scan progress percentage
+const scanProgressPercent = computed(() => {
+  if (!scanProgress.value.scanning || scanProgress.value.totalChunks === 0) return 0
+  return Math.round((scanProgress.value.currentChunk / scanProgress.value.totalChunks) * 100)
 })
 
 const maxSliderPosition = computed(() => {
@@ -470,16 +517,132 @@ async function refreshMemory() {
   }
 }
 
-// Perform change detection scan
+// Perform change detection scan incrementally
 function performChangeDetectionScan(data: Uint8Array) {
-  // Only scan every 500ms to avoid performance issues
-  const now = Date.now()
-  if (now - lastScanTime.value < 500) return
-  lastScanTime.value = now
+  // Skip if disabled
+  if (!changeDetectionEnabled.value) return
 
-  // Use 64KB chunks for good balance of granularity and performance
-  const previousState = changeDetectionState.value
-  changeDetectionState.value = scanMemory(data, 65536, previousState)
+  // If already scanning this data, skip
+  if (scanProgress.value.scanning && scanProgress.value.pendingData === data) return
+
+  // Store the data and start incremental scan
+  scanProgress.value.pendingData = data
+  scanProgress.value.totalChunks = Math.ceil(data.length / scanProgress.value.chunkSize)
+  scanProgress.value.currentChunk = 0
+  scanProgress.value.scanning = true
+
+  console.log(`Starting incremental scan of ${data.length} bytes (${scanProgress.value.totalChunks} chunks)`)
+
+  // Start the incremental scan process
+  processNextScanBatch()
+}
+
+// Process a batch of chunks incrementally
+function processNextScanBatch() {
+  if (!scanProgress.value.scanning || !scanProgress.value.pendingData) return
+  if (!changeDetectionEnabled.value) {
+    scanProgress.value.scanning = false
+    return
+  }
+
+  const data = scanProgress.value.pendingData
+  const startChunk = scanProgress.value.currentChunk
+  const endChunk = Math.min(
+    startChunk + scanProgress.value.chunksPerFrame,
+    scanProgress.value.totalChunks
+  )
+
+  // Get or create the state
+  if (!changeDetectionState.value) {
+    changeDetectionState.value = {
+      chunks: [],
+      pageSize: 4096,
+      chunkSize: scanProgress.value.chunkSize,
+      totalSize: data.length,
+      lastCheckTime: Date.now()
+    }
+  }
+
+  // Process this batch of chunks
+  const state = changeDetectionState.value
+  const chunkSize = scanProgress.value.chunkSize
+
+  for (let i = startChunk; i < endChunk; i++) {
+    const offset = i * chunkSize
+    const size = Math.min(chunkSize, data.length - offset)
+
+    // Get the data slice for this chunk
+    const chunkData = data.subarray(offset, offset + size)
+
+    // For now, use simple JS implementation
+    // TODO: Hook up to WASM functions through the composable
+    const isZero = chunkData.every(b => b === 0)
+    const checksum = isZero ? 0 :
+      chunkData.reduce((sum, byte) => ((sum << 5) | (sum >>> 27)) ^ byte, 0)
+
+    // Check if changed from previous scan
+    const prevChunk = state.chunks[i]
+    const hasChanged = prevChunk ?
+      (prevChunk.checksum !== checksum || prevChunk.isZero !== isZero) : false
+
+    // Update or add chunk info
+    state.chunks[i] = {
+      offset,
+      size,
+      checksum,
+      isZero,
+      hasChanged
+    }
+  }
+
+  // Update progress
+  scanProgress.value.currentChunk = endChunk
+  const percentComplete = Math.round((endChunk / scanProgress.value.totalChunks) * 100)
+
+  if (endChunk < scanProgress.value.totalChunks) {
+    // More chunks to process - schedule next batch
+    console.log(`Scan progress: ${percentComplete}% (${endChunk}/${scanProgress.value.totalChunks} chunks)`)
+    requestAnimationFrame(processNextScanBatch)
+  } else {
+    // Scan complete
+    scanProgress.value.scanning = false
+    state.lastCheckTime = Date.now()
+    console.log('Change detection scan complete:', state)
+
+    // Schedule next scan if auto-refresh is enabled
+    if (scanProgress.value.autoRefresh && changeDetectionEnabled.value && scanProgress.value.pendingData) {
+      setTimeout(async () => {
+        if (changeDetectionEnabled.value && fileHandle.value) {
+          console.log('Auto-refresh: re-reading file data...')
+          // Re-read the file data (file stays open)
+          try {
+            // Just get the file data again - the handle remains valid
+            const file = await fileHandle.value.getFile()
+            const arrayBuffer = await file.arrayBuffer()
+            const freshData = new Uint8Array(arrayBuffer)
+
+            // Update the main memory data too so display refreshes
+            memoryData.value = freshData
+
+            // Start a new scan with fresh data from disk
+            scanProgress.value.pendingData = freshData
+            scanProgress.value.currentChunk = 0
+            scanProgress.value.scanning = true
+            console.log('Starting auto-refresh scan with fresh data...')
+            processNextScanBatch()
+          } catch (error) {
+            console.warn('Failed to re-read file:', error)
+            // If we can't read, just continue with existing data
+            // Don't stop auto-refresh, just skip this cycle
+            scanProgress.value.currentChunk = 0
+            scanProgress.value.scanning = true
+            console.log('Re-read failed, scanning existing data...')
+            processNextScanBatch()
+          }
+        }
+      }, scanProgress.value.refreshDelay)
+    }
+  }
 }
 
 // Jump to a specific offset from overview pane
@@ -1067,7 +1230,9 @@ onMounted(async () => {
         }
       }
     })
-    resizeObserver.observe(canvasContainer)
+    if (canvasContainer instanceof Element) {
+      resizeObserver.observe(canvasContainer)
+    }
 
     // Store observer for cleanup
     (window as any).__canvasResizeObserver = resizeObserver
@@ -1206,6 +1371,41 @@ button:disabled {
   display: flex;
   flex: 1;
   overflow: hidden;
+}
+
+.overview-container {
+  display: flex;
+  flex-direction: column;
+  width: 128px;
+  background: #0a0a0a;
+  border-right: 1px solid #333;
+}
+
+.scan-progress {
+  padding: 8px;
+  border-bottom: 1px solid #333;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 6px;
+  background: #1a1a1a;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00ff00, #00cc00);
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
+
+.progress-text {
+  font-size: 10px;
+  color: #888;
+  text-align: center;
 }
 
 /* Left sidebar with vertical slider */
