@@ -601,9 +601,19 @@ bool BeaconReader::GetCameraProcessSections(int cameraId, uint32_t pid, std::vec
         BeaconCameraDataPage* dataPage = reinterpret_cast<BeaconCameraDataPage*>(pagePtr);
         
         // Check page validity and if it contains data for the requested PID
-        if (dataPage->magic != BEACON_MAGIC || 
-            dataPage->version_top != dataPage->version_bottom ||
-            dataPage->target_pid != pid) {
+        if (dataPage->magic != BEACON_MAGIC ||
+            dataPage->version_top != dataPage->version_bottom) {
+            continue;
+        }
+
+        // Debug: Show what PID is in the page vs what we're looking for
+        if (dataPage->target_pid != pid) {
+            static bool warnedPidMismatch = false;
+            if (!warnedPidMismatch) {
+                // std::cout << "*** GetCameraPTEs: Page has PID " << dataPage->target_pid
+                //           << " but we're looking for PID " << pid << "\n";
+                warnedPidMismatch = true;
+            }
             continue;
         }
         
@@ -666,19 +676,23 @@ bool BeaconReader::GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<
     ptes.clear();
 
     if (!memBase || !discovery.valid) {
-        std::cout << "GetCameraPTEs: No memBase or invalid discovery\n";
+        // std::cout << "*** GetCameraPTEs: No memBase or invalid discovery (memBase="
+        //           << (memBase ? "valid" : "null") << ", discovery="
+        //           << (discovery.valid ? "valid" : "invalid") << ")\n";
         return false;
     }
     if (cameraId < 1 || cameraId > 2) return false;
 
     uint32_t category = (cameraId == 1) ? BEACON_CATEGORY_CAMERA1 : BEACON_CATEGORY_CAMERA2;
-    std::cout << "GetCameraPTEs: Camera " << cameraId << " PID " << pid << " category " << category << "\n";
+    // std::cout << "*** GetCameraPTEs: Camera " << cameraId << " PID " << pid << " category " << category << "\n";
     auto& camArray = categoryArrays[category];
-    
+
     if (!camArray.initialized) {
-        std::cout << "GetCameraPTEs: Camera array not initialized\n";
+        // std::cout << "*** GetCameraPTEs: Camera array not initialized for category " << category << "\n";
         return false;
     }
+
+    // std::cout << "*** GetCameraPTEs: Scanning " << camArray.pageCount << " pages for camera " << cameraId << "\n";
 
     int pteCount = 0;
     
@@ -692,9 +706,19 @@ bool BeaconReader::GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<
         BeaconCameraDataPage* dataPage = reinterpret_cast<BeaconCameraDataPage*>(pagePtr);
         
         // Check page validity and if it contains data for the requested PID
-        if (dataPage->magic != BEACON_MAGIC || 
-            dataPage->version_top != dataPage->version_bottom ||
-            dataPage->target_pid != pid) {
+        if (dataPage->magic != BEACON_MAGIC ||
+            dataPage->version_top != dataPage->version_bottom) {
+            continue;
+        }
+
+        // Debug: Show what PID is in the page vs what we're looking for
+        if (dataPage->target_pid != pid) {
+            static bool warnedPidMismatch = false;
+            if (!warnedPidMismatch) {
+                // std::cout << "*** GetCameraPTEs: Page has PID " << dataPage->target_pid
+                //           << " but we're looking for PID " << pid << "\n";
+                warnedPidMismatch = true;
+            }
             continue;
         }
         
@@ -737,7 +761,7 @@ bool BeaconReader::GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<
         }
     }
 
-    std::cout << "GetCameraPTEs: Collected " << pteCount << " PTEs for PID " << pid << "\n";
+    // std::cout << "GetCameraPTEs: Collected " << pteCount << " PTEs for PID " << pid << "\n";
     return true;
 }
 

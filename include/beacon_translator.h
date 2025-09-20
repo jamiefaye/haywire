@@ -19,7 +19,7 @@ public:
     uint64_t TranslateAddress(int pid, uint64_t virtualAddr);
     
     // Update translation cache from beacon data
-    void UpdateFromBeacon();
+    void UpdateFromBeacon(int requestedPid = 0);
     
 private:
     std::shared_ptr<BeaconReader> reader;

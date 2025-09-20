@@ -15,7 +15,7 @@ uint64_t BeaconTranslator::TranslateAddress(int pid, uint64_t virtualAddr) {
     // Update cache from latest beacon data (rate limited)
     static int callCount = 0;
     if (++callCount % 100 == 1) {  // Update every 100 calls
-        UpdateFromBeacon();
+        UpdateFromBeacon(pid);  // Pass the PID we actually need
     }
     
     // WORKAROUND: Since GetCameraTargetPID isn't working properly,
@@ -73,23 +73,25 @@ uint64_t BeaconTranslator::TranslateAddress(int pid, uint64_t virtualAddr) {
     return pteIt->second + offset;
 }
 
-void BeaconTranslator::UpdateFromBeacon() {
+void BeaconTranslator::UpdateFromBeacon(int requestedPid) {
     if (!reader) {
         std::cerr << "BeaconTranslator: No reader!" << std::endl;
         return;
     }
-    
+
     static int updateCount = 0;
     static int emptyCount = 0;
-    
-    // Get PTEs from both cameras
+
+    // Get PTEs from both cameras for the requested PID
+    // Ignore control page - just ask for PTEs for the PID we need
     for (int camera = 1; camera <= 2; camera++) {
-        // Get the focused PID for this camera
-        uint32_t pid = reader->GetCameraFocus(camera);
+        uint32_t pid = requestedPid > 0 ? requestedPid : 0;
         if (pid == 0) {
-            continue; // No PID focused on this camera
+            continue;  // No valid PID
         }
-        
+
+        // std::cerr << "*** BeaconTranslator: Requesting PTEs for PID " << pid << " from camera " << camera << std::endl;
+
         // Get PTEs for this PID from this camera
         std::unordered_map<uint64_t, uint64_t> ptes;
         if (!reader->GetCameraPTEs(camera, pid, ptes)) {
