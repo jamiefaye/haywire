@@ -279,6 +279,9 @@
       <div class="context-menu-item" @click="createMiniViewer">
         🔍 Create Mini Viewer Here
       </div>
+      <div class="context-menu-item" @click="openMagnifyingGlass">
+        🔎 Open Magnifying Glass
+      </div>
       <div class="context-menu-separator"></div>
       <div class="context-menu-item" @click="setFFTSamplePoint">
         📊 Set FFT Sample Point Here
@@ -314,6 +317,18 @@
       :relative-anchor-pos="viewer.relativeAnchorPos"
     />
 
+    <!-- Magnifying Glass -->
+    <MagnifyingGlass
+      v-if="magnifyingGlassVisible"
+      :source-canvas="mainCanvas"
+      :center-x="magnifyingGlassCenterX"
+      :center-y="magnifyingGlassCenterY"
+      :visible="magnifyingGlassVisible"
+      :initial-locked="magnifyingGlassLocked"
+      @close="closeMagnifyingGlass"
+      @update="updateMagnifyingGlassPosition"
+    />
+
     <!-- Status Bar -->
     <div class="status-bar">
       <span v-if="hoveredOffset !== null">
@@ -333,6 +348,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import MemoryCanvas from './components/MemoryCanvas.vue'
 import MiniBitmapViewer from './components/MiniBitmapViewer.vue'
+import MagnifyingGlass from './components/MagnifyingGlass.vue'
 import MemoryOverviewPane from './components/MemoryOverviewPane.vue'
 import AutoCorrelator from './components/AutoCorrelator.vue'
 import { useFileSystemAPI } from './composables/useFileSystemAPI'
@@ -408,6 +424,13 @@ interface MiniViewer {
 const miniViewers = ref<MiniViewer[]>([])
 let nextViewerId = 1
 
+// Magnifying glass
+const magnifyingGlassVisible = ref(false)
+const magnifyingGlassCenterX = ref(0)
+const magnifyingGlassCenterY = ref(0)
+const magnifyingGlassLocked = ref(false)
+const mainCanvas = ref<HTMLCanvasElement | null>(null)
+
 // Context menu
 const contextMenuVisible = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
@@ -473,6 +496,23 @@ const canvasHeight = computed(() => {
 
 const bytesPerPixel = computed(() => {
   return getBytesPerPixel(selectedFormat.value)
+})
+
+const formatName = computed(() => {
+  const formats = {
+    [PixelFormat.GRAYSCALE]: 'GRAY8',
+    [PixelFormat.RGB565]: 'RGB565',
+    [PixelFormat.RGB888]: 'RGB888',
+    [PixelFormat.RGBA8888]: 'RGBA8888',
+    [PixelFormat.BGR888]: 'BGR888',
+    [PixelFormat.BGRA8888]: 'BGRA8888',
+    [PixelFormat.ARGB8888]: 'ARGB8888',
+    [PixelFormat.ABGR8888]: 'ABGR8888',
+    [PixelFormat.BINARY]: 'BINARY',
+    [PixelFormat.HEX_PIXEL]: 'HEX_PIXEL',
+    [PixelFormat.CHAR_8BIT]: 'CHAR_8BIT'
+  }
+  return formats[selectedFormat.value] || 'GRAY8'
 })
 
 // Offset handling
@@ -948,6 +988,52 @@ function closeMiniViewer(id: number) {
   miniViewers.value = miniViewers.value.filter(v => v.id !== id)
 }
 
+// Magnifying glass functions
+function openMagnifyingGlass() {
+  if (!memoryData.value) return
+
+  // Get the main canvas from the MemoryCanvas component
+  const canvas = memoryCanvasRef.value?.canvas
+  if (!canvas) return
+  mainCanvas.value = canvas
+
+  // Calculate pixel position from context menu offset relative to current view
+  const relativeOffset = contextMenuOffset.value - currentOffset.value
+  const bytesPerRow = displayWidth.value * bytesPerPixel.value
+
+  const pixelY = Math.floor(relativeOffset / bytesPerRow)
+  const pixelX = Math.floor((relativeOffset % bytesPerRow) / bytesPerPixel.value)
+
+  magnifyingGlassCenterX.value = pixelX
+  magnifyingGlassCenterY.value = pixelY
+  magnifyingGlassLocked.value = false // Context menu opens without lock
+  magnifyingGlassVisible.value = true
+}
+
+function closeMagnifyingGlass() {
+  magnifyingGlassVisible.value = false
+}
+
+function updateMagnifyingGlassPosition(x: number, y: number) {
+  // Convert screen coordinates to canvas coordinates
+  const canvas = memoryCanvasRef.value?.canvas
+  if (!canvas) return
+
+  const rect = canvas.getBoundingClientRect()
+  const canvasX = x - rect.left
+  const canvasY = y - rect.top
+
+  // Check bounds
+  if (canvasX < 0 || canvasY < 0 || canvasX > rect.width || canvasY > rect.height) {
+    return
+  }
+
+  // Convert canvas position to pixel coordinates
+  // Note: Since we're rendering pixels, canvas coordinates are already pixel coordinates
+  magnifyingGlassCenterX.value = Math.floor(canvasX)
+  magnifyingGlassCenterY.value = Math.floor(canvasY)
+}
+
 function updateMiniViewer(id: number, config: any) {
   const viewer = miniViewers.value.find(v => v.id === id)
   if (viewer) {
@@ -1347,6 +1433,42 @@ function handleKeyboard(event: KeyboardEvent) {
       break
     case 'End':
       jumpToEnd()
+      event.preventDefault()
+      break
+    case 'm':
+      // Toggle magnifying glass with lock
+      if (magnifyingGlassVisible.value) {
+        closeMagnifyingGlass()
+      } else {
+        // Get mouse position from last known position or center of viewport
+        const canvas = memoryCanvasRef.value?.canvas
+        if (canvas) {
+          mainCanvas.value = canvas
+          const rect = canvas.getBoundingClientRect()
+          magnifyingGlassCenterX.value = Math.floor(rect.width / 2)
+          magnifyingGlassCenterY.value = Math.floor(rect.height / 2)
+          magnifyingGlassLocked.value = true // Lock when using lowercase 'm'
+          magnifyingGlassVisible.value = true
+        }
+      }
+      event.preventDefault()
+      break
+    case 'M':
+      // Toggle magnifying glass without lock
+      if (magnifyingGlassVisible.value) {
+        closeMagnifyingGlass()
+      } else {
+        // Get mouse position from last known position or center of viewport
+        const canvas = memoryCanvasRef.value?.canvas
+        if (canvas) {
+          mainCanvas.value = canvas
+          const rect = canvas.getBoundingClientRect()
+          magnifyingGlassCenterX.value = Math.floor(rect.width / 2)
+          magnifyingGlassCenterY.value = Math.floor(rect.height / 2)
+          magnifyingGlassLocked.value = false // Don't lock when using uppercase 'M'
+          magnifyingGlassVisible.value = true
+        }
+      }
       event.preventDefault()
       break
   }

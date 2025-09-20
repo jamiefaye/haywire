@@ -174,6 +174,11 @@ function getBytesPerPixelForFormat(format: PixelFormat): number {
   }
 }
 
+// Expose the canvas element for other components to use
+defineExpose({
+  canvas: canvasRef
+})
+
 // Initial render when mounted
 onMounted(() => {
   // Wait a tick to ensure DOM is ready
