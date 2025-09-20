@@ -6,8 +6,11 @@
     @mousedown="startDrag"
   >
     <div class="header" @mousedown="startMove">
-      <span class="title">Magnifier {{ zoom }}x{{ locked ? ' 🔒' : '' }}</span>
+      <span class="title">Magnifier {{ zoom }}x</span>
       <div class="controls">
+        <button @click="toggleLock" :class="{ active: locked }" title="Lock position (L)">
+          {{ locked ? '🔒' : '🔓' }}
+        </button>
         <select v-model="zoom" class="zoom-select">
           <option v-for="z in zoomLevels" :key="z" :value="z">{{ z }}x</option>
         </select>
@@ -119,6 +122,10 @@ function onMouseMove(e: MouseEvent) {
 function onMouseUp() {
   isMoving = false
   isResizing = false
+}
+
+function toggleLock() {
+  locked.value = !locked.value
 }
 
 function close() {
