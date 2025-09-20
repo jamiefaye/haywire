@@ -138,12 +138,23 @@ int main(int argc, char** argv) {
             // Store process name in visualizer for display
             visualizer.SetCurrentProcessName(processName);
             
-            // First, tell the camera to focus on this PID
-            beaconReader->SetCameraFocus(1, pid);
-            
+            // With companion_oneshot, we trigger a refresh with the target PID
+            if (qemu.IsGuestAgentConnected()) {
+                std::cout << "Refreshing beacon data for PID " << pid << "...\n";
+                beaconReader->RefreshCompanion(qemu.GetGuestAgent(), pid);
+
+                // Give it a moment to complete
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+                // Re-scan for updated beacon data
+                beaconReader->FindDiscovery();
+            } else {
+                // Without QGA, we can't trigger oneshot companion
+                std::cout << "Warning: Guest agent not connected, cannot refresh camera data\n";
+            }
+
             // Load process sections from camera beacon data with retry
             std::vector<SectionEntry> sections;
-            std::cout << "Waiting for camera to scan PID " << pid << "...\n";
             
             // Retry for up to 3 seconds for camera data to become available
             int retries = 30;  // 30 * 100ms = 3 seconds
@@ -315,7 +326,7 @@ int main(int argc, char** argv) {
     
     // Track beacon refresh timing
     auto lastBeaconRefresh = std::chrono::high_resolution_clock::now();
-    const auto beaconRefreshInterval = std::chrono::seconds(2); // Refresh every 2 seconds
+    const auto beaconRefreshInterval = std::chrono::seconds(5); // Refresh every 5 seconds
     
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -332,7 +343,13 @@ int main(int argc, char** argv) {
         // Periodically refresh beacon data
         if (currentTime - lastBeaconRefresh > beaconRefreshInterval) {
             lastBeaconRefresh = currentTime;
-            
+
+            // Trigger companion_oneshot to refresh beacon data
+            if (qemu.IsGuestAgentConnected()) {
+                uint32_t focusPid = visualizer.GetTargetPID();  // Get current focus PID
+                beaconReader->RefreshCompanion(qemu.GetGuestAgent(), focusPid);
+            }
+
             // Rescan beacon data
             if (beaconReader->FindDiscovery()) {
                 // Beacon data refreshed - process list will update automatically

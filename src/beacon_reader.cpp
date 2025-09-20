@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <algorithm>
 #include <map>
+#include <sstream>
 
 // Compile-time structure size verification
 #define STATIC_ASSERT(cond, msg) static_assert(cond, msg)
@@ -909,102 +910,94 @@ bool BeaconReader::RefreshCategoryPages() {
 }
 
 // Companion management functions
+bool BeaconReader::RefreshCompanion(GuestAgent* agent, uint32_t focusPid) {
+    if (!agent) return false;
+    if (!agent->IsConnected()) return false;
+
+    static uint32_t requestCounter = 0x42000000;
+    requestCounter++;
+
+    std::string output;
+
+    // Check if companion_oneshot exists
+    agent->ExecuteCommand("[ -x /home/ubuntu/companion_oneshot ] && echo 'BINARY_EXISTS'", output);
+
+    if (output.find("BINARY_EXISTS") == std::string::npos) {
+        // Need to compile companion_oneshot
+        std::cout << "Compiling companion_oneshot...\n";
+
+        // Check for source
+        agent->ExecuteCommand("[ -f /home/ubuntu/companion_oneshot.c ] || echo 'SOURCE_MISSING'", output);
+        if (output.find("SOURCE_MISSING") != std::string::npos) {
+            std::cout << "companion_oneshot.c not found. Please deploy:\n";
+            std::cout << "  scp src/companion_oneshot.c vm:~/\n";
+            std::cout << "  scp include/beacon_protocol.h vm:~/\n";
+            return false;
+        }
+
+        // Compile it
+        agent->ExecuteCommand("cd /home/ubuntu && gcc -O2 -o companion_oneshot companion_oneshot.c -lrt 2>&1", output);
+
+        // Verify compilation
+        agent->ExecuteCommand("[ -x /home/ubuntu/companion_oneshot ] && echo 'COMPILE_SUCCESS'", output);
+        if (output.find("COMPILE_SUCCESS") == std::string::npos) {
+            std::cout << "Compilation failed\n";
+            return false;
+        }
+    }
+
+    // Run companion_oneshot with request ID and optional focus PID
+    std::stringstream cmd;
+    cmd << "cd /home/ubuntu && ./companion_oneshot --once --request=0x"
+        << std::hex << requestCounter;
+
+    if (focusPid > 0) {
+        cmd << " --target=" << std::dec << focusPid;
+    }
+
+    cmd << " 2>&1";
+
+    bool success = agent->ExecuteCommand(cmd.str(), output);
+    if (!success) {
+        std::cout << "Failed to run companion_oneshot\n";
+        return false;
+    }
+
+    // Check if it succeeded
+    if (output.find("Single cycle complete") != std::string::npos) {
+        companionPid = requestCounter;  // Use request ID as marker
+        lastCompanionCheck = time(nullptr);
+        return true;
+    }
+
+    std::cout << "companion_oneshot failed: " << output << "\n";
+    return false;
+}
+
 bool BeaconReader::StartCompanion(GuestAgent* agent) {
     if (!agent) {
         std::cout << "No guest agent available for companion startup\n";
         return false;
     }
-    
+
     if (!agent->IsConnected()) {
         std::cout << "Guest agent not connected\n";
         return false;
     }
-    
-    std::cout << "Starting companion via QGA...\n";
-    
-    // First, stop any existing companion
-    std::string output;
-    agent->ExecuteCommand("killall companion_camera companion_multi companion_camera_v2 2>/dev/null || true", output);
-    
-    // Check if companion binary already exists
-    agent->ExecuteCommand("[ -x /home/ubuntu/companion_camera_v2 ] && echo 'BINARY_EXISTS'", output);
-    
-    if (output.find("BINARY_EXISTS") == std::string::npos) {
-        // Binary doesn't exist - need to check for source and compile
-        std::cout << "Companion binary not found, checking source files...\n";
-        
-        // Check if companion_camera_v2.c exists
-        agent->ExecuteCommand("[ -f /home/ubuntu/companion_camera_v2.c ] || echo 'SOURCE_MISSING'", output);
-        if (output.find("SOURCE_MISSING") != std::string::npos) {
-            std::cout << "companion_camera_v2.c not found in VM. Please deploy:\n";
-            std::cout << "  scp src/companion_camera_v2.c vm:~/\n";
-            std::cout << "  scp src/beacon_encoder.c vm:~/\n";
-            std::cout << "  scp include/beacon_encoder.h vm:~/\n";
-            return false;
-        }
-        
-        // Check if beacon_encoder.c exists
-        agent->ExecuteCommand("[ -f /home/ubuntu/beacon_encoder.c ] || echo 'ENCODER_MISSING'", output);
-        if (output.find("ENCODER_MISSING") != std::string::npos) {
-            std::cout << "beacon_encoder.c not found in VM. Please deploy:\n";
-            std::cout << "  scp src/beacon_encoder.c vm:~/\n";
-            return false;
-        }
-        
-        // Compile the companion
-        std::cout << "Compiling companion in VM...\n";
-        agent->ExecuteCommand("cd /home/ubuntu && gcc -O2 -o companion_camera_v2 companion_camera_v2.c beacon_encoder.c 2>&1", output);
-        
-        // Verify binary was created
-        agent->ExecuteCommand("[ -x /home/ubuntu/companion_camera_v2 ] && echo 'COMPILE_SUCCESS'", output);
-        if (output.find("COMPILE_SUCCESS") == std::string::npos) {
-            std::cout << "Compilation failed\n";
-            return false;
-        }
-        std::cout << "Companion compiled successfully\n";
-    } else {
-        std::cout << "Using existing companion binary\n";
-    }
-    
-    // Start the companion in background (needs sudo for memory access)
-    std::cout << "Starting companion process...\n";
-    bool success = agent->ExecuteCommand("cd /home/ubuntu && sudo nohup ./companion_camera_v2 > companion.log 2>&1 & echo $!", output);
-    if (!success) {
-        std::cout << "Failed to start companion\n";
-        return false;
-    }
-    
-    // Extract PID from output
-    try {
-        companionPid = std::stoul(output);
-        lastCompanionCheck = time(nullptr);
-        std::cout << "Started companion with PID " << companionPid << "\n";
-        
-        // Give it a moment to start up
-        usleep(500000); // 500ms
-        
-        return true;
-    } catch (...) {
-        std::cout << "Failed to parse companion PID from: " << output << "\n";
-        companionPid = 0;
-        return false;
-    }
+
+    // For oneshot mode, we just trigger a refresh
+    return RefreshCompanion(agent);
 }
 
 bool BeaconReader::IsCompanionRunning() {
-    if (companionPid == 0) return false;
-    
-    // Don't check too frequently
-    uint32_t now = time(nullptr);
-    if (now - lastCompanionCheck < 5) {
-        return companionPid != 0; // Assume it's still running if we checked recently
+    // For companion_oneshot, we check if we have valid beacon data
+    // companionPid holds the last request ID we used
+    if (companionPid >= 0x42000000) {
+        // Check if discovery page exists with our request ID
+        return discovery.valid && discovery.pid == companionPid;
     }
-    
-    lastCompanionCheck = now;
-    
-    // For now, just check if we have a valid discovery page
-    // This is a good indicator that the companion is working
-    return discovery.valid && discovery.pid == companionPid;
+
+    return false;
 }
 
 bool BeaconReader::StopCompanion(GuestAgent* agent) {

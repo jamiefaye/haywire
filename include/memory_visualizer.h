@@ -46,6 +46,8 @@ public:
     
     bool IsHexOverlayEnabled() const { return showHexOverlay; }
     void SetHexOverlayEnabled(bool enabled) { showHexOverlay = enabled; }
+
+    int GetTargetPID() const { return targetPid; }
     
     uint32_t GetPixelAt(int x, int y) const;
     uint64_t GetAddressAt(int x, int y) const;

@@ -335,11 +335,9 @@ void PIDSelector::HandleSelection(uint32_t pid) {
         }
     }
     
-    // Set camera focus via beacon
-    if (beaconReader) {
-        std::cout << "Setting camera focus...\n";
-        beaconReader->SetCameraFocus(selectedCamera, pid);
-    } else {
+    // Camera focus is now set via RefreshCompanion in the callback
+    // No need to call SetCameraFocus here anymore
+    if (!beaconReader) {
         std::cout << "WARNING: No beacon reader available!\n";
     }
     

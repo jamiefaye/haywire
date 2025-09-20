@@ -72,6 +72,7 @@ public:
     
     // Companion management
     bool StartCompanion(class GuestAgent* agent);
+    bool RefreshCompanion(class GuestAgent* agent, uint32_t focusPid = 0);
     bool IsCompanionRunning();
     bool StopCompanion(class GuestAgent* agent);
     
