@@ -433,7 +433,7 @@ const splitComponents = ref(false)
 const columnMode = ref(false)
 const changeDetectionEnabled = ref(false)  // Disabled by default - opt-in feature
 const showCorrelation = ref(false)  // Autocorrelation display
-const fftSampleOffset = ref<number>(0)  // Offset for FFT sampling
+const fftSampleOffset = ref<number>(0)  // Offset for FFT sampling (relative to current view)
 const fftRelativePosition = ref<{ x: number, y: number } | null>(null)  // Relative position (0-1)
 const fftIndicatorPosition = ref<{ x: number, y: number } | null>(null)  // Absolute pixel position
 
@@ -1033,7 +1033,8 @@ function copyAddress() {
 }
 
 function setFFTSamplePoint() {
-  fftSampleOffset.value = contextMenuOffset.value
+  // The offset should be relative to the current view, not absolute
+  fftSampleOffset.value = contextMenuOffset.value - currentOffset.value
   console.log('Set FFT sample point at:', `0x${contextMenuOffset.value.toString(16).toUpperCase()}`)
 
   // Store relative position for the indicator
@@ -1053,7 +1054,7 @@ function setFFTSamplePoint() {
   }
 }
 
-// Update FFT indicator position based on relative position
+// Update FFT indicator position and sample offset based on relative position
 function updateFFTIndicatorPosition() {
   if (!fftRelativePosition.value) return
 
@@ -1064,6 +1065,38 @@ function updateFFTIndicatorPosition() {
       x: fftRelativePosition.value.x * rect.width,
       y: fftRelativePosition.value.y * rect.height
     }
+
+    // Recalculate the sample offset based on the relative position
+    const x = fftRelativePosition.value.x * rect.width
+    const y = fftRelativePosition.value.y * rect.height
+
+    const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
+    let clickOffset = 0
+
+    if (columnMode.value) {
+      // Column mode calculation
+      const pixelX = Math.floor((x / rect.width) * canvasWidth.value)
+      const pixelY = Math.floor((y / rect.height) * canvasHeight.value)
+
+      const totalColumnWidth = columnWidth.value + columnGap.value
+      const columnIndex = Math.floor(pixelX / totalColumnWidth)
+      const xInColumn = pixelX % totalColumnWidth
+
+      if (xInColumn < columnWidth.value) {
+        const memoryX = xInColumn
+        const memoryY = columnIndex * canvasHeight.value + pixelY
+        clickOffset = memoryY * displayWidth.value * bytesPerPixel + memoryX * bytesPerPixel
+      }
+    } else {
+      // Simple linear mode
+      const row = Math.floor((y / rect.height) * displayHeight.value)
+      const col = Math.floor((x / rect.width) * displayWidth.value)
+      clickOffset = row * displayWidth.value * bytesPerPixel + col * bytesPerPixel
+    }
+
+    // Update the FFT sample offset relative to the loaded memory data
+    // Don't include currentOffset since memoryData starts at currentOffset
+    fftSampleOffset.value = clickOffset
   }
 }
 
