@@ -110,6 +110,16 @@
 
     <!-- Main Content Area -->
     <div class="main-content">
+      <!-- Overview Pane -->
+      <MemoryOverviewPane
+        v-if="isFileOpen && changeDetectionState"
+        :width="128"
+        :state="changeDetectionState"
+        :current-offset="currentOffset"
+        :view-size="canvasWidth * canvasHeight * bytesPerPixel"
+        @jump-to-offset="jumpToOffset"
+      />
+
       <!-- Left Sidebar with Address Slider -->
       <div v-if="isFileOpen" class="address-slider-sidebar">
         <button
@@ -257,9 +267,11 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import MemoryCanvas from './components/MemoryCanvas.vue'
 import MiniBitmapViewer from './components/MiniBitmapViewer.vue'
+import MemoryOverviewPane from './components/MemoryOverviewPane.vue'
 import { useFileSystemAPI } from './composables/useFileSystemAPI'
 import { useQmpBridge } from './composables/useQmpBridge'
 import { PixelFormat } from './composables/useWasmRenderer'
+import { useChangeDetection } from './composables/useChangeDetection'
 
 // File System API
 const {
@@ -279,10 +291,21 @@ const {
   disconnect: disconnectQmp
 } = useQmpBridge()
 
+// Change detection
+const {
+  isLoading: isLoadingChangeDetection,
+  error: changeDetectionError,
+  state: changeDetectionState,
+  loadModule: loadChangeDetectionModule,
+  scanMemory,
+  getChunkAtOffset
+} = useChangeDetection()
+
 // Memory data
 const memoryData = ref<Uint8Array | null>(null)
 const isLoadingFile = ref(false)
 const memoryCanvasRef = ref<InstanceType<typeof MemoryCanvas>>()
+const lastScanTime = ref<number>(0)
 
 // Mini viewers
 interface MiniViewer {
@@ -347,6 +370,10 @@ const canvasWidth = computed(() => {
 
 const canvasHeight = computed(() => {
   return displayHeight.value
+})
+
+const bytesPerPixel = computed(() => {
+  return getBytesPerPixel(selectedFormat.value)
 })
 
 // Offset handling
@@ -425,6 +452,7 @@ async function refreshMemory() {
       data = padded
     }
     memoryData.value = data
+    performChangeDetectionScan(data)
   } else {
     const data = await readMemoryChunk(currentOffset.value, memorySize)
     if (data) {
@@ -433,11 +461,33 @@ async function refreshMemory() {
         const padded = new Uint8Array(memorySize)
         padded.set(data)
         memoryData.value = padded
+        performChangeDetectionScan(padded)
       } else {
         memoryData.value = data
+        performChangeDetectionScan(data)
       }
     }
   }
+}
+
+// Perform change detection scan
+function performChangeDetectionScan(data: Uint8Array) {
+  // Only scan every 500ms to avoid performance issues
+  const now = Date.now()
+  if (now - lastScanTime.value < 500) return
+  lastScanTime.value = now
+
+  // Use 64KB chunks for good balance of granularity and performance
+  const previousState = changeDetectionState.value
+  changeDetectionState.value = scanMemory(data, 65536, previousState)
+}
+
+// Jump to a specific offset from overview pane
+function jumpToOffset(offset: number) {
+  currentOffset.value = offset
+  sliderPosition.value = offset
+  offsetInput.value = `0x${offset.toString(16)}`
+  refreshMemory()
 }
 
 // Update offset from input
@@ -979,6 +1029,9 @@ function handleKeyboard(event: KeyboardEvent) {
 onMounted(async () => {
   // Don't auto-connect to QMP since we're not using VA to PA translation yet
   // connectQmp().catch(console.error)
+
+  // Initialize change detection module
+  loadChangeDetectionModule().catch(console.error)
 
   // Add event listeners
   window.addEventListener('keydown', handleKeyboard)
