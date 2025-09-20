@@ -115,14 +115,14 @@ int init_memory() {
         }
         memset(pids_ptr, 0, 16 * 4096);
 
-        // 4. Camera1 pages - 1 control + 199 data pages
+        // 4. Camera1 pages - 200 data pages (no control page)
         if (posix_memalign(&camera1_ptr, 4096, BEACON_CAMERA1_PAGES * 4096) != 0) {
             perror("Failed to allocate camera1 pages");
             return -1;
         }
         memset(camera1_ptr, 0, BEACON_CAMERA1_PAGES * 4096);
 
-        // 5. Camera2 pages - 1 control + 199 data pages
+        // 5. Camera2 pages - 200 data pages (no control page)
         if (posix_memalign(&camera2_ptr, 4096, BEACON_CAMERA2_PAGES * 4096) != 0) {
             perror("Failed to allocate camera2 pages");
             return -1;
@@ -198,10 +198,10 @@ int init_memory() {
            CAMERA_ID, 1 + 16 + BEACON_CAMERA1_PAGES + BEACON_CAMERA2_PAGES);
     printf("  - Master page: 1 page\n");
     printf("  - PID pages: 16 pages\n");
-    printf("  - Camera1: %d pages (1 control + %d data)\n", 
-           BEACON_CAMERA1_PAGES, BEACON_CAMERA1_PAGES - 1);
-    printf("  - Camera2: %d pages (1 control + %d data)\n", 
-           BEACON_CAMERA2_PAGES, BEACON_CAMERA2_PAGES - 1);
+    printf("  - Camera1: %d pages (all data pages)\n",
+           BEACON_CAMERA1_PAGES);
+    printf("  - Camera2: %d pages (all data pages)\n",
+           BEACON_CAMERA2_PAGES);
     
     return 0;
 }
@@ -315,7 +315,7 @@ void scan_process_memory(uint32_t pid) {
     // Get the appropriate camera pointer
     void* camera_ptr = (CAMERA_ID == 1) ? camera1_ptr : camera2_ptr;
     
-    // Start fresh from page 0 (all pages are data pages now)
+    // Start from page 0 since we're not using control pages anymore
     camera_write_index = 0;
     camera_sequence++;
     
@@ -484,7 +484,7 @@ void scan_process_memory(uint32_t pid) {
     current_page->version_bottom = current_page->version_top;
     
     if (section_count > 0) {
-        printf("Camera %d: Wrote %d sections for PID %u to pages 1-%u\n", 
+        printf("Camera %d: Wrote %d sections for PID %u to pages 0-%u\n",
                CAMERA_ID, section_count, pid, camera_write_index);
     }
 }

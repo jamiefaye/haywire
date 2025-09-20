@@ -591,8 +591,8 @@ bool BeaconReader::GetCameraProcessSections(int cameraId, uint32_t pid, std::vec
 
     int pteCount = 0;
     
-    // Camera data pages start at index 1 (index 0 is control page)
-    for (size_t pageIdx = 1; pageIdx < camArray.pageCount; pageIdx++) {
+    // All pages are data pages now (no control page)
+    for (size_t pageIdx = 0; pageIdx < camArray.pageCount; pageIdx++) {
         if (!camArray.isPageValid(pageIdx)) {
             continue;
         }
@@ -696,8 +696,8 @@ bool BeaconReader::GetCameraPTEs(int cameraId, uint32_t pid, std::unordered_map<
 
     int pteCount = 0;
     
-    // Camera data pages start at index 1 (index 0 is control page)
-    for (size_t pageIdx = 1; pageIdx < camArray.pageCount; pageIdx++) {
+    // All pages are data pages now (no control page)
+    for (size_t pageIdx = 0; pageIdx < camArray.pageCount; pageIdx++) {
         if (!camArray.isPageValid(pageIdx)) {
             continue;
         }
