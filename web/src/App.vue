@@ -393,7 +393,8 @@ const {
   state: changeDetectionState,
   loadModule: loadChangeDetectionModule,
   scanMemory,
-  getChunkAtOffset
+  getChunkAtOffset,
+  testChunkZero
 } = useChangeDetection()
 
 // Memory data
@@ -404,16 +405,24 @@ const lastScanTime = ref<number>(0)
 
 // Check if running in Electron
 const isElectron = ref(window.electronAPI && window.electronAPI.isElectron)
-// Incremental scanning state
+// Incremental scanning state - track position for each scan type
 const scanProgress = ref({
-  currentChunk: 0,
+  // Global scan state
   totalChunks: 0,
   scanning: false,
-  pendingData: null as Uint8Array | null,
   chunkSize: 65536, // 64KB per chunk
-  chunksPerFrame: 100, // Process 100 chunks (6.4MB) per frame
-  autoRefresh: false, // Auto-repeat scans (off by default due to permission issues)
-  refreshDelay: 2000 // Wait 2 seconds between scans
+  chunksPerFrame: 10000, // Process 10000 chunks (640MB) per frame - 100x faster
+
+  // Separate positions for each scan type
+  grandScanPosition: 0,    // Full memory scan position
+  mapScanPosition: 0,      // Memory map window scan position
+  viewportScanFrame: 0,    // Track frames for viewport (15Hz = every 4 frames at 60fps)
+
+  // Deprecated - will remove
+  currentChunk: 0,
+  pendingData: null as Uint8Array | null,
+  autoRefresh: false,
+  refreshDelay: 2000
 })
 
 // Mini viewers
@@ -481,11 +490,16 @@ watch(changeDetectionEnabled, (enabled) => {
     scanProgress.value.scanning = false
     scanProgress.value.pendingData = null
     // Note: We keep the file handle open - it stays valid
-    console.log('Change detection disabled, file remains open')
-  } else if (enabled && memoryData.value) {
-    // Re-enable scanning with current data
-    console.log('Change detection enabled, starting scan...')
-    performChangeDetectionScan(memoryData.value)
+  } else if (enabled) {
+    // Re-enable scanning
+    if (isElectron.value && window.electronAPI && isFileOpen.value) {
+      // For Electron, scan the full file
+      startFullFileScan()
+    } else if (memoryData.value) {
+      // For web version, scan the loaded data
+      performChangeDetectionScan(memoryData.value)
+    } else {
+    }
   }
 })
 const columnWidth = ref(256)
@@ -543,7 +557,7 @@ const pageSize = computed(() => {
 // Computed scan progress percentage
 const scanProgressPercent = computed(() => {
   if (!scanProgress.value.scanning || scanProgress.value.totalChunks === 0) return 0
-  return Math.round((scanProgress.value.currentChunk / scanProgress.value.totalChunks) * 100)
+  return Math.round((scanProgress.value.grandScanPosition / scanProgress.value.totalChunks) * 100)
 })
 
 const maxSliderPosition = computed(() => {
@@ -611,7 +625,8 @@ async function refreshMemory() {
       data = padded
     }
     memoryData.value = data
-    performChangeDetectionScan(data)
+    // Don't scan just the viewport - that's handled separately
+    // performChangeDetectionScan(data)
   } else {
     const data = await readMemoryChunk(currentOffset.value, memorySize)
     if (data) {
@@ -620,10 +635,12 @@ async function refreshMemory() {
         const padded = new Uint8Array(memorySize)
         padded.set(data)
         memoryData.value = padded
-        performChangeDetectionScan(padded)
+        // Don't scan just the viewport
+        // performChangeDetectionScan(padded)
       } else {
         memoryData.value = data
-        performChangeDetectionScan(data)
+        // Don't scan just the viewport
+        // performChangeDetectionScan(data)
       }
     }
   }
@@ -634,16 +651,26 @@ function performChangeDetectionScan(data: Uint8Array) {
   // Skip if disabled
   if (!changeDetectionEnabled.value) return
 
-  // If already scanning this data, skip
-  if (scanProgress.value.scanning && scanProgress.value.pendingData === data) return
+  // If already scanning, just update the pending data but don't restart
+  if (scanProgress.value.scanning) {
+    // Update the data for future scans but don't interrupt current scan
+    scanProgress.value.pendingData = data
+    return
+  }
 
-  // Store the data and start incremental scan
+  // Store the data and start/continue incremental scan
   scanProgress.value.pendingData = data
   scanProgress.value.totalChunks = Math.ceil(data.length / scanProgress.value.chunkSize)
-  scanProgress.value.currentChunk = 0
-  scanProgress.value.scanning = true
 
-  console.log(`Starting incremental scan of ${data.length} bytes (${scanProgress.value.totalChunks} chunks)`)
+  // Only reset to 0 if this is the first scan or data size changed
+  if (!changeDetectionState.value || changeDetectionState.value.totalSize !== data.length) {
+    scanProgress.value.currentChunk = 0
+    // Start new scan
+  } else {
+    // Continue from where we left off
+  }
+
+  scanProgress.value.scanning = true
 
   // Start the incremental scan process
   processNextScanBatch()
@@ -711,50 +738,220 @@ function processNextScanBatch() {
   scanProgress.value.currentChunk = endChunk
   const percentComplete = Math.round((endChunk / scanProgress.value.totalChunks) * 100)
 
+  // Debug: log every 10% progress
+  if (percentComplete % 10 === 0 && percentComplete > 0) {
+  }
+
   if (endChunk < scanProgress.value.totalChunks) {
     // More chunks to process - schedule next batch
-    console.log(`Scan progress: ${percentComplete}% (${endChunk}/${scanProgress.value.totalChunks} chunks)`)
     requestAnimationFrame(processNextScanBatch)
   } else {
-    // Scan complete
-    scanProgress.value.scanning = false
+    // Reached end of memory - wrap around to continue scanning
     state.lastCheckTime = Date.now()
-    console.log('Change detection scan complete:', state)
 
-    // Schedule next scan if auto-refresh is enabled
-    if (scanProgress.value.autoRefresh && changeDetectionEnabled.value && scanProgress.value.pendingData) {
-      setTimeout(async () => {
-        if (changeDetectionEnabled.value && fileHandle.value) {
-          console.log('Auto-refresh: re-reading file data...')
-          // Re-read the file data (file stays open)
-          try {
-            // Just get the file data again - the handle remains valid
-            const file = await fileHandle.value.getFile()
-            const arrayBuffer = await file.arrayBuffer()
-            const freshData = new Uint8Array(arrayBuffer)
+    // Reset to start for continuous scanning
+    scanProgress.value.currentChunk = 0
 
-            // Update the main memory data too so display refreshes
-            memoryData.value = freshData
-
-            // Start a new scan with fresh data from disk
-            scanProgress.value.pendingData = freshData
-            scanProgress.value.currentChunk = 0
-            scanProgress.value.scanning = true
-            console.log('Starting auto-refresh scan with fresh data...')
-            processNextScanBatch()
-          } catch (error) {
-            console.warn('Failed to re-read file:', error)
-            // If we can't read, just continue with existing data
-            // Don't stop auto-refresh, just skip this cycle
-            scanProgress.value.currentChunk = 0
-            scanProgress.value.scanning = true
-            console.log('Re-read failed, scanning existing data...')
-            processNextScanBatch()
-          }
+    // Continue scanning if enabled
+    if (changeDetectionEnabled.value && scanProgress.value.pendingData) {
+      // Small delay to avoid blocking, then continue
+      setTimeout(() => {
+        if (changeDetectionEnabled.value && scanProgress.value.pendingData) {
+          scanProgress.value.scanning = true
+          processNextScanBatch()
         }
-      }, scanProgress.value.refreshDelay)
+      }, 10) // Very small delay to yield to UI
+    } else {
+      scanProgress.value.scanning = false
     }
   }
+}
+
+// Generic chunk processor - scans a range of chunks and updates position
+async function processChunkRange(startIdx: number, endIdx: number, currentPos: number, chunksToDo: number): Promise<number> {
+  if (!window.electronAPI || !changeDetectionState.value) return currentPos
+
+  const state = changeDetectionState.value
+  const chunkSize = scanProgress.value.chunkSize
+  let processed = 0
+  let position = currentPos
+
+  // Pre-populate chunks for the entire range if needed
+  // This ensures the memory map can display chunks even if they haven't been scanned yet
+  while (state.chunks.length < endIdx) {
+    state.chunks.push({
+      offset: state.chunks.length * chunkSize,
+      size: chunkSize,
+      checksum: 0,
+      isZero: true,
+      hasChanged: false
+    })
+  }
+
+  // Process chunks from current position, wrapping around if needed
+  while (processed < chunksToDo) {
+    // Skip if outside the requested range
+    if (position < startIdx || position >= endIdx) {
+      position = startIdx // Wrap to beginning of range
+      if (position >= endIdx) break // Empty range
+    }
+
+    // Read and process the chunk
+    const offset = position * chunkSize
+    const size = Math.min(chunkSize, fileSize.value - offset)
+
+    try {
+      const result = await window.electronAPI.readMemoryChunk(offset, size)
+      if (result.success && result.data) {
+        const chunkData = result.data
+
+        // Test for zero
+        const isZero = testChunkZero(chunkData, 0, size)
+
+        // Calculate checksum
+        const checksum = isZero ? 0 :
+          chunkData.reduce((sum, byte) => ((sum << 5) | (sum >>> 27)) ^ byte, 0)
+
+        // Check if changed
+        const prevChunk = state.chunks[position]
+        const hasChanged = prevChunk ?
+          (prevChunk.checksum !== checksum || prevChunk.isZero !== isZero) :
+          !isZero  // First scan: mark non-zero as "active" data
+
+        // Update state using splice for Vue reactivity
+        state.chunks.splice(position, 1, {
+          offset,
+          size,
+          checksum,
+          isZero,
+          hasChanged
+        })
+      }
+    } catch (error) {
+      // Silent failure - chunk remains unchanged
+    }
+
+    processed++
+    position++
+
+    // Wrap around if we hit the end
+    if (position >= endIdx) {
+      position = startIdx
+    }
+  }
+
+  return position // Return new position for next call
+}
+
+// Scan the entire file for Electron version
+async function startFullFileScan() {
+  if (!isElectron.value || !window.electronAPI || !isFileOpen.value) return
+  if (scanProgress.value.scanning) return
+
+  // Initialize state FIRST to prevent component recreation
+  if (!changeDetectionState.value) {
+    changeDetectionState.value = {
+      chunks: [],
+      pageSize: 4096,
+      chunkSize: scanProgress.value.chunkSize,
+      totalSize: fileSize.value,
+      lastCheckTime: Date.now()
+    }
+  }
+
+  // Initialize for full file scan
+  scanProgress.value.totalChunks = Math.ceil(fileSize.value / scanProgress.value.chunkSize)
+  scanProgress.value.grandScanPosition = 0  // Reset grand scan position
+  scanProgress.value.mapScanPosition = 0     // Reset map scan position
+  scanProgress.value.viewportScanFrame = 0   // Reset viewport frame counter
+  scanProgress.value.scanning = true
+
+  processFullFileBatch()
+}
+
+async function processFullFileBatch() {
+  if (!scanProgress.value.scanning || !changeDetectionEnabled.value) {
+    scanProgress.value.scanning = false
+    return
+  }
+
+  // Make sure totalChunks is initialized
+  if (!scanProgress.value.totalChunks || scanProgress.value.totalChunks === 0) {
+    scanProgress.value.totalChunks = Math.ceil(fileSize.value / scanProgress.value.chunkSize)
+  }
+
+  const chunkSize = scanProgress.value.chunkSize
+  let chunksUsed = 0
+  const totalBudget = scanProgress.value.chunksPerFrame // 1000 chunks
+
+  // Calculate zones
+  const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
+  const viewportSize = displayWidth.value * displayHeight.value * bytesPerPixel
+  const viewportStartChunk = Math.floor(currentOffset.value / chunkSize)
+  const viewportEndChunk = Math.min(
+    Math.ceil((currentOffset.value + viewportSize) / chunkSize),
+    scanProgress.value.totalChunks
+  )
+
+  // Memory map window - 100 rows × 18 chunks = 1800 chunks visible
+  const mapCenterChunk = Math.floor(currentOffset.value / chunkSize)
+  const mapHalfWindow = 900 // Half of 1800 visible chunks
+  const mapStartChunk = Math.max(0, mapCenterChunk - mapHalfWindow)
+  const mapEndChunk = Math.min(scanProgress.value.totalChunks, mapCenterChunk + mapHalfWindow)
+
+  // 1. Viewport scan - scan immediately for responsiveness, then every 15 frames
+  const viewportChunks = viewportEndChunk - viewportStartChunk
+  if (viewportChunks > 0) {
+    // Always scan viewport for immediate feedback when scrolling
+    await processChunkRange(viewportStartChunk, viewportEndChunk, viewportStartChunk, viewportChunks)
+    chunksUsed += viewportChunks
+  }
+
+  // 2. Memory map window scan - prioritize filling the entire window quickly
+  const mapChunkBudget = Math.min(3000, totalBudget - chunksUsed) // Increased to 3000 for faster fill
+  if (mapChunkBudget > 0 && mapEndChunk > mapStartChunk) {
+    // Reset map position if it's outside the current window
+    if (scanProgress.value.mapScanPosition < mapStartChunk || scanProgress.value.mapScanPosition >= mapEndChunk) {
+      scanProgress.value.mapScanPosition = mapStartChunk
+    }
+
+    // Calculate how many chunks we need to scan to fill the window
+    const windowSize = mapEndChunk - mapStartChunk
+    const chunksToScan = Math.min(mapChunkBudget, windowSize)
+
+    const newMapPosition = await processChunkRange(
+      mapStartChunk,
+      mapEndChunk,
+      scanProgress.value.mapScanPosition,
+      chunksToScan
+    )
+    chunksUsed += chunksToScan
+    scanProgress.value.mapScanPosition = newMapPosition
+  }
+
+  // 3. Grand scan - use most of remaining budget
+  const remainingBudget = totalBudget - chunksUsed
+  const grandScanBudget = Math.min(2000, remainingBudget) // Reduced to 2000 chunks for grand scan
+  if (grandScanBudget > 0) {
+    const newGrandPosition = await processChunkRange(
+      0,
+      scanProgress.value.totalChunks,
+      scanProgress.value.grandScanPosition,
+      grandScanBudget
+    )
+    chunksUsed += grandScanBudget
+    scanProgress.value.grandScanPosition = newGrandPosition
+
+  }
+
+
+  // Force state update to trigger watchers
+  if (changeDetectionState.value) {
+    changeDetectionState.value.lastCheckTime = Date.now()
+  }
+
+  // Always continue scanning
+  requestAnimationFrame(processFullFileBatch)
 }
 
 // Jump to a specific offset from overview pane
@@ -1560,7 +1757,6 @@ onUnmounted(() => {
 })
 // Electron file handlers
 async function handleElectronFileOpened({ path, size }) {
-  console.log(`Electron: Opened ${path} (${size} bytes)`)
   fileSize.value = size
   fileName.value = path.split('/').pop() || 'memory.bin'
   isFileOpen.value = true
@@ -1571,7 +1767,10 @@ async function handleElectronFileOpened({ path, size }) {
 
   // Start change detection if enabled
   if (changeDetectionEnabled.value) {
-    startChangeDetection()
+    // For Electron, start scanning the full file
+    if (isElectron.value && window.electronAPI) {
+      startFullFileScan()
+    }
   }
 }
 
@@ -1583,7 +1782,6 @@ async function handleElectronFileRefreshed({ path, size }) {
   if (lastDataRefreshTime) {
     const delta = now - lastDataRefreshTime
     dataRefreshCount++
-    console.log(`Memory data reload #${dataRefreshCount}: ${delta}ms since last reload`)
   }
   lastDataRefreshTime = now
 
@@ -1594,7 +1792,6 @@ async function handleElectronFileRefreshed({ path, size }) {
 }
 
 function handleElectronFileClosed() {
-  console.log('Electron: File closed')
   isFileOpen.value = false
   memoryData.value = null
   fileSize.value = 0

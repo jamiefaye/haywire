@@ -227,6 +227,7 @@ export function useChangeDetection() {
     scanMemory,
     getChunkAtOffset,
     getVisualizationData,
-    cleanup
+    cleanup,
+    testChunkZero
   }
 }

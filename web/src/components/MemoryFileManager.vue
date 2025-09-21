@@ -208,11 +208,6 @@ export default {
 
       // Measure time since last refresh
       const now = Date.now();
-      if (this.lastRefreshTime) {
-        const delta = now - this.lastRefreshTime;
-        this.refreshCount++;
-        console.log(`Data refresh #${this.refreshCount}: ${delta}ms since last refresh`);
-      }
       this.lastRefreshTime = now;
 
       // Don't reopen the file - just emit refresh event

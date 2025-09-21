@@ -8,7 +8,7 @@
       </div>
     </div>
 
-    <div class="overview-canvas-container">
+    <div class="overview-canvas-container" ref="canvasContainerRef">
       <canvas
         ref="canvasRef"
         :width="canvasWidth"
@@ -79,16 +79,17 @@ const emit = defineEmits<{
 }>()
 
 const canvasRef = ref<HTMLCanvasElement>()
+const canvasContainerRef = ref<HTMLDivElement>()
 const tooltip = ref<ChunkInfo | null>(null)
 const tooltipStyle = ref<any>({})
 const hoveredChunkIndex = ref<number>(-1)
+const containerHeight = ref(600) // Default height, will be updated
 
 // Canvas dimensions
 const canvasWidth = computed(() => props.width - 16) // Leave padding
 const canvasHeight = computed(() => {
-  if (!props.state) return 400
-  const rows = Math.ceil(props.state.chunks.length / columnsPerRow.value)
-  return Math.min(rows * pixelSize.value, 600) // Cap at 600px height
+  // Use the actual measured container height
+  return containerHeight.value
 })
 
 // Visualization parameters
@@ -112,20 +113,38 @@ const viewportIndicator = computed(() => {
 const viewportIndicatorStyle = computed(() => {
   if (!viewportIndicator.value) return {}
 
-  const { startChunk, chunkCount } = viewportIndicator.value
+  const { startChunk, endChunk, chunkCount } = viewportIndicator.value
   const startRow = Math.floor(startChunk / columnsPerRow.value)
   const startCol = startChunk % columnsPerRow.value
+  const endRow = Math.floor((endChunk - 1) / columnsPerRow.value)
+  const endCol = (endChunk - 1) % columnsPerRow.value
 
-  // Simple single-row indicator for now
+  // Calculate the actual viewport rectangle
   const top = startRow * pixelSize.value
   const left = startCol * pixelSize.value
-  const width = Math.min(chunkCount, columnsPerRow.value - startCol) * pixelSize.value
 
+  // For single row
+  if (startRow === endRow) {
+    const width = (endCol - startCol + 1) * pixelSize.value
+    return {
+      top: `${top}px`,
+      left: `${left}px`,
+      width: `${width}px`,
+      height: `${pixelSize.value}px`
+    }
+  }
+
+  // For multiple rows - create a proper rectangle
+  const numRows = endRow - startRow + 1
+  const height = numRows * pixelSize.value
+
+  // For now, show full width when spanning multiple rows
+  // (More complex shape rendering would require multiple divs or SVG)
   return {
     top: `${top}px`,
-    left: `${left}px`,
-    width: `${width}px`,
-    height: `${pixelSize.value}px`
+    left: '0px',
+    width: `${canvasWidth.value}px`,
+    height: `${height}px`
   }
 })
 
@@ -140,10 +159,31 @@ function render() {
   ctx.fillStyle = '#1a1a1a'
   ctx.fillRect(0, 0, canvasWidth.value, canvasHeight.value)
 
-  // Draw chunks
-  props.state.chunks.forEach((chunk, i) => {
-    const row = Math.floor(i / columnsPerRow.value)
-    const col = i % columnsPerRow.value
+  // Calculate visible window of chunks based on current offset
+  const chunkSize = props.state.chunkSize
+  const centerChunk = Math.floor(props.currentOffset / chunkSize)
+
+  // Calculate how many chunks we can display
+  const maxRows = Math.floor(canvasHeight.value / pixelSize.value)
+  const chunksPerRow = columnsPerRow.value
+  const totalVisibleChunks = maxRows * chunksPerRow
+
+  // Center the view around the current position
+  const startChunk = Math.max(0, centerChunk - Math.floor(totalVisibleChunks / 2))
+  const totalChunks = Math.ceil(props.state.totalSize / props.state.chunkSize)
+  const endChunk = Math.min(totalChunks, startChunk + totalVisibleChunks)
+
+  // Draw chunks in the visible window
+  for (let i = startChunk; i < endChunk; i++) {
+    const chunk = props.state.chunks[i]
+    if (!chunk) {
+      continue
+    }
+
+    // Calculate position in the display grid
+    const displayIndex = i - startChunk
+    const row = Math.floor(displayIndex / chunksPerRow)
+    const col = displayIndex % chunksPerRow
     const x = col * pixelSize.value
     const y = row * pixelSize.value
 
@@ -167,7 +207,7 @@ function render() {
       ctx.lineWidth = 2
       ctx.strokeRect(x, y, pixelSize.value - 1, pixelSize.value - 1)
     }
-  })
+  }
 }
 
 // Handle mouse click
@@ -180,11 +220,22 @@ function handleClick(event: MouseEvent) {
 
   const col = Math.floor(x / pixelSize.value)
   const row = Math.floor(y / pixelSize.value)
-  const chunkIndex = row * columnsPerRow.value + col
+
+  // Calculate actual chunk index based on visible window
+  const chunkSize = props.state.chunkSize
+  const centerChunk = Math.floor(props.currentOffset / chunkSize)
+  const maxRows = Math.floor(canvasHeight.value / pixelSize.value)
+  const totalVisibleChunks = maxRows * columnsPerRow.value
+  const startChunk = Math.max(0, centerChunk - Math.floor(totalVisibleChunks / 2))
+
+  const displayIndex = row * columnsPerRow.value + col
+  const chunkIndex = startChunk + displayIndex
 
   if (chunkIndex < props.state.chunks.length) {
     const chunk = props.state.chunks[chunkIndex]
-    emit('jumpToOffset', chunk.offset)
+    if (chunk) {
+      emit('jumpToOffset', chunk.offset)
+    }
   }
 }
 
@@ -198,20 +249,31 @@ function handleMouseMove(event: MouseEvent) {
 
   const col = Math.floor(x / pixelSize.value)
   const row = Math.floor(y / pixelSize.value)
-  const chunkIndex = row * columnsPerRow.value + col
+
+  // Calculate actual chunk index based on visible window
+  const chunkSize = props.state.chunkSize
+  const centerChunk = Math.floor(props.currentOffset / chunkSize)
+  const maxRows = Math.floor(canvasHeight.value / pixelSize.value)
+  const totalVisibleChunks = maxRows * columnsPerRow.value
+  const startChunk = Math.max(0, centerChunk - Math.floor(totalVisibleChunks / 2))
+
+  const displayIndex = row * columnsPerRow.value + col
+  const chunkIndex = startChunk + displayIndex
 
   if (chunkIndex < props.state.chunks.length) {
     hoveredChunkIndex.value = chunkIndex
     const chunk = props.state.chunks[chunkIndex]
-    tooltip.value = chunk
+    if (chunk) {
+      tooltip.value = chunk
 
-    // Position tooltip
-    tooltipStyle.value = {
-      left: `${event.clientX + 10}px`,
-      top: `${event.clientY - 40}px`
+      // Position tooltip
+      tooltipStyle.value = {
+        left: `${event.clientX + 10}px`,
+        top: `${event.clientY - 40}px`
+      }
+
+      render() // Re-render to show highlight
     }
-
-    render() // Re-render to show highlight
   } else {
     handleMouseLeave()
   }
@@ -232,12 +294,70 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1073741824).toFixed(1)}GB`
 }
 
+// Animation frame for continuous updates
+let animationFrameId: number | null = null
+
+function startContinuousRender() {
+  const renderLoop = () => {
+    render()
+    animationFrameId = requestAnimationFrame(renderLoop)
+  }
+  renderLoop()
+}
+
+function stopContinuousRender() {
+  if (animationFrameId !== null) {
+    cancelAnimationFrame(animationFrameId)
+    animationFrameId = null
+  }
+}
+
 // Watch for state changes
-watch(() => props.state, render, { deep: true })
+watch(() => props.state, (newState) => {
+  if (newState) {
+    startContinuousRender()
+  } else {
+    stopContinuousRender()
+  }
+})
 watch(() => props.currentOffset, render)
+watch(canvasHeight, render) // Re-render when height changes
+
+let resizeObserver: ResizeObserver | null = null
 
 onMounted(() => {
-  render()
+  // Set up resize observer to track container height
+  if (canvasContainerRef.value) {
+    resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        // Get the actual height of the container
+        const height = entry.contentRect.height
+        if (height > 0) {
+          containerHeight.value = Math.floor(height)
+        }
+      }
+    })
+    resizeObserver.observe(canvasContainerRef.value)
+
+    // Get initial height
+    const rect = canvasContainerRef.value.getBoundingClientRect()
+    if (rect.height > 0) {
+      containerHeight.value = Math.floor(rect.height)
+    }
+  }
+
+  // Start continuous rendering if we have state
+  if (props.state) {
+    startContinuousRender()
+  }
+})
+
+onUnmounted(() => {
+  stopContinuousRender()
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
 })
 </script>
 
