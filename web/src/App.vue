@@ -1591,6 +1591,15 @@ watch([displayWidth, selectedFormat, columnMode, columnWidth, columnGap], () => 
   if (isFileOpen.value) {
     refreshMemory()
   }
+  // Update magnifying glass canvas reference if it's open
+  if (magnifyingGlassVisible.value) {
+    nextTick(() => {
+      const canvas = memoryCanvasRef.value?.canvas
+      if (canvas) {
+        mainCanvas.value = canvas
+      }
+    })
+  }
 })
 
 // Update mini viewer anchor points

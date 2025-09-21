@@ -3,11 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "build-wasm": "cd wasm && ./build_wasm.sh"
+    "build-wasm": "cd wasm && ./build_wasm.sh",
+    "electron": "electron .",
+    "electron-dev": "NODE_ENV=development electron ."
   },
   "dependencies": {
     "vue": "^3.4.21"
@@ -15,6 +18,7 @@
   "devDependencies": {
     "@types/node": "^20.11.30",
     "@vitejs/plugin-vue": "^5.0.4",
+    "electron": "^27.0.0",
     "typescript": "^5.4.2",
     "vite": "^5.1.6",
     "vue-tsc": "^2.0.6"

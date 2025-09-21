@@ -134,6 +134,7 @@ function close() {
 
 function draw() {
   const ctx = canvas.value?.getContext('2d', { imageSmoothingEnabled: false })
+  // Always get a fresh context in case the canvas has been redrawn
   const sourceCtx = props.sourceCanvas?.getContext('2d', { imageSmoothingEnabled: false })
   if (!ctx || !sourceCtx || !props.sourceCanvas) return
 
@@ -221,6 +222,13 @@ function onKeyDown(e: KeyboardEvent) {
 // Watch for prop changes to trigger redraw
 watch([() => props.sourceCanvas, () => props.centerX, () => props.centerY, zoom, width, height], () => {
   nextTick(() => draw())
+})
+
+// Also redraw when visible state changes to ensure we get the latest canvas content
+watch(() => props.visible, (newVal) => {
+  if (newVal) {
+    nextTick(() => draw())
+  }
 })
 
 // Update locked state when prop changes

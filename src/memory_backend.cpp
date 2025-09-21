@@ -156,6 +156,12 @@ bool MemoryBackend::Read(uint64_t gpa, size_t size, std::vector<uint8_t>& buffer
     }
     
     if (!mappedData || fileOffset >= mappedSize) {
+        static int errorCount = 0;
+        if (++errorCount <= 10) {
+            std::cerr << "MemoryBackend::Read failed: GPA=0x" << std::hex << gpa
+                      << " fileOffset=0x" << fileOffset
+                      << " mappedSize=0x" << mappedSize << std::dec << std::endl;
+        }
         return false;
     }
     
