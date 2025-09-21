@@ -111,13 +111,33 @@ const viewportIndicator = computed(() => {
 })
 
 const viewportIndicatorStyle = computed(() => {
-  if (!viewportIndicator.value) return {}
+  if (!viewportIndicator.value || !props.state) return {}
 
   const { startChunk, endChunk, chunkCount } = viewportIndicator.value
-  const startRow = Math.floor(startChunk / columnsPerRow.value)
-  const startCol = startChunk % columnsPerRow.value
-  const endRow = Math.floor((endChunk - 1) / columnsPerRow.value)
-  const endCol = (endChunk - 1) % columnsPerRow.value
+
+  // Get the memory map's current display range
+  const chunkSize = props.state.chunkSize
+  const viewportStartChunk = Math.floor(props.currentOffset / chunkSize)
+  const viewportEndChunk = Math.ceil((props.currentOffset + props.viewSize) / chunkSize)
+  const viewportCenterChunk = Math.floor((viewportStartChunk + viewportEndChunk) / 2)
+  const maxRows = Math.floor(canvasHeight.value / pixelSize.value)
+  const chunksPerRow = columnsPerRow.value
+  const totalVisibleChunks = maxRows * chunksPerRow
+  const mapStartChunk = Math.max(0, viewportCenterChunk - Math.floor(totalVisibleChunks / 2))
+
+  // Check if viewport is within the visible memory map range
+  if (endChunk < mapStartChunk || startChunk >= mapStartChunk + totalVisibleChunks) {
+    return { display: 'none' } // Viewport is outside visible range
+  }
+
+  // Calculate relative positions within the memory map display
+  const relativeStartChunk = Math.max(0, startChunk - mapStartChunk)
+  const relativeEndChunk = Math.min(totalVisibleChunks, endChunk - mapStartChunk)
+
+  const startRow = Math.floor(relativeStartChunk / columnsPerRow.value)
+  const startCol = relativeStartChunk % columnsPerRow.value
+  const endRow = Math.floor((relativeEndChunk - 1) / columnsPerRow.value)
+  const endCol = (relativeEndChunk - 1) % columnsPerRow.value
 
   // Calculate the actual viewport rectangle
   const top = startRow * pixelSize.value
@@ -161,15 +181,19 @@ function render() {
 
   // Calculate visible window of chunks based on current offset
   const chunkSize = props.state.chunkSize
-  const centerChunk = Math.floor(props.currentOffset / chunkSize)
 
-  // Calculate how many chunks we can display
+  // Calculate the center of the viewport (yellow indicator area)
+  const viewportStartChunk = Math.floor(props.currentOffset / chunkSize)
+  const viewportEndChunk = Math.ceil((props.currentOffset + props.viewSize) / chunkSize)
+  const viewportCenterChunk = Math.floor((viewportStartChunk + viewportEndChunk) / 2)
+
+  // Calculate how many chunks we can display in the memory map
   const maxRows = Math.floor(canvasHeight.value / pixelSize.value)
   const chunksPerRow = columnsPerRow.value
   const totalVisibleChunks = maxRows * chunksPerRow
 
-  // Center the view around the current position
-  const startChunk = Math.max(0, centerChunk - Math.floor(totalVisibleChunks / 2))
+  // Center the memory map so the viewport appears in the middle
+  const startChunk = Math.max(0, viewportCenterChunk - Math.floor(totalVisibleChunks / 2))
   const totalChunks = Math.ceil(props.state.totalSize / props.state.chunkSize)
   const endChunk = Math.min(totalChunks, startChunk + totalVisibleChunks)
 
@@ -188,14 +212,44 @@ function render() {
     const y = row * pixelSize.value
 
     // Choose color based on chunk state
-    if (chunk.isZero) {
+    if (!chunk.scanned) {
+      ctx.fillStyle = '#0a0a0a' // Very dark for unscanned
+    } else if (chunk.isZero) {
       ctx.fillStyle = '#202020' // Dark gray for zero
-    } else if (chunk.hasChanged) {
-      ctx.fillStyle = '#00ff00' // Bright green for changed
+    } else if (chunk.scanCount <= 1) {
+      // First scan - show as neutral blue (not a change)
+      ctx.fillStyle = '#4080c0'
+    } else if (chunk.lastChangeTime > 0) {
+      // Has changed at some point - use logarithmic decay from hot to cool
+      const timeSinceChange = Date.now() - chunk.lastChangeTime
+      const secondsSinceChange = timeSinceChange / 1000
+
+      // Logarithmic decay: starts hot, cools down but never reaches unchanged color
+      // log(1) = 0 (just changed), log(10) = 1, log(100) = 2, etc.
+      const decay = Math.log10(Math.max(1, secondsSinceChange))
+      const maxDecay = 3 // After 1000 seconds (~17 min), reaches coolest
+      const normalizedDecay = Math.min(decay / maxDecay, 1)
+
+      // Interpolate from bright green (fresh) to yellow to orange to red (old change)
+      if (normalizedDecay < 0.33) {
+        // Green to yellow
+        const t = normalizedDecay * 3
+        const r = Math.floor(255 * t)
+        ctx.fillStyle = `rgb(${r}, 255, 0)`
+      } else if (normalizedDecay < 0.66) {
+        // Yellow to orange
+        const t = (normalizedDecay - 0.33) * 3
+        const g = Math.floor(255 * (1 - t * 0.5))
+        ctx.fillStyle = `rgb(255, ${g}, 0)`
+      } else {
+        // Orange to deep red
+        const t = (normalizedDecay - 0.66) * 3
+        const r = Math.floor(255 * (1 - t * 0.3))
+        ctx.fillStyle = `rgb(${r}, ${Math.floor(128 * (1 - t))}, 0)`
+      }
     } else {
-      // Blue gradient based on checksum
-      const intensity = (chunk.checksum % 128) + 128
-      ctx.fillStyle = `rgb(0, ${intensity / 2}, ${intensity})`
+      // Never changed (stable data)
+      ctx.fillStyle = '#4080c0' // Stable blue for unchanged data
     }
 
     // Draw chunk pixel

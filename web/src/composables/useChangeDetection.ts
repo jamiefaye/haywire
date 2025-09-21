@@ -7,6 +7,9 @@ export interface ChunkInfo {
   checksum: number
   isZero: boolean
   hasChanged: boolean
+  scanned?: boolean  // Optional to maintain compatibility
+  lastChangeTime?: number  // Timestamp of last change
+  scanCount?: number  // Number of times scanned
 }
 
 export interface ChangeDetectionState {

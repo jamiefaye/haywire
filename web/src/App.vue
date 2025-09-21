@@ -783,8 +783,11 @@ async function processChunkRange(startIdx: number, endIdx: number, currentPos: n
       offset: state.chunks.length * chunkSize,
       size: chunkSize,
       checksum: 0,
-      isZero: true,
-      hasChanged: false
+      isZero: false,  // Don't assume zero until scanned
+      hasChanged: false,
+      scanned: false,  // Add flag to track if actually scanned
+      lastChangeTime: 0,
+      scanCount: 0
     })
   }
 
@@ -814,17 +817,22 @@ async function processChunkRange(startIdx: number, endIdx: number, currentPos: n
 
         // Check if changed
         const prevChunk = state.chunks[position]
-        const hasChanged = prevChunk ?
-          (prevChunk.checksum !== checksum || prevChunk.isZero !== isZero) :
-          !isZero  // First scan: mark non-zero as "active" data
+        const isFirstScan = !prevChunk?.scanned
+        const hasChanged = !isFirstScan && prevChunk &&
+          (prevChunk.checksum !== checksum || prevChunk.isZero !== isZero)
 
         // Update state using splice for Vue reactivity
+        const now = Date.now()
+        const existingChunk = state.chunks[position]
         state.chunks.splice(position, 1, {
           offset,
           size,
           checksum,
           isZero,
-          hasChanged
+          hasChanged,
+          scanned: true,  // Mark as actually scanned
+          lastChangeTime: hasChanged ? now : (existingChunk?.lastChangeTime || 0),  // Track when it changed
+          scanCount: (existingChunk?.scanCount || 0) + 1  // Track number of scans
         })
       }
     } catch (error) {
