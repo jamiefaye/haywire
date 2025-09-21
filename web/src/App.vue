@@ -1,8 +1,17 @@
 <template>
   <div id="app">
+    <!-- Memory File Manager (Electron) -->
+    <MemoryFileManager
+      v-if="isElectron"
+      @file-opened="handleElectronFileOpened"
+      @file-refreshed="handleElectronFileRefreshed"
+      @file-closed="handleElectronFileClosed"
+    />
+
     <!-- Control Bar -->
     <div class="control-bar">
-      <div class="control-group">
+      <!-- Legacy file open button for non-Electron mode -->
+      <div v-if="!isElectron" class="control-group">
         <button @click="openFile" :disabled="isLoadingFile">
           {{ isFileOpen ? `📂 ${fileName}` : '📁 Open Memory File' }}
         </button>
@@ -103,7 +112,7 @@
           🔄 Refresh
         </button>
       </div>
-      <div class="control-group status">
+      <div v-if="qmpAvailable" class="control-group status">
         <span v-if="qmpConnected" class="status-indicator connected">
           ● QMP Connected
         </span>
@@ -351,10 +360,12 @@ import MiniBitmapViewer from './components/MiniBitmapViewer.vue'
 import MagnifyingGlass from './components/MagnifyingGlass.vue'
 import MemoryOverviewPane from './components/MemoryOverviewPane.vue'
 import AutoCorrelator from './components/AutoCorrelator.vue'
+import MemoryFileManager from './components/MemoryFileManager.vue'
 import { useFileSystemAPI } from './composables/useFileSystemAPI'
 import { useQmpBridge } from './composables/useQmpBridge'
 import { PixelFormat } from './composables/useWasmRenderer'
 import { useChangeDetection } from './composables/useChangeDetection'
+import { qmpAvailable } from './utils/electronDetect'
 
 // File System API
 const {
@@ -390,6 +401,9 @@ const memoryData = ref<Uint8Array | null>(null)
 const isLoadingFile = ref(false)
 const memoryCanvasRef = ref<InstanceType<typeof MemoryCanvas>>()
 const lastScanTime = ref<number>(0)
+
+// Check if running in Electron
+const isElectron = ref(window.electronAPI && window.electronAPI.isElectron)
 // Incremental scanning state
 const scanProgress = ref({
   currentChunk: 0,
@@ -1476,8 +1490,10 @@ function handleKeyboard(event: KeyboardEvent) {
 
 // Setup on mount
 onMounted(async () => {
-  // Don't auto-connect to QMP since we're not using VA to PA translation yet
-  // connectQmp().catch(console.error)
+  // Only auto-connect to QMP if running under Electron
+  // if (qmpAvailable.value) {
+  //   connectQmp().catch(console.error)
+  // }
 
   // Initialize change detection module
   loadChangeDetectionModule().catch(console.error)
@@ -1542,6 +1558,69 @@ onUnmounted(() => {
     delete (window as any).__canvasResizeObserver
   }
 })
+// Electron file handlers
+async function handleElectronFileOpened({ path, size }) {
+  console.log(`Electron: Opened ${path} (${size} bytes)`)
+  fileSize.value = size
+  fileName.value = path.split('/').pop() || 'memory.bin'
+  isFileOpen.value = true
+  currentOffset.value = 0
+
+  // Load initial data
+  await refreshMemory()
+
+  // Start change detection if enabled
+  if (changeDetectionEnabled.value) {
+    startChangeDetection()
+  }
+}
+
+async function handleElectronFileRefreshed({ path, size }) {
+  console.log(`Electron: Refreshed ${path} (${size} bytes)`)
+  fileSize.value = size
+
+  // Reload current view
+  await refreshMemory()
+}
+
+function handleElectronFileClosed() {
+  console.log('Electron: File closed')
+  isFileOpen.value = false
+  memoryData.value = null
+  fileSize.value = 0
+  fileName.value = ''
+  stopChangeDetection()
+}
+
+// Override refreshMemory to use Electron API when available
+const originalRefreshMemory = refreshMemory
+async function refreshMemoryElectron() {
+  if (!isFileOpen.value) return
+
+  // Use Electron API if available
+  if (isElectron.value && window.electronAPI) {
+    const bytesPerPixel = getBytesPerPixel(selectedFormat.value)
+    const memorySize = displayWidth.value * displayHeight.value * bytesPerPixel
+
+    try {
+      const result = await window.electronAPI.readMemoryChunk(currentOffset.value, memorySize)
+      if (result.success) {
+        memoryData.value = result.data
+        return
+      }
+    } catch (error) {
+      console.error('Electron read failed:', error)
+    }
+  }
+
+  // Fallback to original method
+  return originalRefreshMemory()
+}
+
+// Use Electron version if available
+if (isElectron.value) {
+  refreshMemory = refreshMemoryElectron
+}
 </script>
 
 <style>
