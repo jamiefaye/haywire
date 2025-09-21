@@ -230,6 +230,24 @@ watch(() => props.initialLocked, (newVal) => {
   }
 })
 
+// Animation frame for continuous updates
+let animationFrameId: number | null = null
+
+function startContinuousRender() {
+  const renderLoop = () => {
+    draw()
+    animationFrameId = requestAnimationFrame(renderLoop)
+  }
+  renderLoop()
+}
+
+function stopContinuousRender() {
+  if (animationFrameId !== null) {
+    cancelAnimationFrame(animationFrameId)
+    animationFrameId = null
+  }
+}
+
 onMounted(() => {
   document.addEventListener('mousemove', onMouseMove)
   document.addEventListener('mouseup', onMouseUp)
@@ -239,13 +257,17 @@ onMounted(() => {
   posX.value = props.centerX + 20
   posY.value = props.centerY + 20
 
-  draw()
+  // Start continuous rendering for live updates
+  startContinuousRender()
 })
 
 onUnmounted(() => {
   document.removeEventListener('mousemove', onMouseMove)
   document.removeEventListener('mouseup', onMouseUp)
   document.removeEventListener('keydown', onKeyDown)
+
+  // Stop continuous rendering
+  stopContinuousRender()
 })
 </script>
 

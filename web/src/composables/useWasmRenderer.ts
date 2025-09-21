@@ -15,7 +15,12 @@ export enum PixelFormat {
   BINARY = 8,
   HEX_PIXEL = 9,  // 32-bit value as 8 hex digits
   CHAR_8BIT = 10, // 8-bit byte as character
-  CUSTOM = 11
+  CUSTOM = 11,
+  // Split component formats for formats with alpha
+  RGBA8888_SPLIT = 12,  // R G B A displayed as separate components
+  BGRA8888_SPLIT = 13,  // B G R A displayed as separate components
+  ARGB8888_SPLIT = 14,  // A R G B displayed as separate components
+  ABGR8888_SPLIT = 15   // A B G R displayed as separate components
 }
 
 export function useWasmRenderer() {

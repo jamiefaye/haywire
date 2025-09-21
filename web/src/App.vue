@@ -26,25 +26,37 @@
           <select v-model.number="selectedFormat">
             <option :value="PixelFormat.GRAYSCALE">Grayscale</option>
             <option :value="PixelFormat.RGB565">RGB565</option>
-            <option :value="PixelFormat.RGB888">RGB888</option>
-            <option :value="PixelFormat.RGBA8888">RGBA8888</option>
-            <option :value="PixelFormat.BGR888">BGR888</option>
-            <option :value="PixelFormat.BGRA8888">BGRA8888</option>
-            <option :value="PixelFormat.ARGB8888">ARGB8888</option>
-            <option :value="PixelFormat.ABGR8888">ABGR8888</option>
+            <option :value="PixelFormat.RGB888">RGB</option>
+            <option :value="PixelFormat.RGBA8888">RGBA</option>
+            <option :value="PixelFormat.BGR888">BGR</option>
+            <option :value="PixelFormat.BGRA8888">BGRA</option>
+            <option :value="PixelFormat.ARGB8888">ARGB</option>
+            <option :value="PixelFormat.ABGR8888">ABGR</option>
             <option :value="PixelFormat.BINARY">Binary</option>
             <option :value="PixelFormat.HEX_PIXEL">Hex Pixel</option>
             <option :value="PixelFormat.CHAR_8BIT">Char 8-bit</option>
+            <option :value="PixelFormat.RGBA8888_SPLIT">R|G|B|A</option>
+            <option :value="PixelFormat.BGRA8888_SPLIT">B|G|R|A</option>
+            <option :value="PixelFormat.ARGB8888_SPLIT">A|R|G|B</option>
+            <option :value="PixelFormat.ABGR8888_SPLIT">A|B|G|R</option>
           </select>
-        </label>
-
-        <label>
-          <input type="checkbox" v-model="splitComponents">
-          Split
         </label>
       </div>
 
       <div class="control-group">
+        <label>
+          Address:
+          <input
+            type="text"
+            v-model="offsetInput"
+            @change="updateOffset"
+            @keyup.enter="updateOffset"
+            placeholder="0x0 or hex address"
+            class="offset-input"
+            title="Enter address in hex (with or without 0x prefix)"
+          >
+        </label>
+
         <label>
           Width:
           <input
@@ -55,7 +67,6 @@
             class="number-input"
           >
         </label>
-
       </div>
 
       <div class="control-group">
@@ -98,16 +109,6 @@
       </div>
 
       <div class="control-group">
-        <label>
-          Offset:
-          <input
-            type="text"
-            v-model="offsetInput"
-            @change="updateOffset"
-            placeholder="0x0"
-            class="offset-input"
-          >
-        </label>
         <button @click="refreshMemory" :disabled="!isFileOpen">
           🔄 Refresh
         </button>
@@ -475,7 +476,12 @@ const displayWidth = ref(1024)
 // Height will be computed based on canvas container
 const canvasContainerHeight = ref(768)
 const selectedFormat = ref(PixelFormat.BGR888) // Start with BGR888 since user said it was working
-const splitComponents = ref(false)
+const splitComponents = computed(() => {
+  return selectedFormat.value === PixelFormat.RGBA8888_SPLIT ||
+         selectedFormat.value === PixelFormat.BGRA8888_SPLIT ||
+         selectedFormat.value === PixelFormat.ARGB8888_SPLIT ||
+         selectedFormat.value === PixelFormat.ABGR8888_SPLIT
+})
 const columnMode = ref(false)
 const changeDetectionEnabled = ref(false)  // Disabled by default - opt-in feature
 const showCorrelation = ref(false)  // Autocorrelation display
@@ -530,15 +536,19 @@ const formatName = computed(() => {
   const formats = {
     [PixelFormat.GRAYSCALE]: 'GRAY8',
     [PixelFormat.RGB565]: 'RGB565',
-    [PixelFormat.RGB888]: 'RGB888',
-    [PixelFormat.RGBA8888]: 'RGBA8888',
-    [PixelFormat.BGR888]: 'BGR888',
-    [PixelFormat.BGRA8888]: 'BGRA8888',
-    [PixelFormat.ARGB8888]: 'ARGB8888',
-    [PixelFormat.ABGR8888]: 'ABGR8888',
+    [PixelFormat.RGB888]: 'RGB',
+    [PixelFormat.RGBA8888]: 'RGBA',
+    [PixelFormat.BGR888]: 'BGR',
+    [PixelFormat.BGRA8888]: 'BGRA',
+    [PixelFormat.ARGB8888]: 'ARGB',
+    [PixelFormat.ABGR8888]: 'ABGR',
     [PixelFormat.BINARY]: 'BINARY',
     [PixelFormat.HEX_PIXEL]: 'HEX_PIXEL',
-    [PixelFormat.CHAR_8BIT]: 'CHAR_8BIT'
+    [PixelFormat.CHAR_8BIT]: 'CHAR_8BIT',
+    [PixelFormat.RGBA8888_SPLIT]: 'R|G|B|A',
+    [PixelFormat.BGRA8888_SPLIT]: 'B|G|R|A',
+    [PixelFormat.ARGB8888_SPLIT]: 'A|R|G|B',
+    [PixelFormat.ABGR8888_SPLIT]: 'A|B|G|R'
   }
   return formats[selectedFormat.value] || 'GRAY8'
 })
@@ -972,17 +982,38 @@ function jumpToOffset(offset: number) {
 
 // Update offset from input
 function updateOffset() {
-  let value = offsetInput.value.trim()
+  let value = offsetInput.value.trim().toLowerCase()
 
-  // Parse hex or decimal
-  if (value.startsWith('0x') || value.startsWith('0X')) {
-    currentOffset.value = parseInt(value.slice(2), 16) || 0
-  } else {
-    currentOffset.value = parseInt(value, 10) || 0
+  // Remove any 0x prefix if present
+  if (value.startsWith('0x')) {
+    value = value.slice(2)
   }
 
-  // Update slider position
+  // Determine if it's hex or decimal
+  let newOffset = 0
+  if (value === '') {
+    newOffset = 0
+  } else if (/[a-f]/.test(value)) {
+    // Contains hex characters, must be hex
+    newOffset = parseInt(value, 16) || 0
+  } else if (value.length > 8) {
+    // Very long number, probably hex even without letters
+    newOffset = parseInt(value, 16) || 0
+  } else {
+    // Try as hex first (common for addresses), fall back to decimal
+    const hexValue = parseInt(value, 16)
+    const decValue = parseInt(value, 10)
+    // If they're the same, it doesn't matter
+    // If different, prefer hex for addresses
+    newOffset = hexValue || decValue || 0
+  }
+
+  // Ensure offset is within bounds
+  currentOffset.value = Math.max(0, Math.min(newOffset, fileSize.value - 1))
+
+  // Update slider position and formatted input
   sliderPosition.value = currentOffset.value
+  offsetInput.value = `0x${currentOffset.value.toString(16).toUpperCase()}`
 
   refreshMemory()
 }
@@ -1465,6 +1496,10 @@ function getBytesPerPixel(format: PixelFormat): number {
     case PixelFormat.ARGB8888:
     case PixelFormat.ABGR8888:
     case PixelFormat.HEX_PIXEL:
+    case PixelFormat.RGBA8888_SPLIT:
+    case PixelFormat.BGRA8888_SPLIT:
+    case PixelFormat.ARGB8888_SPLIT:
+    case PixelFormat.ABGR8888_SPLIT:
       return 4
     default:
       return 1
@@ -1552,7 +1587,7 @@ function stopCanvasDrag() {
 }
 
 // Watch for display changes
-watch([displayWidth, selectedFormat, splitComponents, columnMode, columnWidth, columnGap], () => {
+watch([displayWidth, selectedFormat, columnMode, columnWidth, columnGap], () => {
   if (isFileOpen.value) {
     refreshMemory()
   }
@@ -1906,8 +1941,10 @@ select {
 }
 
 .offset-input {
-  width: 120px;
+  width: 180px;
   font-family: 'Courier New', monospace;
+  padding: 4px 8px;
+  font-size: 13px;
 }
 
 button {

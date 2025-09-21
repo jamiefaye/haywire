@@ -56,27 +56,20 @@
         <select v-model.number="localFormat" @change="updateConfig" class="settings-select">
           <option :value="PixelFormat.GRAYSCALE">Grayscale</option>
           <option :value="PixelFormat.RGB565">RGB565</option>
-          <option :value="PixelFormat.RGB888">RGB888</option>
-          <option :value="PixelFormat.RGBA8888">RGBA8888</option>
-          <option :value="PixelFormat.BGR888">BGR888</option>
-          <option :value="PixelFormat.BGRA8888">BGRA8888</option>
-          <option :value="PixelFormat.ARGB8888">ARGB8888</option>
-          <option :value="PixelFormat.ABGR8888">ABGR8888</option>
+          <option :value="PixelFormat.RGB888">RGB</option>
+          <option :value="PixelFormat.RGBA8888">RGBA</option>
+          <option :value="PixelFormat.BGR888">BGR</option>
+          <option :value="PixelFormat.BGRA8888">BGRA</option>
+          <option :value="PixelFormat.ARGB8888">ARGB</option>
+          <option :value="PixelFormat.ABGR8888">ABGR</option>
           <option :value="PixelFormat.BINARY">Binary</option>
           <option :value="PixelFormat.HEX_PIXEL">Hex Pixel</option>
           <option :value="PixelFormat.CHAR_8BIT">Char 8-bit</option>
+          <option :value="PixelFormat.RGBA8888_SPLIT">R|G|B|A</option>
+          <option :value="PixelFormat.BGRA8888_SPLIT">B|G|R|A</option>
+          <option :value="PixelFormat.ARGB8888_SPLIT">A|R|G|B</option>
+          <option :value="PixelFormat.ABGR8888_SPLIT">A|B|G|R</option>
         </select>
-      </div>
-
-      <div class="settings-section">
-        <label class="settings-checkbox">
-          <input
-            type="checkbox"
-            v-model="localSplitComponents"
-            @change="updateConfig"
-          >
-          Split Components
-        </label>
       </div>
 
       <div class="settings-section">
@@ -118,23 +111,22 @@
     <!-- Controls -->
     <div class="viewer-controls">
       <select v-model.number="localFormat" class="format-select">
-        <option :value="PixelFormat.RGB888">RGB888</option>
-        <option :value="PixelFormat.RGBA8888">RGBA8888</option>
-        <option :value="PixelFormat.BGR888">BGR888</option>
-        <option :value="PixelFormat.BGRA8888">BGRA8888</option>
-        <option :value="PixelFormat.ARGB8888">ARGB8888</option>
-        <option :value="PixelFormat.ABGR8888">ABGR8888</option>
+        <option :value="PixelFormat.RGB888">RGB</option>
+        <option :value="PixelFormat.RGBA8888">RGBA</option>
+        <option :value="PixelFormat.BGR888">BGR</option>
+        <option :value="PixelFormat.BGRA8888">BGRA</option>
+        <option :value="PixelFormat.ARGB8888">ARGB</option>
+        <option :value="PixelFormat.ABGR8888">ABGR</option>
         <option :value="PixelFormat.RGB565">RGB565</option>
         <option :value="PixelFormat.GRAYSCALE">Grayscale</option>
         <option :value="PixelFormat.BINARY">Binary</option>
         <option :value="PixelFormat.HEX_PIXEL">Hex Pixel</option>
         <option :value="PixelFormat.CHAR_8BIT">Char 8-bit</option>
+        <option :value="PixelFormat.RGBA8888_SPLIT">R|G|B|A</option>
+        <option :value="PixelFormat.BGRA8888_SPLIT">B|G|R|A</option>
+        <option :value="PixelFormat.ARGB8888_SPLIT">A|R|G|B</option>
+        <option :value="PixelFormat.ABGR8888_SPLIT">A|B|G|R</option>
       </select>
-
-      <label class="checkbox-label">
-        <input type="checkbox" v-model="localSplitComponents">
-        Split
-      </label>
 
       <input
         type="number"
@@ -208,7 +200,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useWasmRenderer, PixelFormat } from '../composables/useWasmRenderer'
 
 interface Props {
@@ -273,7 +265,12 @@ const anchorMode = ref<'address' | 'position'>(props.initialAnchorMode)
 const localWidth = ref(props.initialWidth)
 const localHeight = ref(props.initialHeight)
 const localFormat = ref(props.initialFormat)
-const localSplitComponents = ref(props.initialSplitComponents)
+const localSplitComponents = computed(() => {
+  return localFormat.value === PixelFormat.RGBA8888_SPLIT ||
+         localFormat.value === PixelFormat.BGRA8888_SPLIT ||
+         localFormat.value === PixelFormat.ARGB8888_SPLIT ||
+         localFormat.value === PixelFormat.ABGR8888_SPLIT
+})
 const localColumnMode = ref(props.initialColumnMode)
 const localColumnWidth = ref(props.initialColumnWidth)
 const localColumnGap = ref(props.initialColumnGap)

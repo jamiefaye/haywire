@@ -54,16 +54,33 @@ const emit = defineEmits<{
 const canvasRef = ref<HTMLCanvasElement>()
 const { isLoading, error, renderMemory, pixelToMemoryCoordinate } = useWasmRenderer()
 
+// Helper to get base format and split flag
+function getFormatAndSplit(format: PixelFormat): { baseFormat: PixelFormat, split: boolean } {
+  switch (format) {
+    case PixelFormat.RGBA8888_SPLIT:
+      return { baseFormat: PixelFormat.RGBA8888, split: true }
+    case PixelFormat.BGRA8888_SPLIT:
+      return { baseFormat: PixelFormat.BGRA8888, split: true }
+    case PixelFormat.ARGB8888_SPLIT:
+      return { baseFormat: PixelFormat.ARGB8888, split: true }
+    case PixelFormat.ABGR8888_SPLIT:
+      return { baseFormat: PixelFormat.ABGR8888, split: true }
+    default:
+      return { baseFormat: format, split: false }
+  }
+}
+
 // Function to trigger render
 function doRender() {
   if (props.memoryData && canvasRef.value && !isLoading.value) {
+    const { baseFormat, split } = getFormatAndSplit(props.format)
     renderMemory(props.memoryData, canvasRef.value, {
       sourceOffset: props.sourceOffset,
       displayWidth: props.width,
       displayHeight: props.height,
       stride: props.stride || props.width,
-      format: props.format,
-      splitComponents: props.splitComponents,
+      format: baseFormat,
+      splitComponents: props.splitComponents || split,
       columnMode: props.columnMode,
       columnWidth: props.columnWidth,
       columnGap: props.columnGap
@@ -97,12 +114,13 @@ function handleClick(event: MouseEvent) {
     const x = event.clientX - rect.left
     const y = event.clientY - rect.top
 
+    const { baseFormat, split } = getFormatAndSplit(props.format)
     const coords = pixelToMemoryCoordinate(
       x, y,
       props.width, props.height,
       props.stride || props.width,
-      props.format,
-      props.splitComponents,
+      baseFormat,
+      props.splitComponents || split,
       props.columnMode,
       props.columnWidth,
       props.columnGap
@@ -110,7 +128,7 @@ function handleClick(event: MouseEvent) {
 
     if (coords.x >= 0 && coords.y >= 0) {
       // Calculate memory offset
-      const bytesPerPixel = getBytesPerPixelForFormat(props.format)
+      const bytesPerPixel = getBytesPerPixelForFormat(baseFormat)
       const offset = coords.y * (props.stride || props.width) * bytesPerPixel + coords.x * bytesPerPixel
       emit('memoryClick', props.sourceOffset + offset)
     }
@@ -128,19 +146,20 @@ function handleMouseMove(event: MouseEvent) {
     const x = event.clientX - rect.left
     const y = event.clientY - rect.top
 
+    const { baseFormat, split } = getFormatAndSplit(props.format)
     const coords = pixelToMemoryCoordinate(
       x, y,
       props.width, props.height,
       props.stride || props.width,
-      props.format,
-      props.splitComponents,
+      baseFormat,
+      props.splitComponents || split,
       props.columnMode,
       props.columnWidth,
       props.columnGap
     )
 
     if (coords.x >= 0 && coords.y >= 0) {
-      const bytesPerPixel = getBytesPerPixelForFormat(props.format)
+      const bytesPerPixel = getBytesPerPixelForFormat(baseFormat)
       const offset = coords.y * (props.stride || props.width) * bytesPerPixel + coords.x * bytesPerPixel
       emit('memoryHover', props.sourceOffset + offset)
     }
@@ -166,8 +185,11 @@ function getBytesPerPixelForFormat(format: PixelFormat): number {
     case PixelFormat.BGRA8888:
     case PixelFormat.ARGB8888:
     case PixelFormat.ABGR8888:
-      return 4
     case PixelFormat.HEX_PIXEL:
+    case PixelFormat.RGBA8888_SPLIT:
+    case PixelFormat.BGRA8888_SPLIT:
+    case PixelFormat.ARGB8888_SPLIT:
+    case PixelFormat.ABGR8888_SPLIT:
       return 4
     default:
       return 1
