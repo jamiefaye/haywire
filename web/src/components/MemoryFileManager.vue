@@ -89,7 +89,9 @@ export default {
       isElectron: false,
       autoRefresh: true,
       refreshInterval: null,
-      refreshRate: 500 // milliseconds
+      refreshRate: 250, // milliseconds
+      lastRefreshTime: null,
+      refreshCount: 0
     };
   },
 
@@ -202,22 +204,23 @@ export default {
     },
 
     async refresh() {
-      if (!this.isElectron || !this.currentPath) return;
+      if (!this.isElectron || !this.currentPath || !this.isConnected) return;
 
-      try {
-        const result = await window.electronAPI.openMemoryFile(this.currentPath);
-        if (result.success) {
-          this.fileSize = result.size;
-          this.$emit('file-refreshed', {
-            path: result.path,
-            size: result.size
-          });
-        } else {
-          this.error = `Refresh failed: ${result.error}`;
-        }
-      } catch (err) {
-        this.error = `Refresh error: ${err.message}`;
+      // Measure time since last refresh
+      const now = Date.now();
+      if (this.lastRefreshTime) {
+        const delta = now - this.lastRefreshTime;
+        this.refreshCount++;
+        console.log(`Data refresh #${this.refreshCount}: ${delta}ms since last refresh`);
       }
+      this.lastRefreshTime = now;
+
+      // Don't reopen the file - just emit refresh event
+      // The file is already open in the main process
+      this.$emit('file-refreshed', {
+        path: this.currentPath,
+        size: this.fileSize
+      });
     },
 
     async closeFile() {

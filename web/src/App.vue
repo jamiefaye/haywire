@@ -1575,8 +1575,18 @@ async function handleElectronFileOpened({ path, size }) {
   }
 }
 
+let lastDataRefreshTime = null
+let dataRefreshCount = 0
+
 async function handleElectronFileRefreshed({ path, size }) {
-  console.log(`Electron: Refreshed ${path} (${size} bytes)`)
+  const now = Date.now()
+  if (lastDataRefreshTime) {
+    const delta = now - lastDataRefreshTime
+    dataRefreshCount++
+    console.log(`Memory data reload #${dataRefreshCount}: ${delta}ms since last reload`)
+  }
+  lastDataRefreshTime = now
+
   fileSize.value = size
 
   // Reload current view
