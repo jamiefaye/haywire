@@ -25,9 +25,13 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # Launch QEMU with memory backend
 # Use our custom build if it exists, otherwise use system QEMU
-QEMU_BIN="$SCRIPT_DIR/../qemu-mods/qemu-system-aarch64-unsigned"
+QEMU_BIN="$SCRIPT_DIR/../qemu-mods/qemu-src/build/qemu-system-aarch64-unsigned"
 if [ ! -f "$QEMU_BIN" ]; then
-    QEMU_BIN="qemu-system-aarch64"
+    # Try the old location
+    QEMU_BIN="$SCRIPT_DIR/../qemu-mods/qemu-system-aarch64-unsigned"
+    if [ ! -f "$QEMU_BIN" ]; then
+        QEMU_BIN="qemu-system-aarch64"
+    fi
     echo "Using system QEMU (custom build not found)"
 else
     echo "Using custom QEMU build with VA->PA translation support"
