@@ -1503,6 +1503,9 @@ export class PagedKernelDiscovery {
         console.log('\n=== REAL SWAPPER_PG_DIR FROM QMP ===');
         console.log(`TTBR1 (kernel PGD) = 0x${REAL_SWAPPER_PGD_PA.toString(16)}`);
 
+        // Set the swapper_pg_dir to the real value from QMP
+        this.swapperPgDir = REAL_SWAPPER_PGD_PA;
+
         // Test if the real PGD is within our memory range
         const realSwapperOffset = REAL_SWAPPER_PGD_PA - KernelConstants.GUEST_RAM_START;
         console.log(`Offset in memory file: 0x${realSwapperOffset.toString(16)}`);
@@ -1687,7 +1690,10 @@ export class PagedKernelDiscovery {
                 console.log(`    - Kernel entries: ${entryCount.kernelEntries}`);
                 console.log(`    - User entries: ${entryCount.userEntries}`);
                 realKernelPGD = candidate.addr;
-                this.swapperPgDir = candidate.addr;
+                // Don't override swapper_pg_dir if we already have it from QMP
+                if (!this.swapperPgDir) {
+                    this.swapperPgDir = candidate.addr;
+                }
 
                 // Analyze kernel PTE distribution to validate the structure
                 this.analyzeKernelPTEDistribution();
@@ -1967,40 +1973,145 @@ export class PagedKernelDiscovery {
                 const mmPa = this.translateVA(process.mmStruct, this.swapperPgDir);
                 if (mmPa) {
                     // Debug: dump memory around mm_struct to see what we're reading
-                    if (processCount < 3 || (process.pid > 0 && process.pid < 1000)) {
+                    if (processCount < 5 || (process.pid > 0 && process.pid < 1000)) {
                         console.log(`\n  PID ${process.pid} (${process.name}):`);
                         console.log(`    mm_struct VA: 0x${process.mmStruct.toString(16)}`);
-                        console.log(`    mm_struct PA: 0x${mmPa.toString(16)}`);
+                        console.log(`    mm_struct PA from translation: 0x${mmPa.toString(16)}`);
 
-                        // Read first 256 bytes of mm_struct
-                        const mmBytes = this.memory.readBytes(mmPa - KernelConstants.GUEST_RAM_START, 256);
+                        // Check if the PA makes sense and determine file offset
+                        if (mmPa < KernelConstants.GUEST_RAM_START) {
+                            console.log(`    PA 0x${mmPa.toString(16)} is below GUEST_RAM_START (0x${KernelConstants.GUEST_RAM_START.toString(16)})`);
+                            console.log(`    Will try direct file offset: 0x${mmPa.toString(16)}`);
+                        } else if (mmPa >= KernelConstants.GUEST_RAM_END) {
+                            console.log(`    WARNING: PA 0x${mmPa.toString(16)} is above GUEST_RAM_END (0x${KernelConstants.GUEST_RAM_END.toString(16)})`);
+                        } else {
+                            console.log(`    File offset: 0x${(mmPa - KernelConstants.GUEST_RAM_START).toString(16)}`);
+                        }
+
+                        // Only try to read if the PA is in valid range OR if it's below GUEST_RAM_START
+                        let mmBytes = null;
+                        let effectiveOffset = 0;
+
+                        if (mmPa >= KernelConstants.GUEST_RAM_START && mmPa < KernelConstants.GUEST_RAM_END) {
+                            // Normal case - subtract GUEST_RAM_START
+                            effectiveOffset = mmPa - KernelConstants.GUEST_RAM_START;
+                            mmBytes = this.memory.readBytes(effectiveOffset, 512);
+                        } else if (mmPa < KernelConstants.GUEST_RAM_START && mmPa >= 0) {
+                            // Try using PA directly as file offset for low memory
+                            console.log(`    Attempting to read from direct offset 0x${mmPa.toString(16)}`);
+                            effectiveOffset = mmPa;
+                            try {
+                                mmBytes = this.memory.readBytes(effectiveOffset, 512);
+                                if (mmBytes) {
+                                    console.log(`    SUCCESS: Read from low memory at offset 0x${mmPa.toString(16)}`);
+                                }
+                            } catch (e) {
+                                console.log(`    FAILED: Cannot read from offset 0x${mmPa.toString(16)}`);
+                            }
+                        } else {
+                            console.log(`    Cannot read mm_struct - PA out of range`);
+                        }
+
                         if (mmBytes) {
-                            console.log(`    mm_struct first 256 bytes:`);
-                            // Show hex dump around pgd offset (104 = 0x68)
-                            for (let i = 96; i < 120; i += 8) {
-                                const val = new DataView(mmBytes.buffer, mmBytes.byteOffset + i, 8).getBigUint64(0, true);
-                                console.log(`      [0x${i.toString(16).padStart(3, '0')}]: 0x${val.toString(16).padStart(16, '0')}${i === 104 ? ' <- pgd field' : ''}`);
+                            console.log(`    mm_struct memory dump (looking for PGD pointer):`);
+
+                            // Show multiple potential PGD locations
+                            const potentialOffsets = [
+                                0x48,  // Old offset that was tried
+                                0x50,  // Adjacent field
+                                0x58,  // Another possibility
+                                0x60,  //
+                                0x68,  // Current offset (104 decimal)
+                                0x70,  // Next field
+                                0x78,  //
+                                0x80,  // Another possible location
+                            ];
+
+                            console.log(`    Checking potential PGD offsets:`);
+                            for (const offset of potentialOffsets) {
+                                if (offset + 8 <= mmBytes.length) {
+                                    const val = new DataView(mmBytes.buffer, mmBytes.byteOffset + offset, 8).getBigUint64(0, true);
+                                    const isKernelPtr = (val & 0xFFFF000000000000n) === 0xFFFF000000000000n;
+                                    const inRAMRange = val >= BigInt(KernelConstants.GUEST_RAM_START) && val < BigInt(KernelConstants.GUEST_RAM_END);
+                                    const marker = offset === 0x68 ? ' <- CURRENT' : '';
+                                    const validity = inRAMRange ? ' ✓ VALID PA' : (isKernelPtr ? ' (kernel VA)' : '');
+                                    console.log(`      [0x${offset.toString(16).padStart(3, '0')}]: 0x${val.toString(16).padStart(16, '0')}${marker}${validity}`);
+                                }
+                            }
+
+                            // Also show a broader hex dump around the expected area
+                            console.log(`\n    Hex dump around offset 0x68:`);
+                            for (let i = 0x40; i < 0xA0; i += 16) {
+                                if (i + 16 <= mmBytes.length) {
+                                    let line = `      [0x${i.toString(16).padStart(3, '0')}]:`;
+                                    for (let j = 0; j < 16; j += 8) {
+                                        const val = new DataView(mmBytes.buffer, mmBytes.byteOffset + i + j, 8).getBigUint64(0, true);
+                                        line += ` ${val.toString(16).padStart(16, '0')}`;
+                                    }
+                                    console.log(line);
+                                }
                             }
                         }
                     }
 
-                    const pgdPtr = this.memory.readU64(mmPa - KernelConstants.GUEST_RAM_START + KernelConstants.PGD_OFFSET_IN_MM);
-                    if (pgdPtr && Number(pgdPtr) >= KernelConstants.GUEST_RAM_START && Number(pgdPtr) < KernelConstants.GUEST_RAM_END) {
-                        process.pgd = Number(pgdPtr);
+                    // Read PGD using the appropriate offset
+                    let pgdPtr = null;
+                    if (mmPa >= KernelConstants.GUEST_RAM_START && mmPa < KernelConstants.GUEST_RAM_END) {
+                        pgdPtr = this.memory.readU64(mmPa - KernelConstants.GUEST_RAM_START + KernelConstants.PGD_OFFSET_IN_MM);
+                    } else if (mmPa < KernelConstants.GUEST_RAM_START && mmPa >= 0) {
+                        // Try direct offset for low memory
+                        try {
+                            pgdPtr = this.memory.readU64(mmPa + KernelConstants.PGD_OFFSET_IN_MM);
+                            if (pgdPtr && processCount < 5) {
+                                console.log(`    Read PGD from low memory: 0x${pgdPtr.toString(16)}`);
+                            }
+                        } catch (e) {
+                            if (processCount < 5) {
+                                console.log(`    Cannot read PGD from low memory offset 0x${mmPa.toString(16)}`);
+                            }
+                        }
+                    } else {
+                        if (processCount < 5 || (process.pid > 0 && process.pid < 1000)) {
+                            console.log(`    Cannot read PGD - mm_struct PA 0x${mmPa.toString(16)} is outside accessible range`);
+                        }
+                    }
+
+                    // Check if it's a kernel VA that needs translation
+                    let finalPgd = 0;
+                    if (pgdPtr) {
+                        // Is this a kernel virtual address?
+                        if ((pgdPtr & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
+                            // Try to translate it
+                            const translatedPgd = this.translateVA(pgdPtr, this.swapperPgDir);
+                            if (translatedPgd && translatedPgd >= KernelConstants.GUEST_RAM_START && translatedPgd < KernelConstants.GUEST_RAM_END) {
+                                finalPgd = translatedPgd;
+                                if (processCount < 5 || (process.pid > 0 && process.pid < 1000)) {
+                                    console.log(`    PGD: VA 0x${pgdPtr.toString(16)} -> PA 0x${finalPgd.toString(16)} ✓`);
+                                }
+                            }
+                        }
+                        // Or is it already a physical address?
+                        else if (Number(pgdPtr) >= KernelConstants.GUEST_RAM_START && Number(pgdPtr) < KernelConstants.GUEST_RAM_END) {
+                            finalPgd = Number(pgdPtr);
+                            if (processCount < 5 || (process.pid > 0 && process.pid < 1000)) {
+                                console.log(`    PGD: PA 0x${finalPgd.toString(16)} (direct) ✓`);
+                            }
+                        }
+                    }
+
+                    if (finalPgd) {
+                        process.pgd = finalPgd;
                         validPgdCount++;
                         if (validSamples.length < 5) {
                             validSamples.push({pid: process.pid, name: process.name, pgd: process.pgd});
-                        }
-                        if (processCount < 3 || (process.pid > 0 && process.pid < 1000)) {
-                            console.log(`    PGD extracted: 0x${process.pgd.toString(16)} ✓`);
                         }
                     } else {
                         invalidPgdCount++;
                         if (invalidSamples.length < 10) {
                             invalidSamples.push({pid: process.pid, name: process.name, value: pgdPtr?.toString(16) || 'null'});
                         }
-                        if (processCount < 3 || (process.pid > 0 && process.pid < 1000)) {
-                            console.log(`    PGD value: 0x${pgdPtr?.toString(16) || 'null'} - INVALID (not in RAM range)`);
+                        if (processCount < 5 || (process.pid > 0 && process.pid < 1000)) {
+                            console.log(`    PGD value: 0x${pgdPtr?.toString(16) || 'null'} - INVALID`);
                         }
                     }
                 } else {
