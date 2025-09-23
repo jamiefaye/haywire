@@ -70,21 +70,24 @@ export class PagedKernelDiscovery {
         }
 
         const view = new DataView(pudData.buffer, pudData.byteOffset, pudData.byteLength);
-        console.log(`      === COMPLETE 4K PUD TABLE for PGD[${pgdIndex}] at PA 0x${pudTablePA.toString(16)} (ALL 512 ENTRIES) ===`);
+        // Count non-zero entries without dumping everything
         let nonZeroEntries = 0;
+        const nonZeroIndices: number[] = [];
         for (let i = 0; i < 512; i++) {
             const entry = view.getBigUint64(i * 8, true);
-            const entryType = Number(entry & 3n);
-            const physAddr = Number(entry & 0x0000FFFFFFFFF000n);
-
-            // Print EVERY entry, including zeros
-            console.log(`        PUD[${i.toString().padStart(3, ' ')}]: 0x${entry.toString(16).padStart(16, '0')} (PA: 0x${physAddr.toString(16).padStart(12, '0')}, type: ${entryType})`);
-
             if (entry !== 0n) {
                 nonZeroEntries++;
+                if (nonZeroIndices.length < 10) { // Only track first 10
+                    nonZeroIndices.push(i);
+                }
             }
         }
-        console.log(`        Total non-zero PUD entries: ${nonZeroEntries}`);
+
+        // Just show summary instead of dumping all 512 entries
+        console.log(`      PUD table at PA 0x${pudTablePA.toString(16)}: ${nonZeroEntries} non-zero entries`);
+        if (nonZeroIndices.length > 0) {
+            console.log(`        Non-zero at indices: ${nonZeroIndices.join(', ')}${nonZeroEntries > 10 ? '...' : ''}`);
+        }
     }
 
     /**
@@ -138,16 +141,6 @@ export class PagedKernelDiscovery {
     private checkTaskStruct(offset: number): ProcessInfo | null {
         // Check PID
         const pid = this.memory.readU32(offset + KernelConstants.PID_OFFSET);
-
-        // Special logging for VLC (PID 11266)
-        if (pid === 11266) {
-            console.log(`\n*** FOUND VLC (PID 11266) at task_struct offset 0x${offset.toString(16)} ***`);
-            const name = this.memory.readString(offset + KernelConstants.COMM_OFFSET);
-            const mmRaw = this.memory.readU64(offset + KernelConstants.MM_OFFSET) || 0n;
-            console.log(`    Name: "${name}"`);
-            console.log(`    MM: 0x${mmRaw.toString(16)}`);
-        }
-
         if (!pid || pid < 1 || pid > 32768) {
             return null;
         }
@@ -168,8 +161,8 @@ export class PagedKernelDiscovery {
         const DEBUG_PIDS = false;
         if (DEBUG_PIDS) {
             const debugCount = Array.from(this.processes.values()).length;
-            // Look for VLC or other interesting processes
-            const isInteresting = name && (name.includes('vlc') || name.includes('systemd') || name.includes('ssh') || name.includes('bash'));
+            // Look for interesting processes
+            const isInteresting = name && (name.includes('systemd') || name.includes('ssh') || name.includes('bash'));
             if ((debugCount < 10 || isInteresting) && pid > 0 && pid < 100000 && name && name.length > 0) {
                 console.log(`\n  [DEBUG] PID ${pid} (${name}):`);
                 console.log(`    task_struct offset: 0x${offset.toString(16)}`);
@@ -478,16 +471,6 @@ export class PagedKernelDiscovery {
 
         console.log(`Found ${this.processes.size} processes (${this.stats.kernelThreads} kernel, ${this.stats.userProcesses} user)`);
 
-        // Show VLC specifically if found
-        const vlcProcesses = Array.from(this.processes.values())
-            .filter(p => p.name.toLowerCase().includes('vlc'));
-        if (vlcProcesses.length > 0) {
-            console.log(`\nVLC processes:`);
-            vlcProcesses.forEach(p => {
-                console.log(`  PID ${p.pid}: ${p.name}, mm=0x${p.mmStruct.toString(16)}`);
-            });
-        }
-
         // Debug: Show what mm_struct values we have
         console.log('\nDEBUG: Sample mm_struct values:');
         let debugCount = 0;
@@ -794,25 +777,34 @@ export class PagedKernelDiscovery {
     private translateVA(va: bigint | number, pgdBase: number): number | null {
         const virtualAddr = typeof va === 'number' ? BigInt(va) : va;
 
+        // Debug for specific VA
+        if (virtualAddr === 0xffff0000c557d000n) {
+            console.log(`      [translateVA] Input VA: 0x${virtualAddr.toString(16)}`);
+        }
+
         // ARM64 uses SEPARATE page tables:
         // - TTBR0_EL1: User space (0x0000...)
         // - TTBR1_EL1: Kernel space (0xffff...) - uses swapper_pg_dir
         // The pgdBase parameter should be the appropriate PGD for the VA type
 
         // Extract indices for 4-level page table walk
-        // For kernel addresses (0xffff...), we need special handling
-        // Kernel addresses use inverted addressing - they index from the TOP of the address space
+        // ARM64 with TTBR0/TTBR1 split:
+        // - User addresses (0x0000...) use TTBR0
+        // - Kernel addresses (0xffff...) use TTBR1
+
         let pgdIndex: number;
         if ((virtualAddr >> 48n) === 0xffffn) {
-            // Kernel address - needs special handling
-            // In ARM64, kernel addresses are sign-extended from bit 47
-            // The actual VA bits used are [47:0], and for kernel they're inverted
-            // We should index from the top half of the PGD table
-            // For addresses like 0xffff0000c557d000, bit 47=0 maps to PGD index 256
+            // Kernel address using TTBR1 (swapper_pg_dir)
+            // vmalloc at 0xffff0000... actually uses PGD[0] in the kernel table!
+            // Linear map at 0xffff8000... uses PGD[256]
+            // Fixmap at 0xffffff80... uses PGD[511]
+
+            // Just extract bits 47-39 normally
             pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);
-            if (pgdIndex < 256) {
-                // This is the lower half of kernel space, map to upper half of PGD
-                pgdIndex = 256 + pgdIndex;
+
+            // For debugging: show what we're doing
+            if (pgdIndex === 0) {
+                // This is vmalloc/modules range
             }
         } else {
             // User space address
@@ -827,13 +819,18 @@ export class PagedKernelDiscovery {
         // Read PGD entry
         const pgdOffset = pgdBase - KernelConstants.GUEST_RAM_START + (pgdIndex * 8);
         const pgdEntry = this.memory.readU64(pgdOffset);
+
+        if (virtualAddr === 0xffff0000c557d000n) {
+            console.log(`      [translateVA] PGD index: ${pgdIndex}, entry: ${pgdEntry ? '0x' + pgdEntry.toString(16) : 'null'}`);
+        }
+
         if (!pgdEntry) return null;
 
-        const pgdType = Number(pgdEntry) & 3;
+        const pgdType = Number(pgdEntry & 3n);  // Mask BEFORE converting to Number
         if (pgdType === 0) return null; // Invalid
         if (pgdType === 1) {
             // PGD block descriptor (rare, but possible)
-            const pageBase = Number(pgdEntry) & 0x0000FFFFFFFFF000;
+            const pageBase = Number(pgdEntry & 0x0000FFFFFFFFF000n);
             return pageBase + Number(virtualAddr & 0xFFFn);
         }
         // pgdType === 3: Table descriptor, continue to PUD
@@ -878,12 +875,20 @@ export class PagedKernelDiscovery {
         // Read PTE entry
         const pteOffset = pteBase - KernelConstants.GUEST_RAM_START + (pteIndex * 8);
         const pteEntry = this.memory.readU64(pteOffset);
-        if (!pteEntry || (Number(pteEntry) & 3) !== 3) {
+
+        // Debug for specific VA
+        if (virtualAddr === 0xffff0000c557d000n) {
+            console.log(`      [translateVA] PTE entry: ${pteEntry ? '0x' + pteEntry.toString(16) : 'null'}`);
+            console.log(`      [translateVA] PTE type: ${pteEntry ? Number(pteEntry & 3n) : 'N/A'}`);
+        }
+
+        if (!pteEntry || (Number(pteEntry & 3n)) !== 3) {
             return null; // Invalid or not present
         }
 
         // Extract physical page address from bits [47:12] and add offset
-        const pageBase = Number(pteEntry) & 0x0000FFFFFFFFF000;
+        // Use BigInt to preserve precision for large addresses
+        const pageBase = Number(pteEntry & 0x0000FFFFFFFFF000n);
         return pageBase + pageOffset;
     }
 
@@ -978,18 +983,15 @@ export class PagedKernelDiscovery {
     /**
      * Debug version of translateVA to see where it fails
      */
-    private debugTranslateVA(va: bigint, pgdBase: number): void {
-        const virtualAddr = va;
+    private debugTranslateVA(va: number | bigint, pgdBase: number): void {
+        const virtualAddr = typeof va === 'number' ? BigInt(va) : va;
 
-        // Extract indices
-        // Handle kernel addresses specially
+        // Extract indices - same logic as fixed translateVA
         let pgdIndex: number;
         if ((virtualAddr >> 48n) === 0xffffn) {
-            // Kernel address - map to upper half of PGD
+            // Kernel address - just extract bits normally
+            // vmalloc at 0xffff0000... uses PGD[0]
             pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);
-            if (pgdIndex < 256) {
-                pgdIndex = 256 + pgdIndex;
-            }
         } else {
             pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);
         }
@@ -1005,7 +1007,7 @@ export class PagedKernelDiscovery {
         console.log(`      PGD entry at 0x${(pgdBase + pgdIndex * 8).toString(16)}: ${pgdEntry ? '0x' + pgdEntry.toString(16) : 'null'}`);
 
         // Check validity using BigInt to avoid precision loss
-        const pgdTypeBits = pgdEntry & 3n;
+        const pgdTypeBits = pgdEntry ? pgdEntry & 3n : 0n;
         console.log(`      Entry type bits [1:0]: ${pgdTypeBits} (binary: 0b${pgdTypeBits.toString(2)})`);
         if (!pgdEntry || pgdTypeBits !== 3n) {
             console.log(`      → PGD entry invalid or not present`);
@@ -1019,7 +1021,7 @@ export class PagedKernelDiscovery {
         console.log(`      PUD entry at 0x${(pudBase + pudIndex * 8).toString(16)}: ${pudEntry ? '0x' + pudEntry.toString(16) : 'null'}`);
 
         // Check validity using BigInt to avoid precision loss
-        const pudTypeBits = pudEntry & 3n;
+        const pudTypeBits = pudEntry ? pudEntry & 3n : 0n;
         if (!pudEntry || pudTypeBits !== 3n) {
             console.log(`      → PUD entry invalid or not present (type bits: ${pudTypeBits})`);
             return;
@@ -1032,7 +1034,7 @@ export class PagedKernelDiscovery {
         const pmdEntry = this.memory.readU64(pmdOffset);
         console.log(`      PMD entry at 0x${(pmdBase + pmdIndex * 8).toString(16)}: ${pmdEntry ? '0x' + pmdEntry.toString(16) : 'null'}`);
 
-        const pmdTypeBits = pmdEntry & 3n;
+        const pmdTypeBits = pmdEntry ? pmdEntry & 3n : 0n;
         if (!pmdEntry || pmdTypeBits !== 3n) {
             console.log(`      → PMD entry invalid or not present (type bits: ${pmdTypeBits})`);
             return;
@@ -1045,7 +1047,7 @@ export class PagedKernelDiscovery {
         const pteEntry = this.memory.readU64(pteOffset);
         console.log(`      PTE entry at 0x${(pteBase + pteIndex * 8).toString(16)}: ${pteEntry ? '0x' + pteEntry.toString(16) : 'null'}`);
 
-        const pteTypeBits = pteEntry & 3n;
+        const pteTypeBits = pteEntry ? pteEntry & 3n : 0n;
         if (!pteEntry || pteTypeBits !== 3n) {
             console.log(`      → PTE entry invalid or not present (type bits: ${pteTypeBits})`);
             return;
@@ -1392,21 +1394,106 @@ export class PagedKernelDiscovery {
 
         this.totalSize = totalSize;
 
-        // First, do targeted search for VLC (PID 11266)
-        // console.log('\n=== SEARCHING FOR VLC (PID 11266) ===');
-        // this.searchForSpecificPID(11266, totalSize);
+        // Process discovery - restored original approach
+        console.log('\n=== PROCESS DISCOVERY (ORIGINAL APPROACH) ===');
+        this.findProcesses(totalSize);
 
-        // SKIP process discovery for now - focus on PGD debugging
-        console.log('\n=== SKIPPING PROCESS DISCOVERY - FOCUSING ON PGD DEBUGGING ===');
-        // this.findProcesses(totalSize);
+        // Prepare tasks array from discovered processes
+        const tasks: Array<{pid: number, name: string, offset: number, mmPtr: bigint}> = [];
+        let kernelThreadCount = 0;
 
-        // Create minimal process list for testing
-        this.processes.set(1736, {
-            pid: 1736,
-            name: 'Xwayland',
-            mmStruct: 0xffff0000c557d000n,
-            isKernelThread: false
-        });
+        // Convert processes to tasks array for later use
+        for (const [pid, process] of this.processes) {
+            const mmPtr = process.mmStruct || 0n;
+            if (mmPtr === 0n) {
+                kernelThreadCount++;
+            }
+            tasks.push({pid, name: process.name, offset: 0, mmPtr});
+        }
+
+        console.log(`  Found ${tasks.length} processes`);
+        console.log(`    - ${kernelThreadCount} kernel threads (no mm_struct)`);
+        console.log(`    - ${tasks.length - kernelThreadCount} user processes`);
+
+        // SKIP the expensive PGD scan
+        const SKIP_FULL_PGD_SCAN = true;
+        let userPGDs: Array<{addr: number, score: number, kernelEntries: number, userEntries: number}> = [];
+
+        if (SKIP_FULL_PGD_SCAN) {
+            // We'll populate userPGDs later after we categorize the PGDs from our scan
+            console.log('\n=== WILL USE MIXED PGDs FOR MATCHING ===');
+            console.log('(Mixed PGDs have both user and kernel entries - needed for vmalloc translation)');
+        } else {
+            // This code won't run unless we enable it
+            const allPGDs = this.findAllPGDs();
+
+            // Categorize PGDs by their characteristics
+            // CORRECTED UNDERSTANDING: User process PGDs have BOTH user and kernel entries!
+            const kernelPGDs = allPGDs.filter(p => p.kernelEntries >= 2 && p.userEntries <= 1);
+            const pureUserPGDs = allPGDs.filter(p => p.kernelEntries === 0 && p.userEntries > 0); // Unusual
+            userPGDs = allPGDs.filter(p => p.kernelEntries > 0 && p.userEntries > 1);  // REAL user PGDs
+
+        console.log(`\nPGD Analysis:`);
+        console.log(`  Total PGDs found: ${allPGDs.length}`);
+        console.log(`  Likely kernel PGDs: ${kernelPGDs.length}`);
+        console.log(`  User process PGDs (with kernel mappings): ${userPGDs.length}`);
+        console.log(`  Pure user PGDs (no kernel - unusual): ${pureUserPGDs.length}`);
+
+        // Show kernel PGDs (should be just one - swapper_pg_dir)
+        if (kernelPGDs.length > 0) {
+            console.log(`\nKernel PGDs:`);
+            for (const pgd of kernelPGDs) {
+                console.log(`  0x${pgd.addr.toString(16)}: ${pgd.kernelEntries} kernel, ${pgd.userEntries} user entries`);
+                if (pgd.addr === 0x136dbf000) {
+                    console.log(`    ^ This is the known swapper_pg_dir!`);
+                }
+            }
+        }
+
+        // Show first few user PGDs
+        if (userPGDs.length > 0) {
+            console.log(`\nFirst 10 user PGDs:`);
+            for (let i = 0; i < Math.min(10, userPGDs.length); i++) {
+                const pgd = userPGDs[i];
+                console.log(`  0x${pgd.addr.toString(16)}: ${pgd.userEntries} user entries`);
+            }
+        }
+
+        // Tasks array was already populated above from findProcesses()
+
+        // Show first 20 tasks
+        console.log(`\nFirst 20 processes:`);
+        for (let i = 0; i < Math.min(20, tasks.length); i++) {
+            const t = tasks[i];
+            const mmStr = t.mmPtr !== 0n ? `0x${t.mmPtr.toString(16)}` : 'NULL';
+            console.log(`  PID ${t.pid}: ${t.name} (mm=${mmStr})`);
+        }
+
+        // Show summary
+        console.log(`\n=== DISCOVERY SUMMARY ===`);
+        console.log(`Task analysis:`);
+        console.log(`  ${tasks.length} total processes`);
+        console.log(`  ${tasks.length - kernelThreadCount} user processes`);
+        console.log(`  ${kernelThreadCount} kernel threads`);
+        console.log(`\nPGD analysis:`);
+        console.log(`  ${userPGDs.length} user PGDs found`);
+        console.log(`  ${kernelPGDs.length} kernel PGDs found`);
+        console.log(`\nMatching challenge:`);
+        console.log(`  We have ${tasks.length - kernelThreadCount} user processes`);
+        console.log(`  But only ${userPGDs.length} user PGDs`);
+        const diff = (tasks.length - kernelThreadCount) - userPGDs.length;
+        if (diff > 0) {
+            console.log(`  ${diff} more processes than PGDs suggests:`);
+            console.log(`    - Processes sharing PGDs (threads of same process)`);
+            console.log(`    - False positives in task_struct detection`);
+        } else if (diff < 0) {
+            console.log(`  ${-diff} more PGDs than processes suggests:`);
+            console.log(`    - Stale/unused PGDs still in memory`);
+            console.log(`    - Our task_struct detection missing some`);
+        }
+        } // Close the else block from SKIP_FULL_PGD_SCAN
+
+        // Process list already populated by findProcesses() above
         // Skip early weak validation - will use strict validation below
         // this.swapperPgDir = this.findSwapperPgDir();
         this.swapperPgDir = 0;  // Will be set by strict validation
@@ -1422,6 +1509,20 @@ export class PagedKernelDiscovery {
 
         if (realSwapperOffset > 0 && realSwapperOffset < totalSize) {
             console.log(`✓ Real PGD is within our memory range`);
+
+            // TEST: Verify that our universal detection would work on the real PGD
+            console.log('\n=== TESTING UNIVERSAL VERIFICATION ON KNOWN PGD ===');
+            const canVerify = this.verifyKernelPgdByTranslation(realSwapperOffset);
+            if (canVerify) {
+                console.log('  ✓ SUCCESS: Universal verification confirms this is a kernel PGD!');
+                console.log('  This means blind discovery would work!');
+            } else {
+                console.log('  ✗ Universal verification failed on known kernel PGD');
+                console.log('  Need to debug the verification logic');
+            }
+
+            // Uncomment to test full blind discovery (takes time):
+            // const discoveredPgd = this.findKernelPgdUniversal();
 
             // Evaluate it as a PGD candidate to see what score it would get
             const realCandidate = this.evaluatePgdCandidate(realSwapperOffset);
@@ -1458,44 +1559,74 @@ export class PagedKernelDiscovery {
             const testResult = this.testPgdWithEntryCountValidation(realSwapperOffset);
             console.log(`\n  Entry count validation: ${testResult.validEntries} valid entries, ${testResult.kernelEntries} kernel entries`);
 
-            // Dump the ENTIRE 4K PGD table (512 entries, including zeros)
-            const pgdData = this.memory.readBytes(realSwapperOffset, 512 * 8);
-            if (pgdData) {
-                const view = new DataView(pgdData.buffer, pgdData.byteOffset, pgdData.byteLength);
-                console.log('\n  === COMPLETE 4K PGD TABLE DUMP (ALL 512 ENTRIES) ===');
-                let nonZeroEntries = 0;
-                for (let i = 0; i < 512; i++) {
-                    const entry = view.getBigUint64(i * 8, true);
-                    const entryType = Number(entry & 3n);
-                    const physAddr = Number(entry & 0x0000FFFFFFFFF000n);
+            // SKIP verbose PGD/PUD dumping - just show summary
+            const VERBOSE_DUMP = false;
+            if (VERBOSE_DUMP) {
+                // This verbose dumping is disabled
+                const pgdData = this.memory.readBytes(realSwapperOffset, 512 * 8);
+                if (pgdData) {
+                    // ... dumping code ...
+                }
+            } else {
+                // Just show a summary
+                const pgdData = this.memory.readBytes(realSwapperOffset, 512 * 8);
+                if (pgdData) {
+                    const view = new DataView(pgdData.buffer, pgdData.byteOffset, pgdData.byteLength);
+                    let nonZeroEntries = 0;
+                    const nonZeroIndices: number[] = [];
 
-                    // Print EVERY entry, including zeros
-                    console.log(`    PGD[${i.toString().padStart(3, ' ')}]: 0x${entry.toString(16).padStart(16, '0')} (PA: 0x${physAddr.toString(16).padStart(12, '0')}, type: ${entryType})`);
-
-                    if (entry !== 0n) {
-                        nonZeroEntries++;
-                        // For valid table entries, dump the PUD table they point to
-                        if (entryType === 3) {
-                            this.dumpPudTable(physAddr, i);
+                    for (let i = 0; i < 512; i++) {
+                        const entry = view.getBigUint64(i * 8, true);
+                        if (entry !== 0n) {
+                            nonZeroEntries++;
+                            if (nonZeroIndices.length < 10) {
+                                nonZeroIndices.push(i);
+                            }
                         }
                     }
+
+                    console.log(`\n  PGD Summary: ${nonZeroEntries} non-zero entries at indices: ${nonZeroIndices.join(', ')}${nonZeroEntries > 10 ? '...' : ''}`);
                 }
-                console.log(`  Total non-zero PGD entries: ${nonZeroEntries}`);
             }
         } else {
             console.log(`✗ Real PGD offset 0x${realSwapperOffset.toString(16)} is outside our memory range (0-0x${totalSize.toString(16)})`);
         }
 
-        // SKIP exhaustive search - focus only on the real PGD
-        console.log('\n=== SKIPPING EXHAUSTIVE SEARCH - TESTING ONLY REAL PGD ===');
-        const allPGDs: Array<{addr: number, score: number, kernelEntries: number, userEntries: number}> = [];
+        // Enable exhaustive search to test our corrected understanding
+        console.log('\n=== SCANNING FOR ALL PGDs WITH CORRECTED UNDERSTANDING ===');
+        console.log('(User process PGDs should have BOTH user and kernel entries)');
+        const validationPGDs: Array<{addr: number, score: number, kernelEntries: number, userEntries: number}> = [];
 
-        // Add only the real PGD to our candidate list
+        // Scan for all PGDs
+        const pgdScanStart = 0x80000000;  // Start at 2GB
+        const pgdScanEnd = Math.min(totalSize, 0x180000000);  // Up to 6GB
+        const pgdStride = 0x1000;  // 4KB aligned
+
+        console.log(`Scanning range: 0x${pgdScanStart.toString(16)} to 0x${pgdScanEnd.toString(16)}`);
+        let candidateCount = 0;
+
+        for (let offset = pgdScanStart; offset < pgdScanEnd; offset += pgdStride) {
+            const candidate = this.evaluatePgdCandidate(offset);
+            if (candidate && candidate.score > 0) {
+                validationPGDs.push(candidate);
+                candidateCount++;
+
+                // Log interesting candidates with both user and kernel entries
+                if (candidate.userEntries > 0 && candidate.kernelEntries > 0) {
+                    const pa = offset + KernelConstants.GUEST_RAM_START;
+                    console.log(`  Found mixed PGD at PA 0x${pa.toString(16)}: ${candidate.userEntries} user, ${candidate.kernelEntries} kernel entries`);
+                }
+            }
+        }
+
+        console.log(`Found ${candidateCount} PGD candidates`);
+
+        // Also add the real PGD if in range
         if (realSwapperOffset > 0 && realSwapperOffset < totalSize) {
             const realCandidate = this.evaluatePgdCandidate(realSwapperOffset);
-            if (realCandidate) {
-                allPGDs.push(realCandidate);
-                console.log(`Testing only the real PGD at 0x${REAL_SWAPPER_PGD_PA.toString(16)}`);
+            if (realCandidate && !validationPGDs.some(p => p.addr === realSwapperOffset)) {
+                validationPGDs.push(realCandidate);
+                console.log(`Also testing known kernel PGD at 0x${REAL_SWAPPER_PGD_PA.toString(16)}`);
             }
         }
 
@@ -1505,10 +1636,10 @@ export class PagedKernelDiscovery {
         const candidateResults: Array<{addr: number, score: number, validMmStructs: number, total: number}> = [];
 
         // Debug: Show what's in top PGD candidates
-        if (allPGDs.length > 0) {
+        if (validationPGDs.length > 0) {
             console.log('\n=== ANALYZING TOP PGD CANDIDATES ===');
-            for (let i = 0; i < Math.min(3, allPGDs.length); i++) {
-                const pgd = allPGDs[i];
+            for (let i = 0; i < Math.min(3, validationPGDs.length); i++) {
+                const pgd = validationPGDs[i];
                 console.log(`\nCandidate #${i+1} at 0x${pgd.addr.toString(16)}:`);
 
                 // Read kernel space entries (indices 256-511 for kernel VAs starting with 0xffff)
@@ -1530,8 +1661,8 @@ export class PagedKernelDiscovery {
             }
         }
 
-        for (let i = 0; i < allPGDs.length; i++) {
-            const candidate = allPGDs[i];
+        for (let i = 0; i < validationPGDs.length; i++) {
+            const candidate = validationPGDs[i];
             if (i < 10 || candidate.score >= 100) {
                 console.log(`\nTesting candidate #${i+1}: 0x${candidate.addr.toString(16)} (score=${candidate.score})`);
             }
@@ -1570,25 +1701,247 @@ export class PagedKernelDiscovery {
             }
         }
 
-        // Report summary
-        console.log('\n=== PGD VALIDATION SUMMARY (Entry Counting Method) ===');
+        // Report summary and categorize PGDs
+        console.log('\n=== PGD DISCOVERY RESULTS ===');
         const validCandidates = candidateResults.filter(c => c.validMmStructs > 0);
         console.log(`Tested ${candidateResults.length} PGD candidates`);
         console.log(`Found ${validCandidates.length} candidates with at least 1 valid entry`);
 
-        if (validCandidates.length > 0 && !realKernelPGD) {
-            console.log('\nTop candidates by valid entries:');
-            validCandidates.sort((a, b) => b.validMmStructs - a.validMmStructs);
-            for (let i = 0; i < Math.min(5, validCandidates.length); i++) {
-                const c = validCandidates[i];
-                console.log(`  ${i+1}. 0x${c.addr.toString(16)}: ${c.validMmStructs} valid entries, ${c.total} kernel entries (score=${c.score})`);
+        // CORRECTED CATEGORIZATION: User process PGDs have BOTH user and kernel entries!
+        const kernelOnlyPGDs = validationPGDs.filter(p => p.kernelEntries >= 2 && p.userEntries <= 1);
+        const mixedPGDs = validationPGDs.filter(p => p.kernelEntries > 0 && p.userEntries > 1);  // REAL user process PGDs
+        const userOnlyPGDs = validationPGDs.filter(p => p.kernelEntries === 0 && p.userEntries > 0); // Should be rare/none
+
+        // Populate userPGDs with the mixed PGDs for the matching code
+        if (SKIP_FULL_PGD_SCAN) {
+            userPGDs = mixedPGDs;
+            console.log(`\n=== NOW USING ${mixedPGDs.length} MIXED PGDs FOR MATCHING ===`);
+        }
+
+        console.log('\n=== PGD CATEGORIZATION (Corrected Understanding) ===');
+        console.log(`  Kernel-only PGDs (swapper_pg_dir): ${kernelOnlyPGDs.length}`);
+        console.log(`  Mixed PGDs (user processes with kernel mappings): ${mixedPGDs.length}`);
+        console.log(`  User-only PGDs (unusual - should be none): ${userOnlyPGDs.length}`);
+
+        if (kernelOnlyPGDs.length > 0) {
+            console.log('\nKernel PGDs (should be just swapper_pg_dir):');
+            for (let i = 0; i < Math.min(3, kernelOnlyPGDs.length); i++) {
+                const pgd = kernelOnlyPGDs[i];
+                const pa = pgd.addr;
+                console.log(`  PA 0x${pa.toString(16)}: ${pgd.kernelEntries} kernel, ${pgd.userEntries} user entries`);
+            }
+        }
+
+        if (mixedPGDs.length > 0) {
+            console.log('\nUser Process PGDs (with shared kernel mappings):');
+            for (let i = 0; i < Math.min(10, mixedPGDs.length); i++) {
+                const pgd = mixedPGDs[i];
+                const pa = pgd.addr;
+                console.log(`  PA 0x${pa.toString(16)}: ${pgd.userEntries} user, ${pgd.kernelEntries} kernel entries`);
+            }
+            if (mixedPGDs.length > 10) {
+                console.log(`  ... and ${mixedPGDs.length - 10} more`);
+            }
+        }
+
+        if (userOnlyPGDs.length > 0) {
+            console.log('\nUnusual: User-only PGDs (no kernel mappings - investigate these):');
+            for (const pgd of userOnlyPGDs.slice(0, 5)) {
+                const pa = pgd.addr;
+                console.log(`  PA 0x${pa.toString(16)}: ${pgd.userEntries} user entries only`);
             }
         }
 
         if (realKernelPGD) {
-            console.log(`\n=== SUCCESS: Real kernel PGD found at 0x${realKernelPGD.toString(16)} ===`);
+            console.log(`\n✓ SUCCESS: Kernel PGD (swapper_pg_dir) confirmed at PA 0x${realKernelPGD.toString(16)}`);
         } else {
-            console.log(`\n=== WARNING: No PGD candidate validated as real kernel PGD ===`);
+            console.log(`\n⚠ WARNING: No PGD validated as kernel PGD with current criteria`);
+        }
+
+        // Step 3: Match PIDs to PGDs using swapper_pg_dir (the kernel PGD)
+        console.log(`\n=== MATCHING PIDs TO PGDs ===`);
+        console.log(`Strategy: Use swapper_pg_dir to translate mm_struct addresses, then read PGD from mm_struct...`);
+
+        const pidToPgd = new Map<number, number>();
+        let matchCount = 0;
+        let attemptCount = 0;
+        let translateSuccess = 0;
+        let pgdReadSuccess = 0;
+
+        // Use the ACTUAL kernel PGD (swapper_pg_dir) that we know from QMP
+        const kernelPGDForTranslation = REAL_SWAPPER_PGD_PA;  // Use the real one from QMP
+
+        if (!kernelPGDForTranslation) {
+            console.log(`ERROR: No kernel PGD found - cannot translate mm_struct addresses`);
+        } else {
+            console.log(`Using real kernel PGD (swapper_pg_dir) at 0x${kernelPGDForTranslation.toString(16)} for translations`);
+
+            // Check what PGD entries exist for vmalloc range
+            console.log('\n=== CHECKING KERNEL PGD FOR VMALLOC ENTRIES ===');
+            console.log('vmalloc range is 0xffff000000000000 - 0xffff7fffffffffff');
+
+            // For ARM64 with 4KB pages and 48-bit VA:
+            // PGD covers bits 47:39 (9 bits = 512 entries)
+            // vmalloc at 0xffff0000... is in the kernel space (high canonical addresses)
+
+            console.log('Understanding ARM64 address space:');
+            console.log('  0x0000000000000000 - 0x0000ffffffffffff : User space (PGD 0-255)');
+            console.log('  0xffff000000000000 - 0xffff7fffffffffff : vmalloc/modules (actually maps to PGD 0!)');
+            console.log('  0xffff800000000000 - 0xffff807fffffffff : Linear mapping (PGD 256)');
+            console.log('  0xffffff8000000000 - 0xffffffffffffffff : Kernel text/fixmap (PGD 511)');
+
+            console.log('\nThe trick: vmalloc VA 0xffff000000000000 uses TTBR1 but maps to PGD[0]!');
+            console.log('This is because TTBR1 (kernel) sees the upper 256 entries as 0-255');
+
+            // Read the kernel PGD to see what's mapped
+            const pgdOffset = kernelPGDForTranslation - KernelConstants.GUEST_RAM_START;
+            const pgdData = this.memory.readBytes(pgdOffset, 512 * 8);
+
+            if (pgdData) {
+                const view = new DataView(pgdData.buffer, pgdData.byteOffset, pgdData.byteLength);
+                console.log('Checking kernel PGD entries:');
+
+                // Just show all non-zero entries
+                const nonZero = [];
+                for (let i = 0; i < 512; i++) {
+                    const entry = view.getBigUint64(i * 8, true);
+                    if (entry !== 0n) {
+                        nonZero.push(i);
+                    }
+                }
+                console.log(`  Non-zero entries at indices: ${nonZero.join(', ')}`);
+
+                // Check PGD[0] specifically
+                const pgd0 = view.getBigUint64(0, true);
+                if (pgd0 !== 0n) {
+                    console.log(`\n  PGD[0] = 0x${pgd0.toString(16)} - THIS COVERS VMALLOC!`);
+                    console.log('  vmalloc addresses 0xffff0000... should go through PGD[0]');
+                    console.log('  But the translation still fails - why?');
+                }
+            }
+
+            // For each process with an mm_struct pointer
+            const userProcesses = Array.from(this.processes.values()).filter(p => p.mmStruct && p.mmStruct !== 0);
+            console.log(`Testing ${Math.min(20, userProcesses.length)} user processes...`);
+
+            // First show a summary of all vmalloc addresses
+            console.log('\n=== VMALLOC ADDRESS SUMMARY ===');
+            console.log('All mm_struct addresses are in vmalloc space (0xffff0000... range):');
+            for (const proc of userProcesses.slice(0, 10)) {
+                console.log(`  PID ${proc.pid.toString().padStart(5)}: 0x${proc.mmStruct.toString(16)} (${proc.name})`);
+            }
+            if (userProcesses.length > 10) {
+                console.log(`  ... and ${userProcesses.length - 10} more`);
+            }
+            console.log('');
+
+            for (const process of userProcesses.slice(0, 20)) { // Test first 20 processes
+                const mmVA = process.mmStruct;
+                // Strip PAC bits if present
+                const mmClean = stripPAC(BigInt(mmVA));
+
+                // Show the full VA and the cleaned VA after PAC stripping
+                console.log(`\nPID ${process.pid.toString().padStart(5)} (${process.name.padEnd(15)}): mm_struct VA = 0x${mmVA.toString(16)}`);
+                if (mmClean !== BigInt(mmVA)) {
+                    console.log(`  PAC stripped: 0x${Number(mmClean).toString(16)}`);
+                }
+
+                // Show which vmalloc range this falls into
+                const mmVANum = typeof mmVA === 'bigint' ? Number(mmVA) : mmVA;
+                if (mmVANum >= 0xffff000000000000 && mmVANum < 0xffff800000000000) {
+                    const offset = mmVANum - 0xffff000000000000;
+                    console.log(`  vmalloc range: 0xffff0000... + 0x${offset.toString(16)}`);
+                }
+
+                attemptCount++;
+
+                // Use kernel PGD to translate this mm_struct VA
+                // First try the debug version to see where it fails
+                if (process.pid === 1736) { // Just debug the first one
+                    console.log('  DEBUG: Walking page table for VA 0x' + Number(mmClean).toString(16));
+                    console.log('  As BigInt: 0x' + mmClean.toString(16));
+                    this.debugTranslateVA(mmClean, kernelPGDForTranslation);
+                }
+
+                // Pass as number since translateVA converts it anyway
+                const mmPA = this.translateVA(Number(mmClean), kernelPGDForTranslation);
+
+                // Debug: show what we got
+                if (process.pid === 1736) {
+                    console.log(`  translateVA returned: ${mmPA === null ? 'null' : '0x' + mmPA.toString(16)}`);
+                }
+
+                if (mmPA && mmPA > 0) {  // Just check it's a valid PA, not in guest RAM range
+                    translateSuccess++;
+                    console.log(`  ✓ Translated mm_struct to PA 0x${mmPA.toString(16)}`);
+
+                    // Note if it's outside the normal guest RAM range
+                    if (mmPA < KernelConstants.GUEST_RAM_START) {
+                        console.log(`    Note: PA is below guest RAM start (0x${KernelConstants.GUEST_RAM_START.toString(16)})`);
+                    }
+
+                    // Read the PGD pointer from the mm_struct
+                    // For PAs below GUEST_RAM_START, we need to handle them specially
+                    // These are in a different memory region that we can't access through our memory file
+                    if (mmPA < KernelConstants.GUEST_RAM_START) {
+                        console.log(`    ✗ Cannot read mm_struct - PA 0x${mmPA.toString(16)} is outside memory file range`);
+                        console.log(`    This confirms vmalloc allocations are in kernel-reserved memory!`);
+                    } else {
+                        const mmOffset = mmPA - KernelConstants.GUEST_RAM_START;
+                        const pgdInMm = this.memory.readU64(mmOffset + KernelConstants.PGD_OFFSET_IN_MM);
+
+                        if (pgdInMm && Number(pgdInMm) >= KernelConstants.GUEST_RAM_START) {
+                            pgdReadSuccess++;
+                            const pgdPA = Number(pgdInMm);
+                            console.log(`    ✓ Read PGD from mm_struct: 0x${pgdPA.toString(16)}`);
+
+                            // Check if this PGD is in our list of mixed PGDs
+                            const foundPgd = userPGDs.find(p => p.addr === pgdPA);
+                            if (foundPgd) {
+                                console.log(`      ✓✓ CONFIRMED: PGD is in our mixed PGD list (${foundPgd.userEntries} user, ${foundPgd.kernelEntries} kernel entries)`);
+                                pidToPgd.set(process.pid, pgdPA);
+                                matchCount++;
+                            } else {
+                                console.log(`      ⚠ PGD not in our mixed PGD list - might be outside scan range`);
+                                // Still record it
+                                pidToPgd.set(process.pid, pgdPA);
+                                matchCount++;
+                            }
+                        } else {
+                            console.log(`    ✗ Invalid PGD in mm_struct: 0x${pgdInMm?.toString(16) || 'null'}`);
+                        }
+                    }
+                } else {
+                    console.log(`  ✗ Failed to translate mm_struct VA using kernel PGD`);
+                }
+            }
+        }
+
+        console.log(`\n=== MATCHING RESULTS ===`);
+        console.log(`Attempted: ${attemptCount} processes`);
+        console.log(`Translated mm_struct: ${translateSuccess}/${attemptCount} (${(translateSuccess*100/attemptCount).toFixed(1)}%)`);
+        console.log(`Read valid PGD: ${pgdReadSuccess}/${translateSuccess} (${translateSuccess > 0 ? (pgdReadSuccess*100/translateSuccess).toFixed(1) : 0}%)`);
+        console.log(`Matched to PGDs: ${matchCount}/${pgdReadSuccess} (${pgdReadSuccess > 0 ? (matchCount*100/pgdReadSuccess).toFixed(1) : 0}%)`);
+
+        if (matchCount > 0) {
+            console.log(`\nMatched PIDs:`);
+            for (const [pid, pgd] of pidToPgd) {
+                const process = this.processes.get(pid)!;
+                const foundPgd = userPGDs.find(p => p.addr === pgd);
+                if (foundPgd) {
+                    console.log(`  PID ${pid} (${process.name}) → PGD at 0x${pgd.toString(16)} (${foundPgd.userEntries} user, ${foundPgd.kernelEntries} kernel)`);
+                } else {
+                    console.log(`  PID ${pid} (${process.name}) → PGD at 0x${pgd.toString(16)} (not in scan range)`);
+                }
+            }
+        } else {
+            console.log(`\nNo matches found. Possible reasons:`);
+            if (translateSuccess === 0) {
+                console.log(`  - Kernel PGD cannot translate vmalloc addresses (expected!)`);
+                console.log(`  - vmalloc addresses need per-process or vmalloc-specific mappings`);
+            } else if (pgdReadSuccess === 0) {
+                console.log(`  - PGD offset in mm_struct might be different than ${KernelConstants.PGD_OFFSET_IN_MM}`);
+            }
         }
 
         this.findPageTables(totalSize);
@@ -1783,14 +2136,7 @@ export class PagedKernelDiscovery {
 
         console.log(`✓ Found ${realProcesses.length} REAL processes (filtered from ${this.processes.size} candidates)`);
         console.log(`  - Known system processes: ${knownProcesses.length}`);
-        console.log(`  - VLC processes: ${vlcProcesses.length}`);
-
-        if (vlcProcesses.length > 0) {
-            console.log(`\n✓ VLC FOUND:`);
-            vlcProcesses.forEach(p => {
-                console.log(`    PID ${p.pid}: ${p.name}`);
-            });
-        }
+        // Removed VLC special case
 
         if (this.swapperPgDir) {
             console.log(`\n✓ Kernel PGD (swapper_pg_dir): 0x${this.swapperPgDir.toString(16)}`);
@@ -1815,6 +2161,66 @@ export class PagedKernelDiscovery {
             stats: this.stats,
             pageCollection,  // Return the page collection for UI use
         };
+    }
+
+    /**
+     * Universal kernel PGD detection using VA translation verification
+     * This works regardless of kernel version or memory layout
+     */
+    public verifyKernelPgdByTranslation(pgdOffset: number): boolean {
+        // Key insight: Kernel PGD must be able to translate certain VAs
+        // Test 1: Linear mapping region (most universal)
+        const linearTestVAs = [
+            0x1000,         // Should map to PA 0x40001000 (RAM_START + 0x1000)
+            0x40000000,     // Should map to PA 0x80000000 (RAM_START + 0x40000000)
+        ];
+
+        const pgdPA = pgdOffset + KernelConstants.GUEST_RAM_START;
+
+        for (const va of linearTestVAs) {
+            const translatedPA = this.translateVA(va, pgdPA);
+            if (translatedPA) {
+                // For linear mapping, VA offset should equal PA - RAM_START
+                const expectedPA = KernelConstants.GUEST_RAM_START + va;
+                if (translatedPA === expectedPA) {
+                    console.log(`  ✓ Linear mapping verified: VA 0x${va.toString(16)} → PA 0x${translatedPA.toString(16)}`);
+                    return true; // This IS the kernel PGD!
+                }
+            }
+        }
+
+        // Test 2: Check if it has kernel space entries that lead to valid tables
+        const pgdData = this.memory.readBytes(pgdOffset, 4096);
+        if (!pgdData) return false;
+
+        const view = new DataView(pgdData.buffer, pgdData.byteOffset, pgdData.byteLength);
+        let kernelSpaceValid = 0;
+
+        // Check upper half (kernel space)
+        for (let i = 256; i < 512; i++) {
+            const entry = view.getBigUint64(i * 8, true);
+            if ((entry & 3n) === 3n) {
+                // Follow this table and see if it's valid (mostly zeros)
+                const tablePA = Number(entry & 0x0000FFFFFFFFF000n);
+                const tableOffset = tablePA - KernelConstants.GUEST_RAM_START;
+
+                if (tableOffset > 0 && tableOffset < this.totalSize) {
+                    const tableData = this.memory.readBytes(tableOffset, 512);
+                    if (tableData) {
+                        // Count zeros in the table
+                        let zeros = 0;
+                        const tableView = new DataView(tableData.buffer, tableData.byteOffset, tableData.byteLength);
+                        for (let j = 0; j < 64; j++) {
+                            if (tableView.getBigUint64(j * 8, true) === 0n) zeros++;
+                        }
+                        // Valid kernel tables are mostly zeros
+                        if (zeros > 50) kernelSpaceValid++;
+                    }
+                }
+            }
+        }
+
+        return kernelSpaceValid >= 1; // At least one valid kernel space entry
     }
 
     /**
@@ -2148,6 +2554,87 @@ export class PagedKernelDiscovery {
         }
 
         return ptes;
+    }
+
+    /**
+     * Find kernel PGD using universal characteristics
+     */
+    public findKernelPgdUniversal(): number | null {
+        console.log('=== UNIVERSAL KERNEL PGD DISCOVERY ===');
+        console.log('Using VA translation verification (works on any kernel)...');
+
+        const candidates: Array<{offset: number, reason: string}> = [];
+        let scanned = 0;
+        let testedTranslations = 0;
+
+        // Scan memory for pages that look like PGDs
+        // Focus on areas where kernel structures typically reside
+        const scanRanges = [
+            // Scan backwards from end (kernel structures often at high addresses)
+            { start: Math.max(0, this.totalSize - 1024*1024*1024), end: this.totalSize },
+            // Also check 2-4GB range
+            { start: 2*1024*1024*1024, end: Math.min(4*1024*1024*1024, this.totalSize) },
+        ];
+
+        for (const range of scanRanges) {
+            console.log(`  Scanning ${(range.start/(1024*1024*1024)).toFixed(1)}GB - ${(range.end/(1024*1024*1024)).toFixed(1)}GB...`);
+
+            for (let offset = range.start; offset < range.end; offset += 4096) {
+                if (offset < 0 || offset >= this.totalSize) continue;
+                scanned++;
+
+                // Quick pre-filter: Must have sparse entries
+                const preview = this.memory.readBytes(offset, 256);
+                if (!preview) continue;
+
+                const view = new DataView(preview.buffer, preview.byteOffset, preview.byteLength);
+                let validEntries = 0;
+                let zeroEntries = 0;
+                let hasEntry0 = false;
+
+                for (let i = 0; i < 32; i++) {
+                    const entry = view.getBigUint64(i * 8, true);
+                    if (entry === 0n) {
+                        zeroEntries++;
+                    } else if ((entry & 3n) === 3n) {
+                        validEntries++;
+                        if (i === 0) hasEntry0 = true;
+                    }
+                }
+
+                // Skip if not sparse enough or missing entry 0
+                if (!hasEntry0 || validEntries === 0 || validEntries > 5 || zeroEntries < 25) {
+                    continue;
+                }
+
+                // Now do the expensive translation test
+                testedTranslations++;
+                if (this.verifyKernelPgdByTranslation(offset)) {
+                    candidates.push({
+                        offset,
+                        reason: 'Successfully translates linear mapping VAs'
+                    });
+                    console.log(`  ✓ FOUND kernel PGD at offset 0x${offset.toString(16)} (PA: 0x${(offset + KernelConstants.GUEST_RAM_START).toString(16)})`);
+                    console.log(`    Reason: ${candidates[candidates.length - 1].reason}`);
+
+                    // Validate with entry counting
+                    const validation = this.testPgdWithEntryCountValidation(offset);
+                    console.log(`    Validation: ${validation.validEntries} entries (${validation.kernelEntries} kernel, ${validation.userEntries} user)`);
+
+                    // Usually only one kernel PGD, so we can return early
+                    return offset + KernelConstants.GUEST_RAM_START;
+                }
+            }
+        }
+
+        console.log(`\nScanned ${scanned} pages, tested ${testedTranslations} translation candidates`);
+
+        if (candidates.length === 0) {
+            console.log('No kernel PGD found using universal method!');
+            return null;
+        }
+
+        return candidates[0].offset + KernelConstants.GUEST_RAM_START;
     }
 
     /**

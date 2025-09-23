@@ -9,6 +9,21 @@
  * 5. Reverse mapping (physical page -> PIDs)
  */
 
+// ARM64 Pointer Authentication stripping
+export function stripPAC(ptr: bigint): bigint {
+    // DON'T strip kernel virtual addresses!
+    // Addresses like 0xffff00001d12b700 are valid kernel VAs, not PAC
+
+    // Real pointer authentication would have unusual bit patterns
+    // in the upper bits, not the standard 0xffff kernel prefix
+
+    // For now, return addresses as-is
+    // Kernel VAs (0xffff...) need to be translated through page tables,
+    // not stripped
+
+    return ptr;
+}
+
 // Configuration constants
 export const KernelConstants = {
     TASK_STRUCT_SIZE: 9088,
@@ -33,6 +48,38 @@ export const KernelConstants = {
     // appear at these offsets in the subsequent pages
     PAGE_STRADDLE_OFFSETS: [0x0, 0x380, 0x700],
 
+    // VMA (Virtual Memory Area) offsets in vm_area_struct
+    // These are for ARM64 Linux 6.x - may vary by kernel version
+    VMA_VM_START: 0x0,      // Start address of VMA
+    VMA_VM_END: 0x8,        // End address of VMA
+    VMA_VM_NEXT: 0x10,      // Next VMA in linked list
+    VMA_VM_PREV: 0x18,      // Previous VMA in linked list
+    VMA_VM_FLAGS: 0x50,     // Permission flags
+    VMA_VM_FILE: 0x90,      // File backing this VMA (if any)
+
+    // mm_struct VMA-related offsets
+    // Note: These offsets vary by kernel version and config!
+    // For typical ARM64 Linux 6.x:
+    MM_MMAP: 0x10,          // First VMA in linked list (after spinlock/flags)
+    MM_START_CODE: 0x98,    // Start of code segment
+    MM_END_CODE: 0xa0,      // End of code segment
+    MM_START_DATA: 0xa8,    // Start of data segment
+    MM_END_DATA: 0xb0,      // End of data segment
+    MM_START_BRK: 0xb8,     // Start of heap
+    MM_BRK: 0xc0,           // Current heap end
+    MM_START_STACK: 0xc8,   // Start of stack
+
+    // VMA flags (from include/linux/mm.h)
+    VM_READ: 0x00000001,
+    VM_WRITE: 0x00000002,
+    VM_EXEC: 0x00000004,
+    VM_SHARED: 0x00000008,
+    VM_MAYREAD: 0x00000010,
+    VM_MAYWRITE: 0x00000020,
+    VM_MAYEXEC: 0x00000040,
+    VM_GROWSDOWN: 0x00000100,  // Stack segment
+    VM_GROWSUP: 0x00000200,
+
     // Known kernel addresses
     SWAPPER_PGD: 0x082c00000,
 
@@ -42,7 +89,7 @@ export const KernelConstants = {
 
     // Address ranges
     GUEST_RAM_START: 0x40000000,
-    GUEST_RAM_END: 0x200000000,
+    GUEST_RAM_END: 0x1C0000000,  // 6GB guest (0x40000000 + 6GB)
     KERNEL_VA_START: 0xffff000000000000n, // BigInt for 64-bit
 } as const;
 
@@ -59,7 +106,7 @@ export interface ProcessInfo {
     pid: number;
     name: string;
     taskStruct: number;
-    mmStruct: number;
+    mmStruct: bigint;  // Changed to bigint to preserve kernel addresses
     pgd: number;
     isKernelThread: boolean;
     tasksNext: number;  // Next task in linked list
@@ -105,6 +152,8 @@ export interface DiscoveryOutput {
     kernelPtes: PTE[];
     pageToPids: Map<number, Set<number>>;
     stats: DiscoveryStats;
+    swapperPgDir?: number;
+    pageCollection?: any;  // Type will be PageCollection when imported
 }
 
 export class KernelDiscovery {
@@ -231,9 +280,11 @@ export class KernelDiscovery {
             pid,
             name,
             taskStruct: KernelConstants.GUEST_RAM_START + this.baseOffset + offset, // Adjust for chunk's position
-            mmStruct: mmPtr,
+            mmStruct: BigInt(mmPtr),
             pgd: pgdPtr,
             isKernelThread: mmPtr === 0,
+            tasksNext: 0,  // Not used in this simplified version
+            tasksPrev: 0,  // Not used in this simplified version
             ptes: [],
             sections: [],
         };
@@ -381,7 +432,7 @@ export class KernelDiscovery {
 
                 // Check if physical address is reasonable
                 const physAddr = (Number(entry) >> 12) << 12;
-                if (physAddr > 0x200000000) { // Beyond 8GB
+                if (physAddr > KernelConstants.GUEST_RAM_END) { // Beyond guest RAM
                     return false;
                 }
             } else {
