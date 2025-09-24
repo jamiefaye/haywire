@@ -1,15 +1,41 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const net = require('net')
 // const { UniversalQGAClient } = require('../dist/utils/qgaClient') // TODO: Add back when QGA is ready
 
+// Disable certificate errors for development
+if (process.env.NODE_ENV === 'development') {
+  // Node.js environment variables
+  process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
+  process.env["NODE_NO_WARNINGS"] = "1";
+
+  // Electron command line switches
+  app.commandLine.appendSwitch('ignore-certificate-errors')
+  app.commandLine.appendSwitch('allow-insecure-localhost')
+  app.commandLine.appendSwitch('disable-web-security')
+}
+
 const DEFAULT_MEMORY_PATH = '/tmp/haywire-vm-mem'
+const LOG_FILE_PATH = '/tmp/haywire-kernel-discovery.log'
 let mainWindow
 let qgaClient = null // TODO: Initialize when QGA is ready
 let memoryFileFd = null
 let currentFilePath = null
+let logFileStream = null
+
+// Setup log file
+function setupLogging() {
+  // Create or truncate log file
+  logFileStream = fs.createWriteStream(LOG_FILE_PATH, { flags: 'w' })
+  logFileStream.write(`=== Haywire Kernel Discovery Log ===\n`)
+  logFileStream.write(`Started: ${new Date().toISOString()}\n\n`)
+  console.log('Logging to:', LOG_FILE_PATH)
+}
 
 function createWindow() {
+  setupLogging()
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -20,16 +46,65 @@ function createWindow() {
     }
   })
 
+  // Intercept console messages from the renderer
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    const logLine = `[${new Date().toISOString()}] [${level}] ${message}\n`
+    if (logFileStream) {
+      logFileStream.write(logLine)
+    }
+  })
+
+  // Check for diagnostic mode
+  if (process.env.RUN_DIAGNOSTICS === 'true') {
+    // Auto-run diagnostics after window loads
+    mainWindow.webContents.on('did-finish-load', () => {
+      console.log('AUTO-RUNNING KERNEL DIAGNOSTICS...');
+      mainWindow.webContents.executeJavaScript(`
+        (async () => {
+          console.log('Starting automatic kernel diagnostics...');
+
+          // Wait for file to be loaded (you need to set AUTO_FILE env var)
+          const autoFile = '${process.env.AUTO_FILE || ''}';
+          if (autoFile) {
+            console.log('Auto-loading file:', autoFile);
+            // Trigger file open
+            // Note: This would need to be implemented in your file manager
+          }
+
+          // Wait a bit for everything to initialize
+          setTimeout(async () => {
+            if (window.runKernelDiagnostics) {
+              console.log('Running diagnostics...');
+              await window.runKernelDiagnostics();
+            } else {
+              console.log('Diagnostic function not found');
+            }
+          }, 3000);
+        })();
+      `);
+    });
+  }
+
   // In development, load from Vite dev server
   if (process.env.NODE_ENV === 'development') {
-    // Ignore certificate errors for localhost development
+    // Disable certificate errors completely for development
+    app.commandLine.appendSwitch('ignore-certificate-errors');
+
+    // Suppress certificate error events
+    mainWindow.webContents.on('certificate-error', (event, url, error, certificate, callback) => {
+      event.preventDefault()
+      callback(true) // Ignore the error and continue
+    })
+
+    // Also set certificate verify proc as backup
     mainWindow.webContents.session.setCertificateVerifyProc((request, callback) => {
-      // Allow self-signed certificates for localhost
-      if (request.hostname === 'localhost') {
-        callback(0) // 0 = OK
-      } else {
-        callback(-2) // -2 = Use default verification
-      }
+      // Allow all certificates in development
+      callback(0) // 0 = OK
+    })
+
+    // Set additional security preferences
+    mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+      callback(true)
     })
 
     mainWindow.loadURL('https://localhost:3000')
@@ -318,6 +393,140 @@ ipcMain.handle('close-memory-file', async () => {
   return { success: false, error: 'No file open' }
 })
 
+// IPC handler to read the log file
+ipcMain.handle('read-log-file', async () => {
+  try {
+    if (!fs.existsSync(LOG_FILE_PATH)) {
+      return { success: false, error: 'Log file not found' }
+    }
+    const content = fs.readFileSync(LOG_FILE_PATH, 'utf8')
+    return { success: true, content }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+// IPC handler to clear the log file
+ipcMain.handle('clear-log-file', async () => {
+  try {
+    if (logFileStream) {
+      logFileStream.end()
+    }
+    setupLogging()
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+// IPC handler to trigger kernel discovery
+ipcMain.handle('trigger-kernel-discovery', async () => {
+  try {
+    // Clear the log first
+    if (logFileStream) {
+      logFileStream.write('\n=== Kernel Discovery Triggered ===\n')
+      logFileStream.write(`Time: ${new Date().toISOString()}\n\n`)
+    }
+
+    // Tell the renderer to run kernel discovery
+    mainWindow.webContents.executeJavaScript(`
+      (async () => {
+        console.log('Starting kernel discovery from IPC trigger...');
+        if (window.runKernelDiscovery) {
+          const result = await window.runKernelDiscovery();
+          console.log('Kernel discovery completed');
+          return result;
+        } else {
+          console.error('runKernelDiscovery function not found');
+          return null;
+        }
+      })()
+    `).then(result => {
+      if (logFileStream) {
+        logFileStream.write('\n=== Discovery Result ===\n')
+        logFileStream.write(JSON.stringify(result, null, 2) + '\n')
+      }
+    })
+
+    return { success: true, logPath: LOG_FILE_PATH }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+// QMP Handler for kernel info
+ipcMain.handle('qmp:queryKernelInfo', async () => {
+  return new Promise((resolve) => {
+    const socket = new net.Socket()
+    let buffer = ''
+    let capabilitiesSent = false
+    let responded = false
+
+    const cleanup = () => {
+      if (!socket.destroyed) {
+        socket.destroy()
+      }
+    }
+
+    socket.connect(4445, 'localhost', () => {
+      console.log('QMP: Connected to localhost:4445')
+    })
+
+    socket.on('data', (data) => {
+      buffer += data.toString()
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (!line.trim() || responded) continue
+
+        try {
+          const msg = JSON.parse(line)
+
+          if (msg.QMP && !capabilitiesSent) {
+            socket.write(JSON.stringify({"execute": "qmp_capabilities"}) + '\n')
+            capabilitiesSent = true
+          } else if (capabilitiesSent && msg.return !== undefined && !msg.return.ttbr1) {
+            // Send query-kernel-info
+            socket.write(JSON.stringify({
+              "execute": "query-kernel-info",
+              "arguments": {"cpu-index": 0}
+            }) + '\n')
+          } else if (msg.return && msg.return.ttbr1) {
+            responded = true
+            const kernelPgd = Number(BigInt(msg.return.ttbr1) & 0xFFFFFFFFF000n)
+            console.log(`QMP: Kernel PGD from TTBR1_EL1 = 0x${kernelPgd.toString(16)}`)
+            cleanup()
+            resolve({ success: true, kernelPgd })
+          } else if (msg.error) {
+            console.log('QMP Error:', msg.error.desc)
+            responded = true
+            cleanup()
+            resolve({ success: false, error: msg.error.desc })
+          }
+        } catch (e) {
+          // Not JSON
+        }
+      }
+    })
+
+    socket.on('error', (err) => {
+      console.error('QMP connection error:', err.message)
+      cleanup()
+      resolve({ success: false, error: err.message })
+    })
+
+    // Timeout
+    setTimeout(() => {
+      if (!responded) {
+        console.log('QMP: Query timeout')
+        cleanup()
+        resolve({ success: false, error: 'Timeout' })
+      }
+    }, 3000)
+  })
+})
+
 app.whenReady().then(() => {
   createWindow()
   // setupQGAHandlers() // TODO: Enable when QGA is ready
@@ -332,6 +541,11 @@ app.on('window-all-closed', () => {
   if (memoryFileFd !== null) {
     fs.closeSync(memoryFileFd)
     memoryFileFd = null
+  }
+
+  if (logFileStream) {
+    logFileStream.end()
+    logFileStream = null
   }
 
   if (process.platform !== 'darwin') {

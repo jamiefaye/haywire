@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return ipcRenderer.invoke('read-memory-chunk', pageNumber * 4096, 4096);
   },
 
+  // QMP operations
+  queryKernelInfo: () => ipcRenderer.invoke('qmp:queryKernelInfo'),
+
   // Check if running in Electron
   isElectron: true
 });

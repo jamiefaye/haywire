@@ -1933,6 +1933,49 @@ export class PagedKernelDiscovery {
     }
 
     /**
+     * Walk kernel portion of page tables (indices 256-511)
+     */
+    private walkKernelPortionOfPageTables(process: ProcessInfo): PTE[] {
+        const ptes: PTE[] = [];
+        const debug = false;  // Enable for debugging
+        let validEntries = 0;
+
+        // Walk kernel space portion of PGD (indices 256-511)
+        for (let pgdIdx = 256; pgdIdx < 512; pgdIdx++) {
+            // process.pgd is stored as physical address (with GUEST_RAM_START added)
+            // We need to convert back to file offset
+            const pgdPhysAddr = process.pgd + (pgdIdx * 8);
+            const pgdOffset = pgdPhysAddr - KernelConstants.GUEST_RAM_START;
+            const pgdEntry = this.memory.readU64(pgdOffset);
+
+            if (!pgdEntry || (Number(pgdEntry) & 3) === 0) {
+                continue;  // Entry not present
+            }
+
+            const entryType = Number(pgdEntry) & 3;
+
+            if (entryType === 3) {  // Table descriptor - points to PUD
+                validEntries++;
+                if (debug && validEntries <= 3) {
+                    console.log(`    PGD[${pgdIdx}]: 0x${pgdEntry.toString(16)} -> PUD table`);
+                }
+                this.walkPudLevel(pgdEntry, pgdIdx, ptes);
+            } else if (entryType === 1) {  // Block descriptor - 1GB page
+                validEntries++;
+                const pa = Number(pgdEntry & 0x0000FFFFFFFFF000n);
+                const va = BigInt(pgdIdx) << 39n;  // PGD index determines bits [47:39]
+                ptes.push({ va, pa, flags: pgdEntry, level: 1, pageSize: 1073741824 });
+            }
+        }
+
+        if (debug || validEntries > 0) {
+            console.log(`    Walked kernel PGD: ${validEntries} valid entries, ${ptes.length} PTEs found`);
+        }
+
+        return ptes;
+    }
+
+    /**
      * Walk PUD level of page tables
      */
     private walkPudLevel(pudTableAddr: bigint, pgdIdx: number, ptes: PTE[]): void {
@@ -1940,9 +1983,12 @@ export class PagedKernelDiscovery {
         const pudBase = Number(pudTableAddr & 0x0000FFFFFFFFF000n);
 
         for (let pudIdx = 0; pudIdx < 512; pudIdx++) {
-            // Physical addresses ARE file offsets (no GUEST_RAM_START adjustment needed)
+            // Calculate file offset - high PAs need GUEST_RAM_START subtracted
             const pudPhysAddr = pudBase + (pudIdx * 8);
-            const pudEntry = this.memory.readU64(pudPhysAddr);
+            const pudOffset = pudPhysAddr >= KernelConstants.GUEST_RAM_START
+                ? pudPhysAddr - KernelConstants.GUEST_RAM_START
+                : pudPhysAddr;
+            const pudEntry = this.memory.readU64(pudOffset);
 
             if (!pudEntry || Number(pudEntry & 3n) === 0) {
                 continue;
@@ -1976,9 +2022,12 @@ export class PagedKernelDiscovery {
         const pmdBase = Number(pmdTableAddr & 0x0000FFFFFFFFF000n);
 
         for (let pmdIdx = 0; pmdIdx < 512; pmdIdx++) {
-            // Physical addresses ARE file offsets (no GUEST_RAM_START adjustment needed)
+            // Calculate file offset - high PAs need GUEST_RAM_START subtracted
             const pmdPhysAddr = pmdBase + (pmdIdx * 8);
-            const pmdEntry = this.memory.readU64(pmdPhysAddr);
+            const pmdOffset = pmdPhysAddr >= KernelConstants.GUEST_RAM_START
+                ? pmdPhysAddr - KernelConstants.GUEST_RAM_START
+                : pmdPhysAddr;
+            const pmdEntry = this.memory.readU64(pmdOffset);
 
             if (!pmdEntry || Number(pmdEntry & 3n) === 0) {
                 continue;
@@ -2012,9 +2061,12 @@ export class PagedKernelDiscovery {
         const pteBase = Number(pteTableAddr & 0x0000FFFFFFFFF000n);
 
         for (let pteIdx = 0; pteIdx < 512; pteIdx++) {
-            // Physical addresses ARE file offsets (no GUEST_RAM_START adjustment needed)
+            // Calculate file offset - high PAs need GUEST_RAM_START subtracted
             const ptePhysAddr = pteBase + (pteIdx * 8);
-            const pteEntry = this.memory.readU64(ptePhysAddr);
+            const pteOffset = ptePhysAddr >= KernelConstants.GUEST_RAM_START
+                ? ptePhysAddr - KernelConstants.GUEST_RAM_START
+                : ptePhysAddr;
+            const pteEntry = this.memory.readU64(pteOffset);
 
             if (!pteEntry || Number(pteEntry & 3n) === 0) {
                 continue;
@@ -2148,102 +2200,64 @@ export class PagedKernelDiscovery {
         // this.swapperPgDir = this.findSwapperPgDir();
         this.swapperPgDir = 0;  // Will be set by strict validation
 
-        // We know the REAL swapper_pg_dir from QMP query-kernel-info (TTBR1 register)
-        const REAL_SWAPPER_PGD_PA = 0x136dbf000;  // From QMP
-        console.log('\n=== REAL SWAPPER_PG_DIR FROM QMP ===');
-        console.log(`TTBR1 (kernel PGD) = 0x${REAL_SWAPPER_PGD_PA.toString(16)}`);
+        // Try to get ground truth from QMP if available
+        console.log('\n=== KERNEL PGD DISCOVERY ===');
 
-        // Set the swapper_pg_dir to the real value from QMP
-        this.swapperPgDir = REAL_SWAPPER_PGD_PA;
-
-        // Test if the real PGD is within our memory range
-        const realSwapperOffset = REAL_SWAPPER_PGD_PA - KernelConstants.GUEST_RAM_START;
-        console.log(`Offset in memory file: 0x${realSwapperOffset.toString(16)}`);
-
-        if (realSwapperOffset > 0 && realSwapperOffset < totalSize) {
-            console.log(`✓ Real PGD is within our memory range`);
-
-            // TEST: Verify that our universal detection would work on the real PGD
-            console.log('\n=== TESTING UNIVERSAL VERIFICATION ON KNOWN PGD ===');
-            const canVerify = this.verifyKernelPgdByTranslation(realSwapperOffset);
-            if (canVerify) {
-                console.log('  ✓ SUCCESS: Universal verification confirms this is a kernel PGD!');
-                console.log('  This means blind discovery would work!');
-            } else {
-                console.log('  ✗ Universal verification failed on known kernel PGD');
-                console.log('  Need to debug the verification logic');
-            }
-
-            // Uncomment to test full blind discovery (takes time):
-            // const discoveredPgd = this.findKernelPgdUniversal();
-
-            // Evaluate it as a PGD candidate to see what score it would get
-            const realCandidate = this.evaluatePgdCandidate(realSwapperOffset);
-            if (realCandidate) {
-                console.log(`  Real PGD evaluation: score=${realCandidate.score}, kernel=${realCandidate.kernelEntries}, user=${realCandidate.userEntries}`);
-            } else {
-                console.log(`  ✗ Real PGD failed evaluation as candidate!`);
-            }
-
-            // Test with strict validation
-            // TEST: Try translating a simple VA that should work
-            console.log('\n  === TESTING PAGE TABLE WALKING WITH SIMPLE VA ===');
-            const testVA = 0x0000000000001000n;  // Should map through PGD[0]->PUD[0]->PMD[0]->PTE[1]
-            console.log(`  Testing VA: 0x${testVA.toString(16)}`);
-            const testPA = this.translateVA(testVA, REAL_SWAPPER_PGD_PA);
-            if (testPA) {
-                console.log(`  ✓ Translation SUCCESS: VA 0x${testVA.toString(16)} → PA 0x${testPA.toString(16)}`);
-            } else {
-                console.log(`  ✗ Translation FAILED for VA 0x${testVA.toString(16)}`);
-                this.debugTranslateVA(testVA, REAL_SWAPPER_PGD_PA);
-            }
-
-            // Also test a VA that maps to PGD[0]->PUD[1]
-            const testVA2 = 0x0000000040000000n;  // 1GB boundary, should map to PUD[1]
-            console.log(`  Testing VA: 0x${testVA2.toString(16)}`);
-            const testPA2 = this.translateVA(testVA2, REAL_SWAPPER_PGD_PA);
-            if (testPA2) {
-                console.log(`  ✓ Translation SUCCESS: VA 0x${testVA2.toString(16)} → PA 0x${testPA2.toString(16)}`);
-            } else {
-                console.log(`  ✗ Translation FAILED for VA 0x${testVA2.toString(16)}`);
-                this.debugTranslateVA(testVA2, REAL_SWAPPER_PGD_PA);
-            }
-
-            const testResult = this.testPgdWithEntryCountValidation(realSwapperOffset);
-            console.log(`\n  Entry count validation: ${testResult.validEntries} valid entries, ${testResult.kernelEntries} kernel entries`);
-
-            // SKIP verbose PGD/PUD dumping - just show summary
-            const VERBOSE_DUMP = false;
-            if (VERBOSE_DUMP) {
-                // This verbose dumping is disabled
-                const pgdData = this.memory.readBytes(realSwapperOffset, 512 * 8);
-                if (pgdData) {
-                    // ... dumping code ...
+        let qmpKernelPGD: number | null = null;
+        try {
+            // Check if we're in Electron and can use QMP via IPC
+            if (typeof window !== 'undefined' && (window as any).electronAPI?.queryKernelInfo) {
+                console.log('Trying QMP via Electron IPC...');
+                const result = await (window as any).electronAPI.queryKernelInfo();
+                if (result.success && result.kernelPgd) {
+                    qmpKernelPGD = result.kernelPgd;
+                    console.log(`QMP (via IPC): Got kernel PGD = 0x${qmpKernelPGD.toString(16)}`);
+                } else {
+                    console.log('QMP (via IPC): Failed -', result.error || 'No kernel PGD');
                 }
-            } else {
-                // Just show a summary
-                const pgdData = this.memory.readBytes(realSwapperOffset, 512 * 8);
-                if (pgdData) {
-                    const view = new DataView(pgdData.buffer, pgdData.byteOffset, pgdData.byteLength);
-                    let nonZeroEntries = 0;
-                    const nonZeroIndices: number[] = [];
+            } else if (typeof window === 'undefined') {
+                // Node.js environment - can use direct connection
+                const { queryKernelPGDViaQMP } = await import('./utils/qmp-client');
+                qmpKernelPGD = await queryKernelPGDViaQMP();
+            }
 
-                    for (let i = 0; i < 512; i++) {
-                        const entry = view.getBigUint64(i * 8, true);
-                        if (entry !== 0n) {
-                            nonZeroEntries++;
-                            if (nonZeroIndices.length < 10) {
-                                nonZeroIndices.push(i);
-                            }
+            if (qmpKernelPGD) {
+                console.log(`✓ QMP PROVIDED GROUND TRUTH: Kernel PGD at PA 0x${qmpKernelPGD.toString(16)}`);
+
+                // Verify it's in our accessible range
+                    const offset = qmpKernelPGD - KernelConstants.GUEST_RAM_START;
+                    if (offset >= 0 && offset < this.totalSize) {
+                        // Validate the structure
+                        const entryCount = this.testPgdWithEntryCountValidation(offset);
+                        console.log(`  Validation: ${entryCount.validEntries} entries (${entryCount.userEntries} user, ${entryCount.kernelEntries} kernel)`);
+
+                        if (entryCount.validEntries > 0) {
+                            this.swapperPgDir = qmpKernelPGD;
+                            console.log(`  ✓ Using QMP-provided kernel PGD`);
+                        } else {
+                            console.log(`  ✗ QMP PGD has no valid entries - will use heuristic discovery`);
                         }
+                    } else {
+                        console.log(`  ✗ QMP PGD outside accessible range - will use heuristic discovery`);
                     }
-
-                    console.log(`\n  PGD Summary: ${nonZeroEntries} non-zero entries at indices: ${nonZeroIndices.join(', ')}${nonZeroEntries > 10 ? '...' : ''}`);
                 }
-            }
-        } else {
-            console.log(`✗ Real PGD offset 0x${realSwapperOffset.toString(16)} is outside our memory range (0-0x${totalSize.toString(16)})`);
+        } catch (err: any) {
+            console.log(`QMP not available (${err.message}) - using heuristic discovery`);
         }
+
+        if (!qmpKernelPGD) {
+            console.log('No QMP ground truth available - will discover kernel PGD dynamically');
+        } else {
+            // Store the QMP-provided kernel PGD for later comparison
+            this.swapperPgDir = qmpKernelPGD;
+        }
+
+        // Will be set by strict validation below
+        // this.swapperPgDir will be set when we find the real kernel PGD
+
+        // We'll validate discovered PGDs below
+
+        /* Removed old hardcoded testing code - we now discover dynamically */
 
         // Enable exhaustive search to test our corrected understanding
         console.log('\n=== SCANNING FOR ALL PGDs WITH CORRECTED UNDERSTANDING ===');
@@ -2276,14 +2290,7 @@ export class PagedKernelDiscovery {
 
         console.log(`Found ${candidateCount} PGD candidates`);
 
-        // Also add the real PGD if in range
-        if (realSwapperOffset > 0 && realSwapperOffset < totalSize) {
-            const realCandidate = this.evaluatePgdCandidate(realSwapperOffset);
-            if (realCandidate && !validationPGDs.some(p => p.addr === realSwapperOffset)) {
-                validationPGDs.push(realCandidate);
-                console.log(`Also testing known kernel PGD at 0x${REAL_SWAPPER_PGD_PA.toString(16)}`);
-            }
-        }
+        // We'll discover the real kernel PGD below
 
         // Test ALL candidates to find the real kernel PGD with proper validation
         console.log('\n=== TESTING ALL PGD CANDIDATES WITH STRICT VALIDATION ===');
@@ -2333,18 +2340,32 @@ export class PagedKernelDiscovery {
                 total: entryCount.kernelEntries
             });
 
-            // TODO: TEMPORARY THRESHOLD FOR ANALYSIS - ADJUST LATER!
-            // Accept PGDs with ≥3 kernel entries (real kernel PGD has exactly 3)
-            // This is just for validating our approach with the known PGD
-            if (entryCount.kernelEntries >= 3) {
-                console.log(`  ✓✓✓ FOUND REAL KERNEL PGD! Entry count validation passed:`);
+            // The REAL kernel PGD (swapper_pg_dir) characteristics:
+            // - Very few user entries (typically 1-2, for kernel threads)
+            // - A few kernel entries (typically 2-5, for essential kernel mappings)
+            // - MUCH fewer total entries than user process PGDs (< 20 vs hundreds)
+            // The key is: kernel doesn't need many mappings!
+            if (entryCount.userEntries <= 5 &&
+                entryCount.kernelEntries >= 2 && entryCount.kernelEntries <= 10 &&
+                entryCount.validEntries <= 20) {
+                console.log(`  ✓✓✓ POTENTIAL KERNEL PGD! Low entry count matches swapper_pg_dir pattern:`);
                 console.log(`    - Total valid entries: ${entryCount.validEntries}`);
                 console.log(`    - Kernel entries: ${entryCount.kernelEntries}`);
                 console.log(`    - User entries: ${entryCount.userEntries}`);
-                realKernelPGD = candidate.addr;
-                // Don't override swapper_pg_dir if we already have it from QMP
-                if (!this.swapperPgDir) {
-                    this.swapperPgDir = candidate.addr;
+
+                // Also verify with translation if possible
+                const canTranslate = this.verifyKernelPgdByTranslation(candidate.addr - KernelConstants.GUEST_RAM_START);
+                if (canTranslate) {
+                    console.log(`    - ✓ Translation verification PASSED`);
+                    realKernelPGD = candidate.addr;
+                    if (!this.swapperPgDir) {
+                        this.swapperPgDir = candidate.addr;
+                    }
+                    break; // Found it!
+                } else {
+                    console.log(`    - ✗ Translation verification failed, but entry count still suggests kernel PGD`);
+                    // Still might be kernel PGD even if translation fails
+                    // (translation might fail due to different kernel configs)
                 }
 
                 // Analyze kernel PTE distribution to validate the structure
@@ -2426,13 +2447,13 @@ export class PagedKernelDiscovery {
         let translateSuccess = 0;
         let pgdReadSuccess = 0;
 
-        // Use the ACTUAL kernel PGD (swapper_pg_dir) that we know from QMP
-        const kernelPGDForTranslation = REAL_SWAPPER_PGD_PA;  // Use the real one from QMP
+        // Use the discovered kernel PGD (swapper_pg_dir) if we have it
+        const kernelPGDForTranslation = this.swapperPgDir || realKernelPGD;
 
         if (!kernelPGDForTranslation) {
             console.log(`ERROR: No kernel PGD found - cannot translate mm_struct addresses`);
         } else {
-            console.log(`Using real kernel PGD (swapper_pg_dir) at 0x${kernelPGDForTranslation.toString(16)} for translations`);
+            console.log(`Using kernel PGD (swapper_pg_dir) at 0x${kernelPGDForTranslation.toString(16)} for translations`);
 
             // Check what PGD entries exist for vmalloc range
             console.log('\n=== CHECKING KERNEL PGD FOR VMALLOC ENTRIES ===');
@@ -2693,46 +2714,7 @@ export class PagedKernelDiscovery {
                             console.log(`    Cannot read mm_struct - PA out of range`);
                         }
 
-                        if (mmBytes) {
-                            console.log(`    mm_struct memory dump (looking for PGD pointer):`);
-
-                            // Show multiple potential PGD locations
-                            const potentialOffsets = [
-                                0x48,  // Old offset that was tried
-                                0x50,  // Adjacent field
-                                0x58,  // Another possibility
-                                0x60,  //
-                                0x68,  // Current offset (104 decimal)
-                                0x70,  // Next field
-                                0x78,  //
-                                0x80,  // Another possible location
-                            ];
-
-                            console.log(`    Checking potential PGD offsets:`);
-                            for (const offset of potentialOffsets) {
-                                if (offset + 8 <= mmBytes.length) {
-                                    const val = new DataView(mmBytes.buffer, mmBytes.byteOffset + offset, 8).getBigUint64(0, true);
-                                    const isKernelPtr = (val & 0xFFFF000000000000n) === 0xFFFF000000000000n;
-                                    const inRAMRange = val >= BigInt(KernelConstants.GUEST_RAM_START) && val < BigInt(KernelConstants.GUEST_RAM_END);
-                                    const marker = offset === 0x68 ? ' <- CURRENT' : '';
-                                    const validity = inRAMRange ? ' ✓ VALID PA' : (isKernelPtr ? ' (kernel VA)' : '');
-                                    console.log(`      [0x${offset.toString(16).padStart(3, '0')}]: 0x${val.toString(16).padStart(16, '0')}${marker}${validity}`);
-                                }
-                            }
-
-                            // Also show a broader hex dump around the expected area
-                            console.log(`\n    Hex dump around offset 0x68:`);
-                            for (let i = 0x40; i < 0xA0; i += 16) {
-                                if (i + 16 <= mmBytes.length) {
-                                    let line = `      [0x${i.toString(16).padStart(3, '0')}]:`;
-                                    for (let j = 0; j < 16; j += 8) {
-                                        const val = new DataView(mmBytes.buffer, mmBytes.byteOffset + i + j, 8).getBigUint64(0, true);
-                                        line += ` ${val.toString(16).padStart(16, '0')}`;
-                                    }
-                                    console.log(line);
-                                }
-                            }
-                        }
+                        // mmBytes available for further debugging if needed
                     }
 
                     // Read PGD using the appropriate offset
@@ -2845,6 +2827,54 @@ export class PagedKernelDiscovery {
             processCount++;
         }
 
+        // Walk the kernel page tables (swapper_pg_dir) for kernel PTEs
+        console.log(`\n=== WALKING KERNEL PAGE TABLES (swapper_pg_dir) ===`);
+        if (this.swapperPgDir) {
+            console.log(`Kernel PGD at PA: 0x${this.swapperPgDir.toString(16)}`);
+
+            // Create a pseudo-process for the kernel
+            const kernelProcess: ProcessInfo = {
+                pid: 0n,
+                name: 'kernel',
+                mmStruct: 0n,
+                pgd: this.swapperPgDir,
+                isKernel: true
+            };
+
+            // Walk kernel page tables - we want the kernel portion (indices 256-511)
+            const kernelPtes = this.walkKernelPortionOfPageTables(kernelProcess);
+
+            if (kernelPtes.length > 0) {
+                console.log(`  Found ${kernelPtes.length} kernel PTEs`);
+
+                // Add kernel PTEs to the collection
+                kernelPtes.forEach(pte => {
+                    pageCollection.addPTEMapping(
+                        0, // PID 0 for kernel
+                        'kernel',
+                        pte.va,
+                        pte.pa,
+                        pte.flags
+                    );
+                });
+
+                // Store kernel PTEs
+                ptesByPid.set(0n, kernelPtes);
+
+                // Sample some kernel PTEs
+                console.log(`  Sample kernel PTEs (first 5):`);
+                kernelPtes.slice(0, 5).forEach(pte => {
+                    const vaHex = pte.va.toString(16).padStart(16, '0');
+                    const paHex = pte.pa.toString(16).padStart(12, '0');
+                    console.log(`    VA 0x${vaHex} -> PA 0x${paHex} (flags: 0x${pte.flags.toString(16)})`);
+                });
+            } else {
+                console.log(`  No kernel PTEs found (this shouldn't happen!)`);
+            }
+        } else {
+            console.log(`  ERROR: swapper_pg_dir not found!`);
+        }
+
         // Report PGD extraction statistics
         console.log(`\n=== PGD EXTRACTION STATISTICS ===`);
         console.log(`Total processes: ${processCount}`);
@@ -2929,6 +2959,20 @@ export class PagedKernelDiscovery {
         }
 
         console.timeEnd('Paged Kernel Discovery');
+
+        // Compare with QMP ground truth if available
+        if (qmpKernelPGD && realKernelPGD) {
+            if (qmpKernelPGD === realKernelPGD) {
+                console.log('\n✓✓✓ VALIDATION SUCCESS: Discovered kernel PGD matches QMP ground truth!');
+            } else {
+                console.log(`\n⚠ VALIDATION MISMATCH:`);
+                console.log(`  QMP says: 0x${qmpKernelPGD.toString(16)}`);
+                console.log(`  We found: 0x${realKernelPGD.toString(16)}`);
+                console.log(`  Using QMP value as it's authoritative`);
+                realKernelPGD = qmpKernelPGD;
+                this.swapperPgDir = qmpKernelPGD;
+            }
+        }
 
         // FINAL SUMMARY - Concise output that won't get truncated
         console.log('\n' + '='.repeat(60));
