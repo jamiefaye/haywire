@@ -2823,6 +2823,24 @@ export class PagedKernelDiscovery {
 
             // Try walking VMAs via maple tree
             const sections = this.walkVMAs(process);
+            if (sections.length > 0) {
+                sectionsByPid.set(Number(process.pid), sections);
+
+                // Add sections to page collection
+                sections.forEach(section => {
+                    // For now, sections don't have direct PA mapping until we walk PTEs
+                    // But we can still track the VA ranges
+                    pageCollection.addSectionInfo(
+                        Number(process.pid),
+                        process.name,
+                        section
+                    );
+                });
+
+                if (processCount < 3) {
+                    console.log(`    Found ${sections.length} memory sections via maple tree`);
+                }
+            }
 
             processCount++;
         }
