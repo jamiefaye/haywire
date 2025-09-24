@@ -2259,10 +2259,16 @@ export class PagedKernelDiscovery {
 
         /* Removed old hardcoded testing code - we now discover dynamically */
 
-        // Enable exhaustive search to test our corrected understanding
-        console.log('\n=== SCANNING FOR ALL PGDs WITH CORRECTED UNDERSTANDING ===');
-        console.log('(User process PGDs should have BOTH user and kernel entries)');
+        // Configuration: Enable PGD scanning for forensics or when QMP unavailable
+        const ENABLE_PGD_SCAN = false;  // Set to true for forensic analysis or QMP fallback
+
+        // Initialize array even if scan is disabled
         const validationPGDs: Array<{addr: number, score: number, kernelEntries: number, userEntries: number}> = [];
+
+        if (ENABLE_PGD_SCAN) {
+            // Enable exhaustive search to test our corrected understanding
+            console.log('\n=== SCANNING FOR ALL PGDs WITH CORRECTED UNDERSTANDING ===');
+            console.log('(User process PGDs should have BOTH user and kernel entries)');
 
         // Scan for all PGDs
         const pgdScanStart = 0x40000000;  // Start at 0GB PA (includes extracted PGDs at 0x04xxxxxxx)
@@ -2289,13 +2295,19 @@ export class PagedKernelDiscovery {
         }
 
         console.log(`Found ${candidateCount} PGD candidates`);
+        } else {
+            console.log('\n=== PGD SCAN DISABLED (set ENABLE_PGD_SCAN=true for forensics) ===');
+        }
 
         // We'll discover the real kernel PGD below
 
-        // Test ALL candidates to find the real kernel PGD with proper validation
-        console.log('\n=== TESTING ALL PGD CANDIDATES WITH STRICT VALIDATION ===');
+        // Initialize variables outside the if block since they're used later
         let realKernelPGD = 0;
         const candidateResults: Array<{addr: number, score: number, validMmStructs: number, total: number}> = [];
+
+        // Test ALL candidates to find the real kernel PGD with proper validation
+        if (ENABLE_PGD_SCAN) {
+            console.log('\n=== TESTING ALL PGD CANDIDATES WITH STRICT VALIDATION ===');
 
         // Debug: Show what's in top PGD candidates
         if (validationPGDs.length > 0) {
@@ -2387,9 +2399,9 @@ export class PagedKernelDiscovery {
         console.log(`Found ${validCandidates.length} candidates with at least 1 valid entry`);
 
         // CORRECTED CATEGORIZATION: User process PGDs have BOTH user and kernel entries!
-        const kernelOnlyPGDs = validationPGDs.filter(p => p.kernelEntries >= 2 && p.userEntries <= 1);
-        const mixedPGDs = validationPGDs.filter(p => p.kernelEntries > 0 && p.userEntries > 1);  // REAL user process PGDs
-        const userOnlyPGDs = validationPGDs.filter(p => p.kernelEntries === 0 && p.userEntries > 0); // Should be rare/none
+        const kernelOnlyPGDs = ENABLE_PGD_SCAN ? validationPGDs.filter(p => p.kernelEntries >= 2 && p.userEntries <= 1) : [];
+        const mixedPGDs = ENABLE_PGD_SCAN ? validationPGDs.filter(p => p.kernelEntries > 0 && p.userEntries > 1) : [];  // REAL user process PGDs
+        const userOnlyPGDs = ENABLE_PGD_SCAN ? validationPGDs.filter(p => p.kernelEntries === 0 && p.userEntries > 0) : []; // Should be rare/none
 
         // Populate userPGDs with the mixed PGDs for the matching code
         if (SKIP_FULL_PGD_SCAN) {
@@ -2436,6 +2448,7 @@ export class PagedKernelDiscovery {
         } else {
             console.log(`\n⚠ WARNING: No PGD validated as kernel PGD with current criteria`);
         }
+        } // End of ENABLE_PGD_SCAN block
 
         // Step 3: Match PIDs to PGDs using swapper_pg_dir (the kernel PGD)
         console.log(`\n=== MATCHING PIDs TO PGDs ===`);
