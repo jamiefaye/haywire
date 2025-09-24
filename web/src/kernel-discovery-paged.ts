@@ -151,6 +151,12 @@ export class PagedKernelDiscovery {
             return null;
         }
 
+        // Debug: Look for Firefox and other interesting processes
+        if (pid === 6969 || name.toLowerCase().includes('firefox') ||
+            name.toLowerCase().includes('vlc') || name.toLowerCase().includes('chrome')) {
+            console.log(`*** FOUND ${name}! PID=${pid} at offset 0x${offset.toString(16)}`);
+        }
+
         // Get mm_struct pointer
         const mmRaw = this.memory.readU64(offset + KernelConstants.MM_OFFSET) || 0n;
         // Strip pointer authentication code if present
@@ -429,11 +435,62 @@ export class PagedKernelDiscovery {
     }
 
     /**
+     * Find a specific PID by searching for it byte-by-byte
+     * This catches PIDs that might be in SLUB allocations straddling page boundaries
+     */
+    private findSpecificPID(targetPID: number, totalSize: number): void {
+        let foundCount = 0;
+
+        // Search page by page, checking all possible alignments including cross-page boundaries
+        for (let pageStart = 0; pageStart < totalSize; pageStart += KernelConstants.PAGE_SIZE) {
+            // Check every 8-byte aligned offset in the page (task_structs are aligned)
+            for (let offset = pageStart; offset < Math.min(pageStart + KernelConstants.PAGE_SIZE + 0x800, totalSize - 4); offset += 8) {
+                const pid = this.memory.readU32(offset);
+                if (pid === targetPID) {
+                    // PID is at offset 0x750, so task_struct would start at offset - 0x750
+                    const possibleTaskOffset = offset - KernelConstants.PID_OFFSET;
+
+                    if (possibleTaskOffset >= 0 && possibleTaskOffset < totalSize - KernelConstants.TASK_STRUCT_SIZE) {
+                        // Read comm field to see if it's valid
+                        const name = this.memory.readString(possibleTaskOffset + KernelConstants.COMM_OFFSET);
+                        const mmRaw = this.memory.readU64(possibleTaskOffset + KernelConstants.MM_OFFSET) || 0n;
+                        const tgid = this.memory.readU32(possibleTaskOffset + KernelConstants.PID_OFFSET + 4);
+
+                        console.log(`\n  Found PID ${targetPID} at offset 0x${offset.toString(16)}`);
+                        console.log(`    Possible task_struct at 0x${possibleTaskOffset.toString(16)}`);
+                        console.log(`    Physical address: 0x${(KernelConstants.GUEST_RAM_START + possibleTaskOffset).toString(16)}`);
+                        console.log(`    Comm field: "${name || 'null'}" (length: ${name?.length || 0})`);
+                        console.log(`    TGID field: ${tgid}`);
+                        console.log(`    MM field: 0x${mmRaw.toString(16)}`);
+
+                        // If this looks like a valid task_struct, add it to our process list
+                        if (name && this.isPrintableString(name) && tgid && tgid > 0 && tgid < 100000) {
+                            console.log(`    ✓ VALID TASK_STRUCT FOR PID ${targetPID}!`);
+                            const process = this.checkTaskStruct(possibleTaskOffset);
+                            if (process) {
+                                this.processes.set(process.pid, process);
+                                foundCount++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (foundCount === 0) {
+            console.log(`  ⚠️  PID ${targetPID} not found in memory`);
+        } else {
+            console.log(`  ✓ Found ${foundCount} instances of PID ${targetPID}`);
+        }
+    }
+
+    /**
      * Find all processes by scanning for task_structs
      */
     private findProcesses(totalSize: number): void {
         console.log('Finding processes...');
         const knownFound: string[] = [];
+
 
         for (let pageStart = 0; pageStart < totalSize; pageStart += KernelConstants.PAGE_SIZE) {
             if (pageStart % (500 * 1024 * 1024) === 0) {  // Report every 500MB instead of 100MB
@@ -550,10 +607,14 @@ export class PagedKernelDiscovery {
         let userEntries = 0;
         let validChains = 0;  // Count of successfully chased pointer chains
 
-        // Special debug for the real PGD
+        // Special debug for the real PGD and extracted PGDs
         const isRealPGD = offset === 0xf6dbf000;
+        const isExtractedPGD = offset === 0x228d000 || offset === 0x2c40000; // 0x4228d000 - GUEST_RAM_START
         if (isRealPGD) {
             console.log('  DEBUG: Evaluating REAL PGD at offset 0xf6dbf000');
+        }
+        if (isExtractedPGD) {
+            console.log(`  DEBUG: Evaluating extracted PGD at offset 0x${offset.toString(16)} (PA: 0x${(offset + KernelConstants.GUEST_RAM_START).toString(16)})`);
         }
 
         // Read the page
@@ -577,7 +638,7 @@ export class PagedKernelDiscovery {
 
             // Check if this is a valid table descriptor (bits [1:0] = 0b11)
             if (lowBits !== 0x3) {
-                if (isRealPGD && (i === 0 || i === 256)) {
+                if ((isRealPGD || isExtractedPGD) && (i === 0 || i === 256)) {
                     console.log(`    PGD[${i}]: entry=0x${entryBig.toString(16)}, bits[1:0]=${lowBits.toString(2)} (need 0b11)`);
                 }
                 continue;
@@ -593,11 +654,22 @@ export class PagedKernelDiscovery {
             const pudAddrBig = (entryBig & 0x0000FFFFFFFFF000n);  // Mask to get bits [47:12]
             const pudAddr = Number(pudAddrBig);  // Safe to convert for address comparisons
 
-            if (pudAddr < KernelConstants.GUEST_RAM_START || pudAddr >= KernelConstants.GUEST_RAM_END) {
-                if (isRealPGD && (i === 0 || i === 256)) {
+            // Allow PUD addresses outside GUEST_RAM range since they may be in extended RAM
+            // But still reject clearly invalid addresses
+            if (pudAddr < 0x1000 || pudAddr > 0x200000000) { // Reject if below 4KB or above 8GB
+                if ((isRealPGD || isExtractedPGD) && (i === 0 || i === 256)) {
                     console.log(`    PGD[${i}]: entry=0x${entryBig.toString(16)}, pudAddr=0x${pudAddrBig.toString(16)}`);
-                    console.log(`    Rejecting: pudAddr outside range [0x${KernelConstants.GUEST_RAM_START.toString(16)}, 0x${KernelConstants.GUEST_RAM_END.toString(16)})`);
+                    console.log(`    Rejecting: pudAddr clearly invalid (< 4KB or > 8GB)`);
                 }
+                continue;
+            }
+
+            // Skip reading PUD if it's outside our accessible memory file range
+            if (pudAddr < KernelConstants.GUEST_RAM_START || pudAddr >= KernelConstants.GUEST_RAM_END) {
+                // Can't verify the PUD table, but don't reject the PGD entirely
+                // Just count it as a valid entry without chain verification
+                if (i < 256) userEntries++;
+                else kernelEntries++;
                 continue;
             }
 
@@ -631,7 +703,7 @@ export class PagedKernelDiscovery {
 
         // Need at least one valid chain to be a potential PGD
         if (validChains < 1) {
-            if (isRealPGD) {
+            if (isRealPGD || isExtractedPGD) {
                 console.log(`    Failed: validChains=${validChains} (need >=1), kernel=${kernelEntries}, user=${userEntries}`);
             }
             return null;
@@ -655,6 +727,10 @@ export class PagedKernelDiscovery {
         let score = validChains * 50;  // Heavy weight on valid chains
         if (totalKernelEntries >= 15) score += totalKernelEntries * 2;
         if (totalUserEntries <= 5) score += (5 - totalUserEntries) * 5;
+
+        if (isExtractedPGD) {
+            console.log(`    Success: validChains=${validChains}, totalKernelEntries=${totalKernelEntries}, totalUserEntries=${totalUserEntries}, score=${score}`);
+        }
 
         return {
             addr: offset + KernelConstants.GUEST_RAM_START,
@@ -1059,6 +1135,389 @@ export class PagedKernelDiscovery {
     }
 
     /**
+     * Walk maple tree to find VMAs - implemented to match Linux kernel behavior
+     */
+    private walkMapleTree(nodePtr: bigint, sections: MemorySection[], depth: number): void {
+        if (!nodePtr || nodePtr === 0n || depth > 15) {  // Increased depth limit to find deeper VMAs
+            if (depth > 15 && sections.length === 0) {
+                console.log(`  WARNING: Hit depth limit ${depth} without finding VMAs`);
+            }
+            return; // Prevent infinite recursion
+        }
+
+        // Maple nodes have type encoding in low 8 bits (MAPLE_NODE_MASK = 0xFF)
+        // The kernel uses mte_to_node() to clean pointers: (void *)((unsigned long)entry & ~MAPLE_NODE_MASK)
+        // Based on Linux kernel maple tree implementation:
+        // - Bits 0-1: Node type (maple_dense=0, maple_leaf_64=1, maple_range_64=2, maple_arange_64=3)
+        // - Bit 2: Reserved (for future use)
+        // - Bits 3-7: Additional flags and metadata
+        //
+        // Common type values we see:
+        // - 0x00: maple_dense (leaf node, stores values directly)
+        // - 0x01: maple_leaf_64 (leaf node with 64 slots)
+        // - 0x0c/0x1c: maple_range_64 variants (internal node, 16 slots)
+        // - 0x1e: maple_arange_64 (internal node, 10 slots for allocation trees)
+        // - 0x98, 0x99, etc: Leaf nodes with additional flags set
+        const MAPLE_NODE_MASK = 0xFFn;
+        const nodeType = Number(nodePtr & MAPLE_NODE_MASK);
+        const cleanNodePtr = nodePtr & ~MAPLE_NODE_MASK;  // Same as mte_to_node() in kernel
+
+        // Extract maple_type using kernel's exact method:
+        // mte_node_type() = (entry >> MAPLE_NODE_TYPE_SHIFT) & MAPLE_NODE_TYPE_MASK
+        const MAPLE_NODE_TYPE_SHIFT = 3;
+        const MAPLE_NODE_TYPE_MASK = 0x0F;
+        const mapleType = Number((nodePtr >> BigInt(MAPLE_NODE_TYPE_SHIFT)) & BigInt(MAPLE_NODE_TYPE_MASK));
+
+        // enum maple_type values from kernel
+        const MAPLE_DENSE = 0;
+        const MAPLE_LEAF_64 = 1;
+        const MAPLE_RANGE_64 = 2;
+        const MAPLE_ARANGE_64 = 3;
+
+        // THE CRITICAL TEST from kernel: ma_is_leaf(type) = type < maple_range_64
+        const isLeafNode = mapleType < MAPLE_RANGE_64;  // type 0 or 1 = leaf
+        const isInternalNode = !isLeafNode;              // type 2 or 3 = internal
+
+        // Debug output
+        if (depth <= 2 && sections.length < 20) {
+            let nodeTypeStr: string;
+            if (mapleType === MAPLE_DENSE) {
+                nodeTypeStr = 'dense (leaf)';
+            } else if (mapleType === MAPLE_LEAF_64) {
+                nodeTypeStr = 'leaf_64 (leaf)';
+            } else if (mapleType === MAPLE_RANGE_64) {
+                nodeTypeStr = 'range_64 (internal)';
+            } else if (mapleType === MAPLE_ARANGE_64) {
+                nodeTypeStr = 'arange_64 (internal)';
+            } else {
+                nodeTypeStr = `unknown type ${mapleType}`;
+            }
+            console.log(`${'  '.repeat(depth)}Maple node at depth ${depth}: 0x${nodePtr.toString(16)} (${nodeTypeStr})`);
+        }
+
+        // Translate kernel VA to physical address
+        let actualNodePa: number;
+        if ((cleanNodePtr & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
+            const translated = this.translateVA(cleanNodePtr, this.swapperPgDir);
+            if (!translated) {
+                return; // Can't translate
+            }
+            actualNodePa = translated;
+        } else {
+            // Check if the address is safe to convert to Number
+            if (cleanNodePtr > 0x1FFFFFFFFFFFFFn) { // Larger than safe integer range
+                console.log(`  Warning: Node pointer 0x${cleanNodePtr.toString(16)} exceeds safe integer range`);
+                return;
+            }
+            actualNodePa = Number(cleanNodePtr);
+        }
+
+        if (actualNodePa < KernelConstants.GUEST_RAM_START || actualNodePa >= KernelConstants.GUEST_RAM_END) {
+            return; // Invalid physical address
+        }
+
+        const nodeOffset = actualNodePa - KernelConstants.GUEST_RAM_START;
+
+        // CRITICAL DISTINCTION: Internal nodes vs Leaf nodes
+        // Internal nodes (arange_64, range_64) have slots pointing to child nodes
+        // Leaf nodes have slots pointing to actual data (vm_area_structs)
+
+        let numSlots: number;
+        let slotsOffset: number;
+        let metadataOffset: number;
+
+        if (mapleType === MAPLE_ARANGE_64) {
+            // maple_arange_64 - ALWAYS an internal node!
+            numSlots = 10;
+            slotsOffset = 80;
+            metadataOffset = 240;
+            if (depth <= 1) {
+                console.log(`${'  '.repeat(depth)}  Internal node (arange_64) - slots contain child node pointers`);
+            }
+        } else if (mapleType === MAPLE_RANGE_64) {
+            // maple_range_64 - ALWAYS an internal node!
+            numSlots = 16;
+            slotsOffset = 128;
+            metadataOffset = 256;
+            if (depth <= 1) {
+                console.log(`${'  '.repeat(depth)}  Internal node (range_64) - slots contain child node pointers`);
+            }
+        } else if (isLeafNode) {
+            // Leaf node - contains BOTH pivots (keys) and values (vm_area_struct pointers)
+            if (mapleType === MAPLE_DENSE) {
+                // maple_dense stores values inline, typically 15-16 entries
+                // Dense nodes don't have separate pivot array - values are packed
+                numSlots = 15;
+                slotsOffset = 8;  // Values start right after header
+                metadataOffset = 248;
+            } else {
+                // maple_leaf_64 has complex structure:
+                // - First part: pivot array (boundary addresses)
+                // - Second part: slot array (actual VMA pointers)
+                // - End: metadata
+                numSlots = 16;  // Start with first 16, can expand if needed
+
+                // In leaf_64, the layout is approximately:
+                // [0x00-0x7F]: Pivots (16 x 8 bytes = 128 bytes)
+                // [0x80-0xFF]: Slots (16 x 8 bytes = 128 bytes)
+                // [0x100+]: Metadata
+                slotsOffset = 128;  // Skip pivot array, start at slots
+                metadataOffset = 256;
+            }
+            if (depth <= 1) {
+                console.log(`${'  '.repeat(depth)}  Leaf node (${mapleType === MAPLE_DENSE ? 'dense' : 'leaf_64'}, type=0x${nodeType.toString(16)})`);
+                if (mapleType === MAPLE_LEAF_64) {
+                    console.log(`${'  '.repeat(depth)}    Note: First 128 bytes are pivots (keys), next 128 bytes are slots (values)`);
+                }
+            }
+        } else {
+            // Unknown type - try to handle as potential data node
+            numSlots = 16;
+            slotsOffset = 128;
+            metadataOffset = 256;
+            if (depth <= 1) {
+                console.log(`${'  '.repeat(depth)}  Unknown node type ${mapleType} (0x${nodeType.toString(16)})`);
+            }
+        }
+
+        // Read metadata to get actual slot count
+        const metadata = this.memory.readBytes(nodeOffset + metadataOffset, 16);
+        let actualSlotCount = numSlots;
+        if (metadata) {
+            if (isLeafNode && depth <= 2) {
+                console.log(`${'  '.repeat(depth)}  Metadata bytes: ${Array.from(metadata).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(' ')}`);
+            }
+            // For leaf nodes, metadata layout is different
+            // The first byte often indicates the number of valid entries
+            if (metadata[0] > 0 && metadata[0] < numSlots) {
+                actualSlotCount = metadata[0] + 1; // metadata[0] is often max_index
+                if (depth <= 2) {
+                    console.log(`${'  '.repeat(depth)}  Metadata indicates ${actualSlotCount} valid slots`);
+                }
+            }
+        }
+        numSlots = actualSlotCount;
+
+        // For leaf_64 nodes, also show the pivots (keys) AND the corresponding slots (values)
+        if (isLeafNode && mapleType === MAPLE_LEAF_64 && depth <= 2) {
+            console.log(`${'  '.repeat(depth)}  Reading pivots (keys) and slots (values):`);
+            for (let i = 0; i < Math.min(4, actualSlotCount); i++) {
+                const pivot = this.memory.readU64(nodeOffset + (i * 8));  // Pivot at offset 0 + i*8
+                const slot = this.memory.readU64(nodeOffset + 128 + (i * 8));  // Slot at offset 128 + i*8
+                if (pivot || slot) {
+                    console.log(`${'  '.repeat(depth)}    [${i}] Pivot: 0x${pivot?.toString(16) || '0'} -> Slot: 0x${slot?.toString(16) || '0'}`);
+                    // Check if this looks like a user VA boundary
+                    if (pivot && pivot < 0x800000000000n) {
+                        console.log(`${'  '.repeat(depth)}      Pivot is user VA boundary`);
+                    }
+                    if (slot && (slot & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
+                        console.log(`${'  '.repeat(depth)}      Slot looks like kernel VA (potential VMA pointer)`);
+                    }
+                }
+            }
+        }
+
+        // Process slots based on whether this is an internal or leaf node
+        for (let i = 0; i < numSlots; i++) {
+            const slotPtr = this.memory.readU64(nodeOffset + slotsOffset + (i * 8));
+            if (!slotPtr || slotPtr === 0n) {
+                continue;
+            }
+
+            // For maple dense nodes, check if we're looking at key-value pairs
+            // In dense nodes for VMAs: even slots are keys (address ranges), odd slots are values (VMA pointers)
+            if (isLeafNode && mapleType === MAPLE_DENSE) {
+                if (i % 2 === 0 && i + 1 < numSlots) {
+                    // This is a key (address range), next slot is the value (VMA pointer)
+                    const nextSlot = this.memory.readU64(nodeOffset + slotsOffset + ((i + 1) * 8));
+                    if (nextSlot && (nextSlot & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
+                        if (depth <= 2) {
+                            console.log(`${'  '.repeat(depth)}  Key-value pair: range_end=0x${slotPtr.toString(16)}, vma_ptr=0x${nextSlot.toString(16)}`);
+                        }
+
+                        // Try to extract VMA from the value (odd slot)
+                        const translated = this.translateVA(nextSlot, this.swapperPgDir);
+                        if (translated) {
+                            const vmaOffset = translated - KernelConstants.GUEST_RAM_START;
+
+                            // Debug: Check what's at the supposed VMA location
+                            if (depth <= 2) {
+                                const first64 = this.memory.readU64(vmaOffset);
+                                const second64 = this.memory.readU64(vmaOffset + 8);
+                                const third64 = this.memory.readU64(vmaOffset + 16);
+                                console.log(`${'  '.repeat(depth)}    VMA@${nextSlot.toString(16)}: [0]=0x${first64?.toString(16)||'?'} [8]=0x${second64?.toString(16)||'?'} [16]=0x${third64?.toString(16)||'?'}`);
+                            }
+
+                            const vmStart = this.memory.readU64(vmaOffset);
+                            const vmEnd = this.memory.readU64(vmaOffset + 8);
+
+                            // More thorough validation
+                            if (vmStart && vmEnd && vmEnd > vmStart &&
+                                vmStart < 0x800000000000n && vmEnd < 0x800000000000n &&
+                                (vmEnd - vmStart) >= 0x1000n) { // At least one page
+
+                                const vmFlags = this.memory.readU64(vmaOffset + 32);
+
+                                console.log(`${'  '.repeat(depth)}    ✓ FOUND VALID VMA: 0x${vmStart.toString(16)}-0x${vmEnd.toString(16)} (${((vmEnd - vmStart) / 1024n / 1024n)}MB, flags=0x${vmFlags?.toString(16) || '0'})`);
+
+                                sections.push({
+                                    startVa: Number(vmStart),
+                                    endVa: Number(vmEnd),
+                                    startPa: 0,
+                                    size: Number(vmEnd - vmStart),
+                                    pages: Math.ceil(Number(vmEnd - vmStart) / 4096),
+                                    flags: Number(vmFlags || 0),
+                                    type: 'data' as 'code' | 'data' | 'heap' | 'stack' | 'library' | 'kernel'
+                                });
+
+                                // Skip the next slot since we processed it as a value
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Skip small values that are likely metadata/indices
+            if (slotPtr < 0x1000n) {
+                continue;
+            }
+
+            if (isInternalNode) {
+                // INTERNAL NODE: Slots contain pointers to child nodes
+                // These should be kernel VAs with encoding in low bits
+                if ((slotPtr & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
+                    // This looks like a kernel VA - follow it as a child node
+                    if (depth <= 2) {
+                        const childType = Number(slotPtr & 0xFFn);
+                        console.log(`${'  '.repeat(depth)}  Slot[${i}]: Following child 0x${slotPtr.toString(16)} (type=0x${childType.toString(16)})`);
+                    }
+                    this.walkMapleTree(slotPtr, sections, depth + 1);
+                }
+            } else if (isLeafNode) {
+                // LEAF NODE: Slots contain actual data (vm_area_structs)
+                // These should be kernel VAs WITHOUT special encoding
+                if (depth <= 2) {
+                    console.log(`${'  '.repeat(depth)}  Leaf slot[${i}]: 0x${slotPtr.toString(16)}`);
+
+                    // Check if this could be ASCII text
+                    const bytes: number[] = [];
+                    for (let j = 0; j < 8; j++) {
+                        const byte = Number((slotPtr >> BigInt(j * 8)) & 0xFFn);
+                        bytes.push(byte);
+                    }
+                    const isPrintable = bytes.every(b => (b >= 32 && b <= 126) || b === 0);
+                    if (isPrintable && bytes.some(b => b >= 32 && b <= 126)) {
+                        const ascii = bytes.map(b => b >= 32 && b <= 126 ? String.fromCharCode(b) : '.').join('');
+                        console.log(`${'  '.repeat(depth)}    ASCII: "${ascii}"`);
+                    }
+                }
+
+                if ((slotPtr & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
+                    // Try to read as vm_area_struct
+                    const translated = this.translateVA(slotPtr, this.swapperPgDir);
+                    if (!translated) {
+                        if (depth <= 2) {
+                            console.log(`${'  '.repeat(depth)}    Could not translate VA 0x${slotPtr.toString(16)}`);
+                        }
+                        continue;
+                    }
+
+                    const vmaOffset = translated - KernelConstants.GUEST_RAM_START;
+                    const vmStart = this.memory.readU64(vmaOffset);
+                    const vmEnd = this.memory.readU64(vmaOffset + 8);
+
+                    if (depth <= 2 || sections.length < 5) {
+                        console.log(`${'  '.repeat(depth)}    Checking potential VMA at VA 0x${slotPtr.toString(16)} (PA 0x${translated.toString(16)})`);
+                        console.log(`${'  '.repeat(depth)}      vm_start=0x${vmStart?.toString(16) || '?'}, vm_end=0x${vmEnd?.toString(16) || '?'}`);
+
+                        // If these values look wrong, dump more fields to understand the struct
+                        if (!vmStart || !vmEnd || vmStart === 0x1n || vmEnd === 0n || vmStart >= vmEnd) {
+                            console.log(`${'  '.repeat(depth)}      Invalid VMA values - dumping first 64 bytes:`);
+                            for (let off = 0; off < 64; off += 8) {
+                                const val = this.memory.readU64(vmaOffset + off);
+                                if (val && val !== 0n) {
+                                    console.log(`${'  '.repeat(depth)}        [+0x${off.toString(16)}] = 0x${val.toString(16)}`);
+                                }
+                            }
+                        }
+                    }
+
+                    // Validate it looks like a VMA (user addresses)
+                    // Stricter validation: reject garbage values like vm_start=0x5
+                    // ARM64 user space can go up to ~0xffffff000000 (48-bit addresses)
+                    if (vmStart && vmEnd && vmEnd > vmStart &&
+                        vmStart >= 0x10000n && vmStart < 0x1000000000000n &&  // User space limit for ARM64
+                        vmEnd >= 0x10000n && vmEnd < 0x1000000000000n &&
+                        (vmEnd - vmStart) >= 0x1000n) {  // At least one page
+
+                        const vmFlags = this.memory.readU64(vmaOffset + 32);
+
+                        if (sections.length < 10) {
+                            console.log(`${'  '.repeat(depth)}  ✓ Found valid VMA at depth ${depth}: 0x${vmStart.toString(16)}-0x${vmEnd.toString(16)} (flags=0x${vmFlags?.toString(16) || '0'})`);
+                        }
+
+                        sections.push({
+                            startVa: Number(vmStart),
+                            endVa: Number(vmEnd),
+                            startPa: 0,
+                            size: Number(vmEnd - vmStart),
+                            pages: Math.ceil(Number(vmEnd - vmStart) / 4096),
+                            flags: Number(vmFlags || 0),
+                            type: 'data' as 'code' | 'data' | 'heap' | 'stack' | 'library' | 'kernel'
+                        });
+                    } else if (depth <= 2) {
+                        // In leaf nodes, invalid values are just garbage, don't follow them
+                        console.log(`${'  '.repeat(depth)}      Invalid VMA values (vm_start=0x${vmStart?.toString(16)||'?'}, vm_end=0x${vmEnd?.toString(16)||'?'}) - not following as child`);
+                    }
+                } else if (depth <= 2) {
+                    // Not a kernel VA - could be other data
+                    console.log(`${'  '.repeat(depth)}    Slot value 0x${slotPtr.toString(16)} is not a kernel VA`);
+
+                    // Check if it could be a physical address in guest RAM range
+                    if (slotPtr >= BigInt(KernelConstants.GUEST_RAM_START) && slotPtr < BigInt(KernelConstants.GUEST_RAM_END)) {
+                        console.log(`${'  '.repeat(depth)}      -> Could be PA in guest RAM`);
+                        // Try reading it as if it's a direct physical address
+                        const directOffset = Number(slotPtr) - KernelConstants.GUEST_RAM_START;
+                        const testVmStart = this.memory.readU64(directOffset);
+                        const testVmEnd = this.memory.readU64(directOffset + 8);
+                        if (testVmStart && testVmEnd) {
+                            console.log(`${'  '.repeat(depth)}      -> As PA: vm_start=0x${testVmStart.toString(16)}, vm_end=0x${testVmEnd.toString(16)}`);
+                        }
+                    }
+
+                    // Check if the high bits might be flags/metadata
+                    const maskedPtr = slotPtr & 0x0000FFFFFFFFFFFFn;
+                    if (maskedPtr !== slotPtr) {
+                        console.log(`${'  '.repeat(depth)}      -> High bits: 0x${((slotPtr >> 48n) & 0xFFFFn).toString(16)}, masked: 0x${maskedPtr.toString(16)}`);
+                    }
+
+                    // Check if this could be a user-space virtual address (key in the maple tree)
+                    // User space VAs are typically < 0x0000800000000000
+                    if (slotPtr < 0x800000000000n && slotPtr > 0x10000n) {
+                        console.log(`${'  '.repeat(depth)}      -> Could be user VA (key): maps to range around 0x${slotPtr.toString(16)}`);
+                        // The next slot or a related slot might contain the vm_area_struct pointer
+                    }
+
+                    // Special check for values starting with 0xe... or 0xd...
+                    // These might be encoded addresses or special maple tree values
+                    const highNibble = Number((slotPtr >> 60n) & 0xFn);
+                    if (highNibble === 0xE || highNibble === 0xD) {
+                        // Try masking off the high nibble
+                        const cleanAddr = slotPtr & 0x0FFFFFFFFFFFFFFFn;
+                        console.log(`${'  '.repeat(depth)}      -> High nibble 0x${highNibble.toString(16)}, cleaned: 0x${cleanAddr.toString(16)}`);
+
+                        // Check if cleaned address makes more sense
+                        if (cleanAddr < 0x800000000000n) {
+                            console.log(`${'  '.repeat(depth)}         -> Cleaned addr could be user VA!`);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Walk VMAs (Virtual Memory Areas) for a process
      * Returns memory sections mapped by the process
      */
@@ -1076,13 +1535,161 @@ export class PagedKernelDiscovery {
             return sections;
         }
 
-        // Read the first VMA pointer from mm_struct
+        // Modern kernels use maple tree, not linked list
+        // Based on actual inspection, the layout appears to be:
+        // 0x38: mm_users (atomic_t)
+        // 0x40: mm_mt (maple tree) starts here
+        // 0x48: mm_mt.ma_root (with encoded type in low bits)
+        // 0x68: pgd (actual page global directory pointer)
+        const MAPLE_TREE_OFFSET = 0x40;  // maple tree starts at 0x40
+        const mmStructOffset = mmPa - KernelConstants.GUEST_RAM_START;
+
+        // First, verify this looks like a valid mm_struct
+        const pgd = this.memory.readU64(mmStructOffset + 0x68);  // mm_struct->pgd at 0x68
+
+        // mm_users is an atomic_t which might be at different offsets
+        // Let's check a few possible locations
+        const mmUsers38 = this.memory.readU32(mmStructOffset + 0x38);
+        const mmUsers3c = this.memory.readU32(mmStructOffset + 0x3c);
+        const mmUsers40 = this.memory.readU32(mmStructOffset + 0x40);
+        const mmUsers = mmUsers38;  // Use 0x38 for now
+
+        const mapleRoot = this.memory.readU64(mmStructOffset + 0x48); // maple tree root at 0x48
+
+        // Check interesting processes including Firefox and VLC
+        if (process.name.toLowerCase().includes('firefox') ||
+            process.name.toLowerCase().includes('vlc') ||
+            process.pid === 6969 ||  // Firefox
+            process.pid === 4917 || process.pid === 9909 ||  // VLC PIDs
+            process.pid === 7168) {  // Firefox pool thread
+            console.log(`\n=== Checking mm_struct for PID ${process.pid} (${process.name}) ===`);
+            console.log(`    mm_struct VA: 0x${process.mmStruct.toString(16)}`);
+            console.log(`    mm_struct PA: 0x${mmPa.toString(16)}`);
+            console.log(`    maple root @ offset 0x48 = 0x${mapleRoot?.toString(16) || '?'}`);
+            console.log(`    pgd @ offset 0x68 = 0x${pgd?.toString(16) || '?'}`);
+            console.log(`    mm_users @ offset 0x38 = ${mmUsers38 || 0}`);
+            console.log(`    mm_users @ offset 0x3c = ${mmUsers3c || 0}`);
+            console.log(`    mm_users @ offset 0x40 = ${mmUsers40 || 0}`);
+
+            // Dump first few fields to understand structure (only for processes with active mm_users)
+            if (mmUsers > 0) {
+                console.log(`    ✓ Process has active mm_users, should have valid VMAs`);
+                for (let i = 0; i < 128; i += 8) {
+                    const val = this.memory.readU64(mmStructOffset + i);
+                    if (val && val !== 0n) {
+                        console.log(`    [0x${i.toString(16)}] = 0x${val.toString(16)}`);
+                    }
+                }
+            } else {
+                console.log(`    ⚠️  mm_users = 0, process may be exiting or freed`);
+                // Don't return for Firefox - let's try walking its maple tree anyway
+                if (process.pid !== 6969) {
+                    return sections; // Skip processes with no users
+                }
+            }
+        }
+
+        // Based on /proc/maps analysis: mm_users=0 doesn't mean VMAs are gone!
+        // VMAs persist until mm_count hits 0, so we should try walking the maple tree anyway
+        if (!mmUsers || mmUsers === 0) {
+            if (process.pid < 2000 || process.name.includes('firefox') || process.name.includes('vlc')) {
+                console.log(`  Note: PID ${process.pid} (${process.name}) has mm_users = 0 but may still have VMAs`);
+            }
+            // Don't skip - /proc/maps works even when mm_users=0
+        }
+
+        // The maple root is directly at offset 0x48 in mm_struct
+        // No need to add another offset
+        const maRootPtr = mapleRoot;
+        if (!maRootPtr || maRootPtr === 0n) {
+            return sections; // Empty tree
+        }
+
+        const debug = process.pid < 100;
+        if (debug) {
+            console.log(`  Maple tree root: 0x${maRootPtr.toString(16)}`);
+        }
+
+        // Check for special maple tree states (from kernel source and /proc/maps trace)
+        // Special values: MAS_ROOT=0x1, MAS_NONE=0x2, others are rare
+        // The kernel can also store a single VMA directly without a tree node
+        if (maRootPtr < 0x100n) {
+            if (debug || process.name.includes('firefox') || process.name.includes('vlc')) {
+                const states: {[key: number]: string} = {
+                    0x0: 'NULL (empty tree)',
+                    0x1: 'MAS_ROOT (special marker)',
+                    0x2: 'MAS_NONE (no entry)',
+                    0x3: 'MAS_PAUSE',
+                    0x5: 'MAS_START (might have entries)',
+                    0x9: 'MAS_STOP',
+                    0x11: 'MAS_ACTIVE'
+                };
+                console.log(`  Special maple tree state: ${states[Number(maRootPtr)] || `unknown (0x${maRootPtr.toString(16)})`}`);
+            }
+
+            // MAS_START might actually have entries - let's not give up immediately
+            if (maRootPtr === 0x5n) {
+                console.log(`  WARNING: MAS_START state but tree might have entries - kernel may be initializing`);
+            }
+
+            return sections; // No tree to walk for these special states
+        }
+
+        // Check if this is a direct entry (no encoding in low bits)
+        // Entries with low 2 bits = 0b10 are reserved
+        const lowBits = Number(maRootPtr & 3n);
+        if (lowBits === 0) {
+            // Could be a direct VMA pointer for single-entry tree
+            // Try to read it as a vm_area_struct
+            if ((maRootPtr & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
+                const translated = this.translateVA(maRootPtr, this.swapperPgDir);
+                if (translated) {
+                    const vmaOffset = translated - KernelConstants.GUEST_RAM_START;
+                    const vmStart = this.memory.readU64(vmaOffset);
+                    const vmEnd = this.memory.readU64(vmaOffset + 8);
+
+                    if (vmStart && vmEnd && vmEnd > vmStart &&
+                        vmStart < 0x800000000000n) {
+                        if (debug) {
+                            console.log(`  Single VMA tree: 0x${vmStart.toString(16)}-0x${vmEnd.toString(16)}`);
+                        }
+                        sections.push({
+                            startVa: Number(vmStart),
+                            endVa: Number(vmEnd),
+                            startPa: 0,
+                            size: Number(vmEnd - vmStart),
+                            pages: Math.ceil(Number(vmEnd - vmStart) / 4096),
+                            flags: 0,
+                            type: 'data' as 'code' | 'data' | 'heap' | 'stack' | 'library' | 'kernel'
+                        });
+                        return sections;
+                    }
+                }
+            }
+        }
+
+        // Otherwise, it should be an encoded node pointer
+        if (debug) {
+            const nodeType = Number(maRootPtr & 0xFFn);
+            console.log(`  Maple tree root: 0x${maRootPtr.toString(16)} (type=0x${nodeType.toString(16)})`);
+        }
+
+        // Pass the encoded pointer - walkMapleTree will clean it
+        this.walkMapleTree(maRootPtr, sections, 0);
+        if (sections.length > 0 && debug) {
+            console.log(`  Found ${sections.length} VMAs via maple tree`);
+        }
+        return sections;
+    }
+
+    /* OLD LINKED LIST APPROACH (pre-6.1 kernels) - keeping for reference
+    private walkVMAsOldLinkedList(process: ProcessInfo, mmPa: number): MemorySection[] {
+        const sections: MemorySection[] = [];
         const vmaVa = this.memory.readU64(mmPa - KernelConstants.GUEST_RAM_START + KernelConstants.MM_MMAP);
         if (!vmaVa || vmaVa === 0n) {
             return sections;
         }
 
-        // Debug first process
         const debug = process.pid < 100;
         if (debug) {
             console.log(`  Walking VMAs for PID ${process.pid} (${process.name})`);
@@ -1179,6 +1786,7 @@ export class PagedKernelDiscovery {
 
         return sections;
     }
+    */
 
     /**
      * Decode VMA flags to permission string
@@ -1262,7 +1870,7 @@ export class PagedKernelDiscovery {
             const pgdOffset = pgdPhysAddr - KernelConstants.GUEST_RAM_START;
             const pgdEntry = this.memory.readU64(pgdOffset);
 
-            if (!pgdEntry || (Number(pgdEntry) & 3) === 0) {
+            if (!pgdEntry || Number(pgdEntry & 3n) === 0) {
                 continue;
             }
 
@@ -1286,7 +1894,7 @@ export class PagedKernelDiscovery {
      * Walk PUD level of page tables
      */
     private walkPudLevel(pudTableAddr: bigint, pgdIdx: number, ptes: PTE[]): void {
-        const pudBase = Number(pudTableAddr) & ~0xFFF;
+        const pudBase = Number(pudTableAddr & ~0xFFFn);  // Mask BEFORE converting
 
         for (let pudIdx = 0; pudIdx < 512; pudIdx++) {
             // Page table entries contain direct physical addresses, not offsets
@@ -1294,18 +1902,18 @@ export class PagedKernelDiscovery {
             const pudOffset = pudPhysAddr - KernelConstants.GUEST_RAM_START;
             const pudEntry = this.memory.readU64(pudOffset);
 
-            if (!pudEntry || (Number(pudEntry) & 3) === 0) {
+            if (!pudEntry || Number(pudEntry & 3n) === 0) {
                 continue;
             }
 
-            const entryType = Number(pudEntry) & 3;
+            const entryType = Number(pudEntry & 3n);
             if (entryType === 1) {
                 // 1GB huge page
                 const va = (pgdIdx << 39) | (pudIdx << 30);
-                const pudFlags = Number(pudEntry) & 0xFFF;
+                const pudFlags = Number(pudEntry & 0xFFFn);
                 ptes.push({
                     va,
-                    pa: Number(pudEntry) & ~0x3FFFFFFF,
+                    pa: Number(pudEntry & ~0x3FFFFFFFn),
                     flags: pudFlags,
                     r: (pudFlags & 1) !== 0,
                     w: (pudFlags & 0x80) === 0,
@@ -1322,7 +1930,7 @@ export class PagedKernelDiscovery {
      * Walk PMD level of page tables
      */
     private walkPmdLevel(pmdTableAddr: bigint, pgdIdx: number, pudIdx: number, ptes: PTE[]): void {
-        const pmdBase = Number(pmdTableAddr) & ~0xFFF;
+        const pmdBase = Number(pmdTableAddr & ~0xFFFn);  // Mask BEFORE converting
 
         for (let pmdIdx = 0; pmdIdx < 512; pmdIdx++) {
             // Page table entries contain direct physical addresses, not offsets
@@ -1330,18 +1938,18 @@ export class PagedKernelDiscovery {
             const pmdOffset = pmdPhysAddr - KernelConstants.GUEST_RAM_START;
             const pmdEntry = this.memory.readU64(pmdOffset);
 
-            if (!pmdEntry || (Number(pmdEntry) & 3) === 0) {
+            if (!pmdEntry || Number(pmdEntry & 3n) === 0) {
                 continue;
             }
 
-            const entryType = Number(pmdEntry) & 3;
+            const entryType = Number(pmdEntry & 3n);
             if (entryType === 1) {
                 // 2MB huge page
                 const va = (pgdIdx << 39) | (pudIdx << 30) | (pmdIdx << 21);
-                const pmdFlags = Number(pmdEntry) & 0xFFF;
+                const pmdFlags = Number(pmdEntry & 0xFFFn);
                 ptes.push({
                     va,
-                    pa: Number(pmdEntry) & ~0x1FFFFF,
+                    pa: Number(pmdEntry & ~0x1FFFFFn),
                     flags: pmdFlags,
                     r: (pmdFlags & 1) !== 0,
                     w: (pmdFlags & 0x80) === 0,
@@ -1358,7 +1966,7 @@ export class PagedKernelDiscovery {
      * Walk PTE level of page tables
      */
     private walkPteLevel(pteTableAddr: bigint, pgdIdx: number, pudIdx: number, pmdIdx: number, ptes: PTE[]): void {
-        const pteBase = Number(pteTableAddr) & ~0xFFF;
+        const pteBase = Number(pteTableAddr & ~0xFFFn);  // Mask BEFORE converting
 
         for (let pteIdx = 0; pteIdx < 512; pteIdx++) {
             // Page table entries contain direct physical addresses, not offsets
@@ -1366,16 +1974,16 @@ export class PagedKernelDiscovery {
             const pteOffset = ptePhysAddr - KernelConstants.GUEST_RAM_START;
             const pteEntry = this.memory.readU64(pteOffset);
 
-            if (!pteEntry || (Number(pteEntry) & 3) === 0) {
+            if (!pteEntry || Number(pteEntry & 3n) === 0) {
                 continue;
             }
 
             // Regular 4KB page
             const va = (pgdIdx << 39) | (pudIdx << 30) | (pmdIdx << 21) | (pteIdx << 12);
-            const pteFlags = Number(pteEntry) & 0xFFF;
+            const pteFlags = Number(pteEntry & 0xFFFn);
             ptes.push({
                 va,
-                pa: Number(pteEntry) & ~0xFFF,
+                pa: Number(pteEntry & ~0xFFFn),
                 flags: pteFlags,
                 r: (pteFlags & 1) !== 0,
                 w: (pteFlags & 0x80) === 0,
@@ -1601,14 +2209,17 @@ export class PagedKernelDiscovery {
         const validationPGDs: Array<{addr: number, score: number, kernelEntries: number, userEntries: number}> = [];
 
         // Scan for all PGDs
-        const pgdScanStart = 0x80000000;  // Start at 2GB
+        const pgdScanStart = 0x40000000;  // Start at 0GB PA (includes extracted PGDs at 0x04xxxxxxx)
         const pgdScanEnd = Math.min(totalSize, 0x180000000);  // Up to 6GB
         const pgdStride = 0x1000;  // 4KB aligned
 
         console.log(`Scanning range: 0x${pgdScanStart.toString(16)} to 0x${pgdScanEnd.toString(16)}`);
         let candidateCount = 0;
 
-        for (let offset = pgdScanStart; offset < pgdScanEnd; offset += pgdStride) {
+        for (let pa = pgdScanStart; pa < pgdScanEnd; pa += pgdStride) {
+            const offset = pa - KernelConstants.GUEST_RAM_START;
+            if (offset < 0 || offset >= totalSize) continue;
+
             const candidate = this.evaluatePgdCandidate(offset);
             if (candidate && candidate.score > 0) {
                 validationPGDs.push(candidate);
@@ -1616,7 +2227,6 @@ export class PagedKernelDiscovery {
 
                 // Log interesting candidates with both user and kernel entries
                 if (candidate.userEntries > 0 && candidate.kernelEntries > 0) {
-                    const pa = offset + KernelConstants.GUEST_RAM_START;
                     console.log(`  Found mixed PGD at PA 0x${pa.toString(16)}: ${candidate.userEntries} user, ${candidate.kernelEntries} kernel entries`);
                 }
             }
@@ -2152,10 +2762,8 @@ export class PagedKernelDiscovery {
                 }
             }
 
-            // Skip VMA walking for now - maple tree is complex
-            // TODO: Implement maple tree traversal for modern kernels
-            // const sections = this.walkVMAs(process);
-            const sections: MemorySection[] = [];
+            // Try walking VMAs via maple tree
+            const sections = this.walkVMAs(process);
 
             processCount++;
         }
@@ -2371,8 +2979,9 @@ export class PagedKernelDiscovery {
             // Extract physical address from bits [47:12]
             const physAddr = Number(entryBig & 0x0000FFFFFFFFF000n);
 
-            // Validate physical address is within guest RAM
-            if (physAddr < KernelConstants.GUEST_RAM_START || physAddr >= KernelConstants.GUEST_RAM_END) {
+            // Validate physical address is reasonable (not clearly invalid)
+            // Allow addresses outside GUEST_RAM since PUD/PMD/PTE tables may be in extended RAM
+            if (physAddr < 0x1000 || physAddr > 0x200000000) { // Reject if below 4KB or above 8GB
                 continue;
             }
 
