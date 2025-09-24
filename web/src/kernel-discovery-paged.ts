@@ -1948,11 +1948,11 @@ export class PagedKernelDiscovery {
             const pgdOffset = pgdPhysAddr - KernelConstants.GUEST_RAM_START;
             const pgdEntry = this.memory.readU64(pgdOffset);
 
-            if (!pgdEntry || (Number(pgdEntry) & 3) === 0) {
+            if (!pgdEntry || Number(pgdEntry & 3n) === 0) {
                 continue;  // Entry not present
             }
 
-            const entryType = Number(pgdEntry) & 3;
+            const entryType = Number(pgdEntry & 3n);
 
             if (entryType === 3) {  // Table descriptor - points to PUD
                 validEntries++;
