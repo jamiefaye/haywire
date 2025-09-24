@@ -1260,11 +1260,23 @@ function handleMemoryHover(offset: number, event?: MouseEvent) {
 
     // Set timer to show tooltip after short delay
     tooltipTimer.value = window.setTimeout(() => {
-      const physicalAddress = offset + currentOffset.value;
+      // Convert file offset to physical address
+      // File offsets map to physical addresses as follows:
+      // - Offset 0x0 - 0x3FFFFFFF: Direct mapping to PA 0x0 - 0x3FFFFFFF (low 1GB)
+      // - Offset 0x40000000+: Maps to PA 0x40000000 + offset (main RAM)
+      const fileOffset = offset + currentOffset.value;
+      let physicalAddress;
+      if (fileOffset < 0x40000000) {
+        // Low memory region - direct mapping
+        physicalAddress = fileOffset;
+      } else {
+        // Main RAM region - add GUEST_RAM_START
+        physicalAddress = fileOffset + 0x40000000;
+      }
 
       // Try PageCollection first (newer, better data)
       if (pageCollection.value) {
-        console.log(`Looking up PA 0x${physicalAddress.toString(16)} in PageCollection`);
+        console.log(`File offset 0x${fileOffset.toString(16)} -> PA 0x${physicalAddress.toString(16)}`);
         const pageInfo = pageCollection.value.getPageInfo(physicalAddress);
         console.log('PageInfo result:', pageInfo);
         if (pageInfo && pageInfo.mappings.length > 0) {
