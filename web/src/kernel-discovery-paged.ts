@@ -845,6 +845,47 @@ export class PagedKernelDiscovery {
         this.stats.kernelPTEs = pteTableCount;
     }
 
+    private simpleTranslationFailures = 0;
+    private simpleTranslationSuccesses = 0;
+    private maxSimpleTranslationFailureLogs = 10;
+
+    /**
+     * Simple translation for kernel VAs in the 0xffff0000xxxxxxxx range
+     * Just masks out the top 16 bits to get physical address
+     */
+    private simpleTranslateKernelVA(va: bigint | number): number | null {
+        const virtualAddr = typeof va === 'number' ? BigInt(va) : va;
+
+        // Check if it's a kernel VA in the expected range
+        if ((virtualAddr >> 32n) !== 0xffff0000n) {
+            if (this.simpleTranslationFailures < this.maxSimpleTranslationFailureLogs) {
+                console.log(`  [SimpleTranslate] Failed: VA 0x${virtualAddr.toString(16)} not in 0xffff0000xxxxxxxx range`);
+                this.simpleTranslationFailures++;
+            }
+            return null; // Not in the simple translation range
+        }
+
+        // Simple mask - just take lower 48 bits
+        const physAddr = virtualAddr & 0xFFFFFFFFFFFFn;
+
+        // Verify it's within our memory file range
+        // PagedMemory stores totalSize as a private field, we need to use the totalSize passed to constructor
+        if (physAddr >= BigInt(this.totalSize)) {
+            if (this.simpleTranslationFailures < this.maxSimpleTranslationFailureLogs) {
+                console.log(`  [SimpleTranslate] Failed: PA 0x${physAddr.toString(16)} exceeds file size (${(this.totalSize / (1024*1024*1024)).toFixed(2)} GB)`);
+                this.simpleTranslationFailures++;
+            }
+            return null;
+        }
+
+        this.simpleTranslationSuccesses++;
+        if (this.simpleTranslationSuccesses <= 5) {
+            console.log(`  [SimpleTranslate] Success #${this.simpleTranslationSuccesses}: VA 0x${virtualAddr.toString(16)} -> PA 0x${physAddr.toString(16)}`);
+        }
+
+        return Number(physAddr);
+    }
+
     /**
      * Translate a virtual address to physical address using page tables
      * @param va Virtual address to translate
@@ -1863,9 +1904,10 @@ export class PagedKernelDiscovery {
         const debug = process.pid < 100;
         let validEntries = 0;
 
-        // Walk user space portion of PGD (indices 0-255)
-        for (let pgdIdx = 0; pgdIdx < 256; pgdIdx++) {
-            // Direct physical address
+        // Walk user space portion of PGD (indices 0-511 for full user space range)
+        for (let pgdIdx = 0; pgdIdx < 512; pgdIdx++) {
+            // process.pgd is stored as physical address (with GUEST_RAM_START added)
+            // We need to convert back to file offset
             const pgdPhysAddr = process.pgd + (pgdIdx * 8);
             const pgdOffset = pgdPhysAddr - KernelConstants.GUEST_RAM_START;
             const pgdEntry = this.memory.readU64(pgdOffset);
@@ -1894,13 +1936,13 @@ export class PagedKernelDiscovery {
      * Walk PUD level of page tables
      */
     private walkPudLevel(pudTableAddr: bigint, pgdIdx: number, ptes: PTE[]): void {
-        const pudBase = Number(pudTableAddr & ~0xFFFn);  // Mask BEFORE converting
+        // Extract physical address from page table entry (bits [47:12])
+        const pudBase = Number(pudTableAddr & 0x0000FFFFFFFFF000n);
 
         for (let pudIdx = 0; pudIdx < 512; pudIdx++) {
-            // Page table entries contain direct physical addresses, not offsets
+            // Physical addresses ARE file offsets (no GUEST_RAM_START adjustment needed)
             const pudPhysAddr = pudBase + (pudIdx * 8);
-            const pudOffset = pudPhysAddr - KernelConstants.GUEST_RAM_START;
-            const pudEntry = this.memory.readU64(pudOffset);
+            const pudEntry = this.memory.readU64(pudPhysAddr);
 
             if (!pudEntry || Number(pudEntry & 3n) === 0) {
                 continue;
@@ -1930,13 +1972,13 @@ export class PagedKernelDiscovery {
      * Walk PMD level of page tables
      */
     private walkPmdLevel(pmdTableAddr: bigint, pgdIdx: number, pudIdx: number, ptes: PTE[]): void {
-        const pmdBase = Number(pmdTableAddr & ~0xFFFn);  // Mask BEFORE converting
+        // Extract physical address from page table entry (bits [47:12])
+        const pmdBase = Number(pmdTableAddr & 0x0000FFFFFFFFF000n);
 
         for (let pmdIdx = 0; pmdIdx < 512; pmdIdx++) {
-            // Page table entries contain direct physical addresses, not offsets
+            // Physical addresses ARE file offsets (no GUEST_RAM_START adjustment needed)
             const pmdPhysAddr = pmdBase + (pmdIdx * 8);
-            const pmdOffset = pmdPhysAddr - KernelConstants.GUEST_RAM_START;
-            const pmdEntry = this.memory.readU64(pmdOffset);
+            const pmdEntry = this.memory.readU64(pmdPhysAddr);
 
             if (!pmdEntry || Number(pmdEntry & 3n) === 0) {
                 continue;
@@ -1966,13 +2008,13 @@ export class PagedKernelDiscovery {
      * Walk PTE level of page tables
      */
     private walkPteLevel(pteTableAddr: bigint, pgdIdx: number, pudIdx: number, pmdIdx: number, ptes: PTE[]): void {
-        const pteBase = Number(pteTableAddr & ~0xFFFn);  // Mask BEFORE converting
+        // Extract physical address from page table entry (bits [47:12])
+        const pteBase = Number(pteTableAddr & 0x0000FFFFFFFFF000n);
 
         for (let pteIdx = 0; pteIdx < 512; pteIdx++) {
-            // Page table entries contain direct physical addresses, not offsets
+            // Physical addresses ARE file offsets (no GUEST_RAM_START adjustment needed)
             const ptePhysAddr = pteBase + (pteIdx * 8);
-            const pteOffset = ptePhysAddr - KernelConstants.GUEST_RAM_START;
-            const pteEntry = this.memory.readU64(pteOffset);
+            const pteEntry = this.memory.readU64(ptePhysAddr);
 
             if (!pteEntry || Number(pteEntry & 3n) === 0) {
                 continue;
@@ -2506,10 +2548,32 @@ export class PagedKernelDiscovery {
                         const mmOffset = mmPA - KernelConstants.GUEST_RAM_START;
                         const pgdInMm = this.memory.readU64(mmOffset + KernelConstants.PGD_OFFSET_IN_MM);
 
-                        if (pgdInMm && Number(pgdInMm) >= KernelConstants.GUEST_RAM_START) {
+                        if (pgdInMm) {
+                            // PGD is stored as a kernel VA in mm_struct - need to translate it
+                            console.log(`    PGD kernel VA from mm_struct: 0x${pgdInMm.toString(16)}`);
+
+                            let pgdPA: number;
+                            if ((pgdInMm & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
+                                // It's a kernel VA - translate it
+                                const translated = this.translateVA(pgdInMm, kernelPGDForTranslation);
+                                if (!translated) {
+                                    console.log(`    ✗ Failed to translate PGD kernel VA to PA`);
+                                    continue;
+                                }
+                                pgdPA = translated;
+                                console.log(`    ✓ Translated PGD: VA 0x${pgdInMm.toString(16)} → PA 0x${pgdPA.toString(16)}`);
+                            } else if (pgdInMm >= BigInt(KernelConstants.GUEST_RAM_START) &&
+                                      pgdInMm < BigInt(KernelConstants.GUEST_RAM_END)) {
+                                // Already a physical address
+                                pgdPA = Number(pgdInMm);
+                                console.log(`    PGD already physical: 0x${pgdPA.toString(16)}`);
+                            } else {
+                                console.log(`    ✗ Invalid PGD value: 0x${pgdInMm.toString(16)}`);
+                                continue;
+                            }
+
                             pgdReadSuccess++;
-                            const pgdPA = Number(pgdInMm);
-                            console.log(`    ✓ Read PGD from mm_struct: 0x${pgdPA.toString(16)}`);
+                            console.log(`    ✓ Got PGD PA: 0x${pgdPA.toString(16)}`);
 
                             // Check if this PGD is in our list of mixed PGDs
                             const foundPgd = userPGDs.find(p => p.addr === pgdPA);
@@ -2580,7 +2644,14 @@ export class PagedKernelDiscovery {
         for (const process of this.processes.values()) {
             // First, try to get PGD from mm_struct
             if (process.mmStruct && this.swapperPgDir) {
-                const mmPa = this.translateVA(process.mmStruct, this.swapperPgDir);
+                // Try simple translation first for kernel VAs
+                let mmPa = this.simpleTranslateKernelVA(process.mmStruct);
+
+                // Fall back to complex translation if simple didn't work
+                if (!mmPa) {
+                    mmPa = this.translateVA(process.mmStruct, this.swapperPgDir);
+                }
+
                 if (mmPa) {
                     // Debug: dump memory around mm_struct to see what we're reading
                     if (processCount < 5 || (process.pid > 0 && process.pid < 1000)) {
@@ -2665,19 +2736,18 @@ export class PagedKernelDiscovery {
                     }
 
                     // Read PGD using the appropriate offset
+                    // For simple-translated addresses, use them directly as file offsets
                     let pgdPtr = null;
-                    if (mmPa >= KernelConstants.GUEST_RAM_START && mmPa < KernelConstants.GUEST_RAM_END) {
-                        pgdPtr = this.memory.readU64(mmPa - KernelConstants.GUEST_RAM_START + KernelConstants.PGD_OFFSET_IN_MM);
-                    } else if (mmPa < KernelConstants.GUEST_RAM_START && mmPa >= 0) {
-                        // Try direct offset for low memory
+                    if (mmPa >= 0 && mmPa < this.totalSize) {
+                        // Use PA directly as file offset (no GUEST_RAM_START adjustment)
                         try {
                             pgdPtr = this.memory.readU64(mmPa + KernelConstants.PGD_OFFSET_IN_MM);
                             if (pgdPtr && processCount < 5) {
-                                console.log(`    Read PGD from low memory: 0x${pgdPtr.toString(16)}`);
+                                console.log(`    Read PGD from PA 0x${mmPa.toString(16)}: 0x${pgdPtr.toString(16)}`);
                             }
                         } catch (e) {
                             if (processCount < 5) {
-                                console.log(`    Cannot read PGD from low memory offset 0x${mmPa.toString(16)}`);
+                                console.log(`    Cannot read PGD from PA offset 0x${mmPa.toString(16)}`);
                             }
                         }
                     } else {
@@ -2691,17 +2761,24 @@ export class PagedKernelDiscovery {
                     if (pgdPtr) {
                         // Is this a kernel virtual address?
                         if ((pgdPtr & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
-                            // Try to translate it
-                            const translatedPgd = this.translateVA(pgdPtr, this.swapperPgDir);
-                            if (translatedPgd && translatedPgd >= KernelConstants.GUEST_RAM_START && translatedPgd < KernelConstants.GUEST_RAM_END) {
-                                finalPgd = translatedPgd;
+                            // Try simple translation first for kernel VAs
+                            let translatedPgd = this.simpleTranslateKernelVA(pgdPtr);
+
+                            // Fall back to complex translation if simple didn't work
+                            if (!translatedPgd) {
+                                translatedPgd = this.translateVA(pgdPtr, this.swapperPgDir);
+                            }
+                            if (translatedPgd && translatedPgd >= 0 && translatedPgd < this.totalSize) {
+                                // Simple translation gives us file offset, but page table walk expects physical address
+                                // So add GUEST_RAM_START to convert file offset to physical address
+                                finalPgd = translatedPgd + KernelConstants.GUEST_RAM_START;
                                 if (processCount < 5 || (process.pid > 0 && process.pid < 1000)) {
-                                    console.log(`    PGD: VA 0x${pgdPtr.toString(16)} -> PA 0x${finalPgd.toString(16)} ✓`);
+                                    console.log(`    PGD: VA 0x${pgdPtr.toString(16)} -> file offset 0x${translatedPgd.toString(16)} -> PA 0x${finalPgd.toString(16)} ✓`);
                                 }
                             }
                         }
                         // Or is it already a physical address?
-                        else if (Number(pgdPtr) >= KernelConstants.GUEST_RAM_START && Number(pgdPtr) < KernelConstants.GUEST_RAM_END) {
+                        else if (Number(pgdPtr) >= 0 && Number(pgdPtr) < this.totalSize) {
                             finalPgd = Number(pgdPtr);
                             if (processCount < 5 || (process.pid > 0 && process.pid < 1000)) {
                                 console.log(`    PGD: PA 0x${finalPgd.toString(16)} (direct) ✓`);
@@ -2718,7 +2795,7 @@ export class PagedKernelDiscovery {
                     } else {
                         invalidPgdCount++;
                         if (invalidSamples.length < 10) {
-                            invalidSamples.push({pid: process.pid, name: process.name, value: pgdPtr?.toString(16) || 'null'});
+                            invalidSamples.push({pid: process.pid, name: process.name, value: pgdPtr?.toString(16) || null});
                         }
                         if (processCount < 5 || (process.pid > 0 && process.pid < 1000)) {
                             console.log(`    PGD value: 0x${pgdPtr?.toString(16) || 'null'} - INVALID`);
@@ -2786,6 +2863,12 @@ export class PagedKernelDiscovery {
         if (invalidSamples.length > 0) {
             console.log(`\nInvalid PGD samples:`);
             invalidSamples.forEach(s => {
+                // Handle null values
+                if (!s.value) {
+                    console.log(`  PID ${s.pid} (${s.name}): null`);
+                    return;
+                }
+
                 // Try to decode as ASCII if it looks like text
                 const val = BigInt('0x' + s.value);
                 let asciiStr = '';
@@ -2806,6 +2889,17 @@ export class PagedKernelDiscovery {
 
         console.log(`\nProcessed ${processCount} processes:`);
         console.log(`  - ${ptesByPid.size} processes with PTEs found`);
+
+        // Report simple translation statistics
+        if (this.simpleTranslationSuccesses > 0 || this.simpleTranslationFailures > 0) {
+            console.log(`\n=== SIMPLE TRANSLATION STATS ===`);
+            console.log(`  Successes: ${this.simpleTranslationSuccesses}`);
+            console.log(`  Failures: ${this.simpleTranslationFailures}`);
+            if (this.simpleTranslationSuccesses > 0) {
+                const successRate = (this.simpleTranslationSuccesses / (this.simpleTranslationSuccesses + this.simpleTranslationFailures) * 100).toFixed(1);
+                console.log(`  Success rate: ${successRate}%`);
+            }
+        }
 
         // Get page collection statistics
         const pageStats = pageCollection.getStats();
