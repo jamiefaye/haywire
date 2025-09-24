@@ -1264,7 +1264,9 @@ function handleMemoryHover(offset: number, event?: MouseEvent) {
 
       // Try PageCollection first (newer, better data)
       if (pageCollection.value) {
+        console.log(`Looking up PA 0x${physicalAddress.toString(16)} in PageCollection`);
         const pageInfo = pageCollection.value.getPageInfo(physicalAddress);
+        console.log('PageInfo result:', pageInfo);
         if (pageInfo && pageInfo.mappings.length > 0) {
           // Generate tooltip text
           const tooltipText = pageCollection.value.getPageTooltip(physicalAddress);
@@ -1299,7 +1301,17 @@ function handleMemoryHover(offset: number, event?: MouseEvent) {
         tooltipPosition.value = { x: event.clientX, y: event.clientY }
         tooltipVisible.value = true
       } else {
-        closeTooltip()
+        // Show "not found" tooltip
+        tooltipPageInfo.value = {
+          physicalAddress,
+          references: [],
+          isKernel: false,
+          isShared: false,
+          isZero: false,
+          notFound: true  // Add a flag to indicate no info found
+        };
+        tooltipPosition.value = { x: event.clientX, y: event.clientY }
+        tooltipVisible.value = true
       }
     }, 500) // 500ms delay before showing tooltip
   }

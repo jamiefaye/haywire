@@ -1962,7 +1962,8 @@ export class PagedKernelDiscovery {
                 this.walkPudLevel(pgdEntry, pgdIdx, ptes);
             } else if (entryType === 1) {  // Block descriptor - 1GB page
                 validEntries++;
-                const pa = Number(pgdEntry & 0x0000FFFFFFFFF000n);
+                // Extract PA from bits [47:30] for 1GB pages at PGD level - mask off upper flag bits
+                const pa = Number(pgdEntry & 0x0000FFFFC0000000n);
                 const va = BigInt(pgdIdx) << 39n;  // PGD index determines bits [47:39]
                 ptes.push({ va, pa, flags: pgdEntry, level: 1, pageSize: 1073741824 });
             }
@@ -1999,9 +2000,11 @@ export class PagedKernelDiscovery {
                 // 1GB huge page
                 const va = (pgdIdx << 39) | (pudIdx << 30);
                 const pudFlags = Number(pudEntry & 0xFFFn);
+                // Extract PA from bits [47:30] for 1GB pages - mask off upper flag bits
+                const pa = Number(pudEntry & 0x0000FFFFC0000000n);
                 ptes.push({
                     va,
-                    pa: Number(pudEntry & ~0x3FFFFFFFn),
+                    pa,
                     flags: pudFlags,
                     r: (pudFlags & 1) !== 0,
                     w: (pudFlags & 0x80) === 0,
@@ -2038,9 +2041,11 @@ export class PagedKernelDiscovery {
                 // 2MB huge page
                 const va = (pgdIdx << 39) | (pudIdx << 30) | (pmdIdx << 21);
                 const pmdFlags = Number(pmdEntry & 0xFFFn);
+                // Extract PA from bits [47:21] for 2MB pages - mask off upper flag bits
+                const pa = Number(pmdEntry & 0x0000FFFFFFE00000n);
                 ptes.push({
                     va,
-                    pa: Number(pmdEntry & ~0x1FFFFFn),
+                    pa,
                     flags: pmdFlags,
                     r: (pmdFlags & 1) !== 0,
                     w: (pmdFlags & 0x80) === 0,
@@ -2075,9 +2080,11 @@ export class PagedKernelDiscovery {
             // Regular 4KB page
             const va = (pgdIdx << 39) | (pudIdx << 30) | (pmdIdx << 21) | (pteIdx << 12);
             const pteFlags = Number(pteEntry & 0xFFFn);
+            // Extract PA from bits [47:12] - mask off upper flag bits
+            const pa = Number(pteEntry & 0x0000FFFFFFFFF000n);
             ptes.push({
                 va,
-                pa: Number(pteEntry & ~0xFFFn),
+                pa,
                 flags: pteFlags,
                 r: (pteFlags & 1) !== 0,
                 w: (pteFlags & 0x80) === 0,

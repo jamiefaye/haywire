@@ -66,6 +66,16 @@ export class PageCollection {
      * Add a page mapping from PTE walk
      */
     addPTEMapping(pid: number, processName: string, va: number, pa: number, flags: number, size: number = 4096): void {
+        // Filter out invalid physical addresses
+        // ARM64 supports up to 52-bit physical addresses, but QEMU typically uses much less
+        // Our memory file is 6GB (0x180000000), so filter out anything beyond reasonable range
+        const MAX_VALID_PA = 0x200000000; // 8GB - generous upper bound
+        if (pa >= MAX_VALID_PA) {
+            // Skip PTEs with physical addresses that are clearly out of range
+            // These are likely device memory or other special mappings
+            return;
+        }
+
         // Get or create PageInfo
         let page = this.pages.get(pa);
         if (!page) {
@@ -201,11 +211,22 @@ export class PageCollection {
         const uniquePids = new Set<number>();
         this.pages.forEach(p => p.mappings.forEach(m => uniquePids.add(m.pid)));
 
+        // Find PA range
+        let minPA = Number.MAX_SAFE_INTEGER;
+        let maxPA = 0;
+        this.pages.forEach((page, pa) => {
+            if (pa < minPA) minPA = pa;
+            if (pa > maxPA) maxPA = pa;
+        });
+
+        console.log(`PageCollection PA range: 0x${minPA.toString(16)} - 0x${maxPA.toString(16)}`);
+
         return {
             totalPages,
             totalMappings,
             sharedPages,
-            uniqueProcesses: uniquePids.size
+            uniqueProcesses: uniquePids.size,
+            paRange: { min: minPA, max: maxPA }
         };
     }
 
