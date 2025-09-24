@@ -192,6 +192,33 @@ export class PageCollection {
     }
 
     /**
+     * Get statistics about the collection
+     */
+    getStatistics(): any {
+        const totalPages = this.pages.size;
+        const totalMappings = Array.from(this.pages.values()).reduce((sum, p) => sum + p.mappings.length, 0);
+        const sharedPages = Array.from(this.pages.values()).filter(p => p.mappings.length > 1).length;
+        const uniquePids = new Set<number>();
+        this.pages.forEach(p => p.mappings.forEach(m => uniquePids.add(m.pid)));
+
+        return {
+            totalPages,
+            totalMappings,
+            sharedPages,
+            uniqueProcesses: uniquePids.size
+        };
+    }
+
+    /**
+     * Get page info for tooltip
+     */
+    getPageInfo(pa: number): PageInfo | null {
+        // Handle both 4KB page alignment and exact addresses
+        const pagePA = Math.floor(pa / 4096) * 4096;
+        return this.pages.get(pagePA) || null;
+    }
+
+    /**
      * Get shared pages (mapped by multiple processes)
      */
     getSharedPages(): PageInfo[] {

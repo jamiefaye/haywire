@@ -112,6 +112,9 @@
         <button @click="refreshMemory" :disabled="!isFileOpen">
           🔄 Refresh
         </button>
+        <button @click="runKernelDiscovery" :disabled="!isFileOpen || kernelDiscoveryRunning">
+          {{ kernelDiscoveryRunning ? '⏳ Discovering...' : '🔍 Kernel Discovery' }}
+        </button>
       </div>
       <div v-if="qmpAvailable" class="control-group status">
         <span v-if="qmpConnected" class="status-indicator connected">
@@ -252,7 +255,7 @@
           :column-width="columnWidth"
           :column-gap="columnGap"
           @memory-click="handleMemoryClick"
-          @memory-hover="handleMemoryHover"
+          @memory-hover="(offset, event) => handleMemoryHover(offset, event)"
         />
         <div v-else-if="isFileOpen" class="placeholder">
           Loading memory data...
@@ -339,10 +342,23 @@
       @update="updateMagnifyingGlassPosition"
     />
 
+    <!-- Kernel Page Tooltip -->
+    <KernelPageTooltip
+      v-if="tooltipPageInfo"
+      :page-info="tooltipPageInfo"
+      :x="tooltipPosition.x"
+      :y="tooltipPosition.y"
+      :visible="tooltipVisible"
+      @close="closeTooltip"
+    />
+
     <!-- Status Bar -->
     <div class="status-bar">
       <span v-if="hoveredOffset !== null">
         Hover: 0x{{ hoveredOffset.toString(16).toUpperCase().padStart(8, '0') }}
+        <span v-if="kernelPageDB.hasData()" class="db-indicator">
+          [DB Ready]
+        </span>
       </span>
       <span v-if="clickedOffset !== null">
         Click: 0x{{ clickedOffset.toString(16).toUpperCase().padStart(8, '0') }}
@@ -350,6 +366,78 @@
       <span v-if="error" class="error">
         {{ error }}
       </span>
+    </div>
+
+    <!-- Kernel Discovery Modal -->
+    <div v-if="kernelDiscoveryModal" class="modal-overlay" @click.self="closeKernelDiscovery">
+      <div class="modal-content kernel-discovery-modal">
+        <div class="modal-header">
+          <h2>🔍 Kernel Memory Discovery Report</h2>
+          <button class="modal-close" @click="closeKernelDiscovery">✕</button>
+        </div>
+
+        <div v-if="kernelDiscoveryRunning" class="discovery-progress">
+          <div class="spinner"></div>
+          <p>{{ kernelDiscoveryStatus }}</p>
+        </div>
+
+        <div v-else-if="kernelDiscoveryResults" class="discovery-results">
+          <!-- Summary Statistics -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-value">{{ kernelDiscoveryResults.processes?.length || 0 }}</div>
+              <div class="stat-label">Processes Found</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">{{ kernelDiscoveryResults.kernelPTEs?.length || 0 }}</div>
+              <div class="stat-label">Kernel PTEs</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">{{ formatHex(kernelDiscoveryResults.swapperPgDir || 0) }}</div>
+              <div class="stat-label">swapper_pg_dir</div>
+            </div>
+          </div>
+
+          <!-- Process List -->
+          <div class="section">
+            <h3>Discovered Processes</h3>
+            <div class="process-table-container">
+              <table class="process-table">
+                <thead>
+                  <tr>
+                    <th @click="sortProcesses('pid')">PID ↕</th>
+                    <th @click="sortProcesses('name')">Name ↕</th>
+                    <th @click="sortProcesses('ptes')">PTEs ↕</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="proc in sortedProcesses" :key="proc.pid">
+                    <td>{{ proc.pid }}</td>
+                    <td>{{ proc.name || proc.comm || 'unknown' }}</td>
+                    <td>{{ proc.ptes?.length || proc.pteCount || 0 }}</td>
+                    <td>
+                      <button class="small-button" @click="viewProcessPTEs(proc)">View PTEs</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Export Options -->
+          <div class="export-buttons">
+            <button @click="exportJSON">📄 Export JSON</button>
+            <button @click="exportHTML">📊 Export HTML Report</button>
+            <button @click="copyToClipboard">📋 Copy Summary</button>
+          </div>
+        </div>
+
+        <div v-else class="no-results">
+          <p>No discovery results yet</p>
+          <button @click="startDiscovery" class="primary-button">🔍 Run Discovery</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -362,11 +450,16 @@ import MagnifyingGlass from './components/MagnifyingGlass.vue'
 import MemoryOverviewPane from './components/MemoryOverviewPane.vue'
 import AutoCorrelator from './components/AutoCorrelator.vue'
 import MemoryFileManager from './components/MemoryFileManager.vue'
+import KernelPageTooltip from './components/KernelPageTooltip.vue'
 import { useFileSystemAPI } from './composables/useFileSystemAPI'
 import { useQmpBridge } from './composables/useQmpBridge'
 import { PixelFormat } from './composables/useWasmRenderer'
 import { useChangeDetection } from './composables/useChangeDetection'
 import { qmpAvailable } from './utils/electronDetect'
+import { KernelDiscovery } from './kernel-discovery'
+import { kernelPageDB } from './kernel-page-database'
+import type { PageInfo } from './kernel-page-database'
+import type { PageCollection, PageInfo as NewPageInfo } from './page-info'
 
 // File System API
 const {
@@ -470,6 +563,15 @@ const canvasDragStart = ref({ x: 0, y: 0, offset: 0 })
 // Auto-repeat for navigation buttons
 let autoRepeatInterval: number | null = null
 let autoRepeatTimeout: number | null = null
+
+// Kernel Discovery state
+const kernelDiscoveryModal = ref(false)
+const kernelDiscoveryRunning = ref(false)
+const kernelDiscoveryStatus = ref('Initializing...')
+const kernelDiscoveryResults = ref<any>(null)
+const pageCollection = ref<PageCollection | null>(null)
+const processSortKey = ref<'pid' | 'name' | 'ptes'>('pid')
+const processSortReverse = ref(false)
 
 // Display settings
 const displayWidth = ref(1024)
@@ -580,9 +682,46 @@ const invertedSliderPosition = computed(() => {
   return maxSliderPosition.value - sliderPosition.value
 })
 
+// Sorted processes for display
+const sortedProcesses = computed(() => {
+  if (!kernelDiscoveryResults.value?.processes) return []
+  const procs = [...kernelDiscoveryResults.value.processes]
+
+  procs.sort((a, b) => {
+    let aVal, bVal
+    switch (processSortKey.value) {
+      case 'pid':
+        aVal = a.pid
+        bVal = b.pid
+        break
+      case 'name':
+        aVal = a.comm || ''
+        bVal = b.comm || ''
+        break
+      case 'ptes':
+        aVal = a.pteCount || 0
+        bVal = b.pteCount || 0
+        break
+      default:
+        return 0
+    }
+
+    const result = aVal < bVal ? -1 : aVal > bVal ? 1 : 0
+    return processSortReverse.value ? -result : result
+  })
+
+  return procs
+})
+
 // Interaction state
 const hoveredOffset = ref<number | null>(null)
 const clickedOffset = ref<number | null>(null)
+
+// Tooltip state
+const tooltipVisible = ref(false)
+const tooltipPageInfo = ref<PageInfo | null>(null)
+const tooltipPosition = ref({ x: 0, y: 0 })
+const tooltipTimer = ref<number | null>(null)
 
 // Combined error state
 const error = computed(() => fileError.value)
@@ -1107,8 +1246,72 @@ function handleMemoryClick(offset: number) {
 }
 
 // Handle memory hover
-function handleMemoryHover(offset: number) {
+function handleMemoryHover(offset: number, event?: MouseEvent) {
   hoveredOffset.value = offset
+
+  // Show tooltip if we have page data
+  const hasData = pageCollection.value || kernelPageDB.hasData();
+  if (hasData && event) {
+    // Clear any existing timer
+    if (tooltipTimer.value) {
+      clearTimeout(tooltipTimer.value)
+      tooltipTimer.value = null
+    }
+
+    // Set timer to show tooltip after short delay
+    tooltipTimer.value = window.setTimeout(() => {
+      const physicalAddress = offset + currentOffset.value;
+
+      // Try PageCollection first (newer, better data)
+      if (pageCollection.value) {
+        const pageInfo = pageCollection.value.getPageInfo(physicalAddress);
+        if (pageInfo && pageInfo.mappings.length > 0) {
+          // Generate tooltip text
+          const tooltipText = pageCollection.value.getPageTooltip(physicalAddress);
+          // For now, show text in console - we'll update the tooltip component next
+          console.log('Page tooltip:', tooltipText);
+
+          // Convert to old format temporarily
+          tooltipPageInfo.value = {
+            physicalAddress,
+            references: pageInfo.mappings.map(m => ({
+              pid: m.pid,
+              processName: m.processName,
+              type: 'pte' as const,
+              virtualAddress: m.va,
+              permissions: m.perms,
+              sectionType: m.sectionType
+            })),
+            isKernel: pageInfo.isKernel,
+            isShared: pageInfo.mappings.length > 1,
+            isZero: false
+          };
+          tooltipPosition.value = { x: event.clientX, y: event.clientY }
+          tooltipVisible.value = true;
+          return;
+        }
+      }
+
+      // Fall back to old database
+      const pageInfo = kernelPageDB.getPageInfo(physicalAddress)
+      if (pageInfo && pageInfo.references.length > 0) {
+        tooltipPageInfo.value = pageInfo
+        tooltipPosition.value = { x: event.clientX, y: event.clientY }
+        tooltipVisible.value = true
+      } else {
+        closeTooltip()
+      }
+    }, 500) // 500ms delay before showing tooltip
+  }
+}
+
+function closeTooltip() {
+  tooltipVisible.value = false
+  tooltipPageInfo.value = null
+  if (tooltipTimer.value) {
+    clearTimeout(tooltipTimer.value)
+    tooltipTimer.value = null
+  }
 }
 
 // Handle correlation peak detection
@@ -1658,6 +1861,380 @@ watch(currentOffset, () => {
   updateFFTIndicatorPosition()
 })
 
+// Kernel Discovery Methods
+async function runKernelDiscovery() {
+  // Check if a file is actually open
+  if (!isFileOpen.value) {
+    alert('Please open a memory file first using the file browser')
+    return
+  }
+
+  // Just open the modal and run discovery immediately
+  kernelDiscoveryModal.value = true
+  await startDiscovery()
+}
+
+async function startDiscovery() {
+  kernelDiscoveryRunning.value = true
+  kernelDiscoveryStatus.value = 'Initializing kernel discovery...'
+
+  try {
+    // Get memory data
+    let fullMemory: Uint8Array | null = null
+
+    console.log('Starting discovery, checking data sources...')
+    console.log('- Dropped data:', !!(window as any).__droppedFileData)
+    console.log('- Electron:', isElectron.value)
+    console.log('- File handle:', !!fileHandle.value)
+    console.log('- Memory data:', !!memoryData.value, memoryData.value?.length)
+    console.log('- File size:', fileSize.value)
+
+    // Try different sources in order of preference
+    if ((window as any).__droppedFileData) {
+      // Use dropped file data if available
+      fullMemory = (window as any).__droppedFileData as Uint8Array
+      kernelDiscoveryStatus.value = 'Using dropped file data...'
+      console.log('Using dropped file data, size:', fullMemory.length)
+    } else if (isElectron.value && window.electronAPI) {
+      // Read FULL file for Electron - the good stuff is above 500MB!
+      // But we need to read in chunks due to Node.js buffer limitations
+      const chunkSize = 100 * 1024 * 1024; // 100MB chunks
+      const totalChunks = Math.ceil(fileSize.value / chunkSize);
+
+      kernelDiscoveryStatus.value = `Reading ${(fileSize.value / (1024*1024*1024)).toFixed(1)} GB file in ${totalChunks} chunks...`
+      console.log(`Reading file in ${totalChunks} chunks of ${chunkSize} bytes each`)
+
+      try {
+        const chunks: Uint8Array[] = [];
+
+        for (let i = 0; i < totalChunks; i++) {
+          const offset = i * chunkSize;
+          const size = Math.min(chunkSize, fileSize.value - offset);
+
+          kernelDiscoveryStatus.value = `Reading chunk ${i + 1}/${totalChunks} (${(offset / (1024*1024)).toFixed(0)}-${((offset + size) / (1024*1024)).toFixed(0)} MB)...`
+
+          const result = await window.electronAPI.readMemoryChunk(offset, size);
+          if (result?.success && result.data) {
+            chunks.push(result.data);
+            // Chunk read successfully (commenting out verbose log)
+          } else {
+            console.error(`Failed to read chunk ${i + 1}:`, result);
+            throw new Error(`Failed to read chunk at offset ${offset}`);
+          }
+
+          // Let UI update
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+
+        // Use PagedMemory approach to handle large files without array size limits
+        console.log(`Using PagedMemory with ${chunks.length} chunks...`);
+        kernelDiscoveryStatus.value = `Loading memory pages...`;
+
+        const totalSize = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+
+        // Import and use PagedMemory
+        const { PagedMemory } = await import('./paged-memory');
+        const { PagedKernelDiscovery } = await import('./kernel-discovery-paged');
+
+        // Load chunks into PagedMemory
+        const memory = await PagedMemory.fromChunks(chunks, (percent) => {
+          kernelDiscoveryStatus.value = `Loading memory pages... ${percent.toFixed(1)}%`;
+        });
+
+        console.log(`PagedMemory loaded: ${memory.getMemoryUsage()}`);
+        kernelDiscoveryStatus.value = `Analyzing memory (${(totalSize / (1024*1024)).toFixed(0)}MB)...`;
+
+        // Run discovery using PagedKernelDiscovery
+        const discovery = new PagedKernelDiscovery(memory);
+        const results = await discovery.discover(totalSize);
+
+        kernelDiscoveryResults.value = {
+          processes: results.processes || [],
+          kernelPTEs: results.kernelPtes || [],
+          swapperPgDir: results.swapperPgDir || 0,
+          statistics: {
+            totalChunksProcessed: chunks.length,
+            totalProcesses: results.processes?.length || 0,
+            totalPTEs: results.stats?.kernelPTEs || results.kernelPtes?.length || 0,
+            memoryAnalyzed: totalSize
+          }
+        };
+
+        // Store the PageCollection if available
+        if (results.pageCollection) {
+          pageCollection.value = results.pageCollection;
+          console.log('PageCollection ready with', results.pageCollection.getStatistics());
+        }
+
+        // Also populate the old kernel page database for compatibility
+        kernelDiscoveryStatus.value = 'Building page reference database...';
+        kernelPageDB.populate(results);
+        const dbStats = kernelPageDB.getStatistics();
+        console.log('Kernel page database populated:', dbStats);
+
+        kernelDiscoveryRunning.value = false;
+        const pteCount = results.stats?.kernelPTEs || results.kernelPtes?.length || 0;
+        kernelDiscoveryStatus.value = `Found ${results.processes?.length || 0} processes and ${pteCount} page tables (DB: ${dbStats.totalPages} pages indexed)`;
+        console.log('Paged kernel discovery complete');
+        return; // Exit early since we handled everything
+      } catch (e) {
+        console.error('Electron chunked read exception:', e);
+      }
+    } else if (fileHandle.value) {
+      // Browser path - read file in chunks and use PagedMemory
+      try {
+        const file = await fileHandle.value.getFile()
+        console.log('Got file from handle:', file.name, 'size:', file.size)
+
+        const chunkSize = 100 * 1024 * 1024; // 100MB chunks
+        const totalChunks = Math.ceil(file.size / chunkSize);
+
+        kernelDiscoveryStatus.value = `Reading ${(file.size / (1024*1024*1024)).toFixed(1)} GB file in ${totalChunks} chunks...`
+
+        const chunks: Uint8Array[] = [];
+
+        for (let i = 0; i < totalChunks; i++) {
+          const offset = i * chunkSize;
+          const size = Math.min(chunkSize, file.size - offset);
+
+          kernelDiscoveryStatus.value = `Reading chunk ${i + 1}/${totalChunks} (${(offset / (1024*1024)).toFixed(0)}-${((offset + size) / (1024*1024)).toFixed(0)} MB)...`
+
+          const blob = file.slice(offset, offset + size);
+          const arrayBuffer = await blob.arrayBuffer();
+          chunks.push(new Uint8Array(arrayBuffer));
+
+          // Chunk read successfully (commenting out verbose log)
+
+          // Let UI update
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+
+        // Use PagedMemory approach
+        console.log(`Using PagedMemory with ${chunks.length} chunks...`);
+        kernelDiscoveryStatus.value = `Loading memory pages...`;
+
+        const totalSize = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+
+        // Import and use PagedMemory
+        const { PagedMemory } = await import('./paged-memory');
+        const { PagedKernelDiscovery } = await import('./kernel-discovery-paged');
+
+        // Load chunks into PagedMemory
+        const memory = await PagedMemory.fromChunks(chunks, (percent) => {
+          kernelDiscoveryStatus.value = `Loading memory pages... ${percent.toFixed(1)}%`;
+        });
+
+        console.log(`PagedMemory loaded: ${memory.getMemoryUsage()}`);
+        kernelDiscoveryStatus.value = `Analyzing memory (${(totalSize / (1024*1024)).toFixed(0)}MB)...`;
+
+        // Run discovery using PagedKernelDiscovery
+        const discovery = new PagedKernelDiscovery(memory);
+        const results = await discovery.discover(totalSize);
+
+        kernelDiscoveryResults.value = {
+          processes: results.processes || [],
+          kernelPTEs: results.kernelPtes || [],
+          swapperPgDir: results.swapperPgDir || 0,
+          statistics: {
+            totalChunksProcessed: chunks.length,
+            totalProcesses: results.processes?.length || 0,
+            totalPTEs: results.stats?.kernelPTEs || results.kernelPtes?.length || 0,
+            memoryAnalyzed: totalSize
+          }
+        };
+
+        // Store the PageCollection if available
+        if (results.pageCollection) {
+          pageCollection.value = results.pageCollection;
+          console.log('PageCollection ready with', results.pageCollection.getStatistics());
+        }
+
+        // Also populate the old kernel page database for compatibility
+        kernelDiscoveryStatus.value = 'Building page reference database...';
+        kernelPageDB.populate(results);
+        const dbStats = kernelPageDB.getStatistics();
+        console.log('Kernel page database populated:', dbStats);
+
+        kernelDiscoveryRunning.value = false;
+        const pteCount = results.stats?.kernelPTEs || results.kernelPtes?.length || 0;
+        kernelDiscoveryStatus.value = `Found ${results.processes?.length || 0} processes and ${pteCount} page tables (DB: ${dbStats.totalPages} pages indexed)`;
+        console.log('Paged kernel discovery complete');
+        return;
+      } catch (e) {
+        console.error('File handle read failed:', e)
+        kernelDiscoveryStatus.value = 'File read failed: ' + e.message
+        kernelDiscoveryRunning.value = false;
+        return;
+      }
+    } else if (memoryData.value) {
+      // Fall back to current view (limited but better than nothing)
+      kernelDiscoveryStatus.value = 'Using current view (limited data - only analyzing visible portion)...'
+      fullMemory = memoryData.value
+      console.log('Using current view, size:', fullMemory.length)
+
+      // Run basic discovery on limited data
+      const discovery = new KernelDiscovery(fullMemory)
+      kernelDiscoveryStatus.value = 'Finding processes...'
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const results = await discovery.discover()
+
+      // Populate the kernel page database
+      kernelDiscoveryStatus.value = 'Building page reference database...';
+      kernelPageDB.populate(results);
+      const dbStats = kernelPageDB.getStatistics();
+
+      kernelDiscoveryStatus.value = 'Analysis complete!'
+      kernelDiscoveryResults.value = results
+      console.log('Kernel discovery complete:', results)
+      console.log('Kernel page database populated:', dbStats)
+
+      // Warn if database is empty due to limited view
+      if (dbStats.totalPages === 0) {
+        kernelDiscoveryStatus.value = 'Warning: Limited memory view - no page tables accessible. Use full file for complete discovery.'
+      }
+    }
+  } catch (error) {
+    console.error('Kernel discovery failed:', error)
+    kernelDiscoveryStatus.value = `Error: ${error.message || 'Discovery failed'}`
+  } finally {
+    kernelDiscoveryRunning.value = false
+  }
+}
+
+function closeKernelDiscovery() {
+  kernelDiscoveryModal.value = false
+}
+
+function sortProcesses(key: 'pid' | 'name' | 'ptes') {
+  if (processSortKey.value === key) {
+    processSortReverse.value = !processSortReverse.value
+  } else {
+    processSortKey.value = key
+    processSortReverse.value = false
+  }
+}
+
+function viewProcessPTEs(proc: any) {
+  console.log('View PTEs for process:', proc)
+  // Could expand this to show detailed PTE view
+  alert(`Process ${proc.pid} (${proc.comm}) has ${proc.pteCount || 0} PTEs`)
+}
+
+function exportJSON() {
+  if (!kernelDiscoveryResults.value) return
+
+  const json = JSON.stringify(kernelDiscoveryResults.value, null, 2)
+  const blob = new Blob([json], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `kernel-discovery-${Date.now()}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function exportHTML() {
+  if (!kernelDiscoveryResults.value) return
+
+  const html = generateHTMLReport(kernelDiscoveryResults.value)
+  const blob = new Blob([html], { type: 'text/html' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `kernel-discovery-${Date.now()}.html`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function generateHTMLReport(results: any): string {
+  const processes = results.processes || []
+  const processRows = processes.map((p: any) => `
+    <tr>
+      <td>${p.pid}</td>
+      <td>${p.comm || 'unknown'}</td>
+      <td>${p.pteCount || 0}</td>
+      <td>${p.sections?.length || 0}</td>
+    </tr>
+  `).join('')
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <title>Kernel Memory Discovery Report</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #1e1e1e; color: #e0e0e0; }
+    h1 { color: #4ec9b0; }
+    h2 { color: #0e639c; margin-top: 30px; }
+    .stats { display: flex; gap: 20px; margin: 20px 0; }
+    .stat { background: #2d2d30; padding: 15px; border-radius: 5px; }
+    .stat-value { font-size: 24px; font-weight: bold; color: #4ec9b0; }
+    .stat-label { color: #999; margin-top: 5px; }
+    table { width: 100%; border-collapse: collapse; background: #2d2d30; }
+    th { background: #0e639c; padding: 10px; text-align: left; }
+    td { padding: 8px; border-bottom: 1px solid #3e3e42; }
+    tr:hover { background: #3c3c3c; }
+  </style>
+</head>
+<body>
+  <h1>🔍 Kernel Memory Discovery Report</h1>
+  <p>Generated: ${new Date().toLocaleString()}</p>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-value">${processes.length}</div>
+      <div class="stat-label">Processes Found</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">${results.kernelPTEs?.length || 0}</div>
+      <div class="stat-label">Kernel PTEs</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">0x${(results.swapperPgDir || 0).toString(16).toUpperCase()}</div>
+      <div class="stat-label">swapper_pg_dir</div>
+    </div>
+  </div>
+
+  <h2>Process List</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>PID</th>
+        <th>Name</th>
+        <th>PTEs</th>
+        <th>Sections</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${processRows}
+    </tbody>
+  </table>
+
+  <h2>Statistics</h2>
+  <pre>${JSON.stringify(results.statistics || {}, null, 2)}</pre>
+</body>
+</html>`
+}
+
+function copyToClipboard() {
+  if (!kernelDiscoveryResults.value) return
+
+  const summary = `Kernel Discovery Summary
+========================
+Processes Found: ${kernelDiscoveryResults.value.processes?.length || 0}
+Kernel PTEs: ${kernelDiscoveryResults.value.kernelPTEs?.length || 0}
+swapper_pg_dir: 0x${(kernelDiscoveryResults.value.swapperPgDir || 0).toString(16).toUpperCase()}
+
+Top Processes:
+${(kernelDiscoveryResults.value.processes || []).slice(0, 10).map((p: any) =>
+  `  PID ${p.pid}: ${p.comm} (${p.pteCount || 0} PTEs)`
+).join('\n')}
+`
+
+  navigator.clipboard.writeText(summary).then(() => {
+    console.log('Summary copied to clipboard')
+  })
+}
+
 // Export for template
 const PixelFormatExport = PixelFormat
 
@@ -1791,6 +2368,10 @@ onMounted(async () => {
     // Store observer for cleanup
     (window as any).__canvasResizeObserver = resizeObserver
   }
+
+  // Expose functions to window for Electron/testing
+  (window as any).runKernelDiscovery = runKernelDiscovery;
+  (window as any).startDiscovery = startDiscovery;
 })
 
 // Cleanup
@@ -2228,6 +2809,15 @@ button:disabled {
   margin-left: auto;
 }
 
+.status-bar .db-indicator {
+  color: #4CAF50;
+  font-weight: bold;
+  margin-left: 8px;
+  background: rgba(76, 175, 80, 0.2);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
 /* Context Menu */
 .context-menu {
   position: fixed;
@@ -2258,5 +2848,213 @@ button:disabled {
   height: 1px;
   background: #555;
   margin: 4px 0;
+}
+
+/* Modal Overlay */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10001;
+}
+
+.modal-content {
+  background: #2d2d30;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  max-width: 90%;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.kernel-discovery-modal {
+  width: 900px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  background: #0e639c;
+  color: white;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.modal-close {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+/* Discovery Progress */
+.discovery-progress {
+  padding: 60px;
+  text-align: center;
+}
+
+.spinner {
+  width: 50px;
+  height: 50px;
+  border: 3px solid #3c3c3c;
+  border-top: 3px solid #0e639c;
+  border-radius: 50%;
+  margin: 0 auto 20px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Discovery Results */
+.discovery-results {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+  margin-bottom: 30px;
+}
+
+.stat-card {
+  background: #3c3c3c;
+  padding: 15px;
+  border-radius: 5px;
+  border: 1px solid #555;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: bold;
+  color: #4ec9b0;
+  margin-bottom: 5px;
+  font-family: 'Courier New', monospace;
+}
+
+.stat-label {
+  color: #999;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.section {
+  margin-bottom: 30px;
+}
+
+.section h3 {
+  color: #4ec9b0;
+  margin-bottom: 15px;
+  font-size: 16px;
+}
+
+.process-table-container {
+  max-height: 400px;
+  overflow-y: auto;
+  background: #3c3c3c;
+  border-radius: 5px;
+}
+
+.process-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.process-table th {
+  background: #0e639c;
+  color: white;
+  padding: 10px;
+  text-align: left;
+  position: sticky;
+  top: 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.process-table th:hover {
+  background: #1177bb;
+}
+
+.process-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #555;
+  color: #e0e0e0;
+}
+
+.process-table tr:hover {
+  background: #4a4a4a;
+}
+
+.small-button {
+  padding: 4px 8px;
+  font-size: 12px;
+  background: #0e639c;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.small-button:hover {
+  background: #1177bb;
+}
+
+.export-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #555;
+}
+
+.no-results {
+  padding: 60px;
+  text-align: center;
+  color: #999;
+}
+
+.primary-button {
+  background: #0e639c;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  font-size: 16px;
+  cursor: pointer;
+  margin-top: 20px;
+}
+
+.primary-button:hover {
+  background: #1177bb;
 }
 </style>
