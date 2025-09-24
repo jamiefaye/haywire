@@ -359,6 +359,9 @@
         <span v-if="kernelPageDB.hasData()" class="db-indicator">
           [DB Ready]
         </span>
+        <span v-if="pageCoverage" class="coverage-indicator">
+          [Coverage: {{ pageCoverage }}%]
+        </span>
       </span>
       <span v-if="clickedOffset !== null">
         Click: 0x{{ clickedOffset.toString(16).toUpperCase().padStart(8, '0') }}
@@ -725,6 +728,23 @@ const tooltipTimer = ref<number | null>(null)
 
 // Combined error state
 const error = computed(() => fileError.value)
+
+// Page coverage metric - percentage of memory pages we have info for
+const pageCoverage = computed(() => {
+  if (!pageCollection.value || !fileSize.value) return null
+
+  // Calculate how many 4KB pages are in the current view
+  const pageSize = 4096
+  const totalPagesInFile = Math.floor(fileSize.value / pageSize)
+
+  // Get stats from PageCollection
+  const stats = pageCollection.value.getStats()
+  const mappedPages = stats.totalPages
+
+  // Calculate percentage
+  const percentage = (mappedPages / totalPagesInFile) * 100
+  return percentage.toFixed(1)
+})
 
 // Open file
 async function openFile() {
@@ -1252,6 +1272,31 @@ function handleMemoryHover(offset: number, event?: MouseEvent) {
   // Show tooltip if we have page data
   const hasData = pageCollection.value || kernelPageDB.hasData();
   if (hasData && event) {
+    // If tooltip is already visible, update position immediately
+    if (tooltipVisible.value) {
+      tooltipPosition.value = { x: event.clientX, y: event.clientY }
+
+      // Also update the page info if hovering over a different page
+      const fileOffset = offset + currentOffset.value;
+      let physicalAddress;
+      if (fileOffset < 0x40000000) {
+        physicalAddress = fileOffset;
+      } else {
+        physicalAddress = fileOffset + 0x40000000;
+      }
+
+      // Check if this is a different page than currently shown
+      const currentPA = tooltipPageInfo.value?.physicalAddress
+      const currentPageBase = currentPA ? Math.floor(currentPA / 4096) * 4096 : null
+      const newPageBase = Math.floor(physicalAddress / 4096) * 4096
+
+      if (currentPageBase !== newPageBase) {
+        // Different page - update tooltip content
+        updateTooltipContent(physicalAddress, event)
+      }
+      return // Don't set timer if tooltip already visible
+    }
+
     // Clear any existing timer
     if (tooltipTimer.value) {
       clearTimeout(tooltipTimer.value)
@@ -1260,71 +1305,69 @@ function handleMemoryHover(offset: number, event?: MouseEvent) {
 
     // Set timer to show tooltip after short delay
     tooltipTimer.value = window.setTimeout(() => {
-      // The memory file layout:
-      // - File offset 0x0-0x3FFFFFFF: PA 0x0-0x3FFFFFFF (low 1GB, direct mapping)
-      // - File offset 0x40000000+: PA = file_offset + 0x40000000 (main RAM at PA 0x40000000+)
       const fileOffset = offset + currentOffset.value;
       let physicalAddress;
       if (fileOffset < 0x40000000) {
-        // Low memory region - direct mapping
         physicalAddress = fileOffset;
       } else {
-        // High memory region - add GUEST_RAM_START (0x40000000)
         physicalAddress = fileOffset + 0x40000000;
       }
-
-      // Try PageCollection first (newer, better data)
-      if (pageCollection.value) {
-        console.log(`Looking up PA 0x${physicalAddress.toString(16)} in PageCollection`);
-        const pageInfo = pageCollection.value.getPageInfo(physicalAddress);
-        console.log('PageInfo result:', pageInfo);
-        if (pageInfo && pageInfo.mappings.length > 0) {
-          // Generate tooltip text
-          const tooltipText = pageCollection.value.getPageTooltip(physicalAddress);
-          // For now, show text in console - we'll update the tooltip component next
-          console.log('Page tooltip:', tooltipText);
-
-          // Convert to old format temporarily
-          tooltipPageInfo.value = {
-            physicalAddress,
-            references: pageInfo.mappings.map(m => ({
-              pid: m.pid,
-              processName: m.processName,
-              type: 'pte' as const,
-              virtualAddress: m.va,
-              permissions: m.perms,
-              sectionType: m.sectionType
-            })),
-            isKernel: pageInfo.isKernel,
-            isShared: pageInfo.mappings.length > 1,
-            isZero: false
-          };
-          tooltipPosition.value = { x: event.clientX, y: event.clientY }
-          tooltipVisible.value = true;
-          return;
-        }
-      }
-
-      // Fall back to old database
-      const pageInfo = kernelPageDB.getPageInfo(physicalAddress)
-      if (pageInfo && pageInfo.references.length > 0) {
-        tooltipPageInfo.value = pageInfo
-        tooltipPosition.value = { x: event.clientX, y: event.clientY }
-        tooltipVisible.value = true
-      } else {
-        // Show "not found" tooltip
-        tooltipPageInfo.value = {
-          physicalAddress,
-          references: [],
-          isKernel: false,
-          isShared: false,
-          isZero: false,
-          notFound: true  // Add a flag to indicate no info found
-        };
-        tooltipPosition.value = { x: event.clientX, y: event.clientY }
-        tooltipVisible.value = true
-      }
+      updateTooltipContent(physicalAddress, event)
     }, 500) // 500ms delay before showing tooltip
+  }
+}
+
+// Helper function to update tooltip content
+function updateTooltipContent(physicalAddress: number, event: MouseEvent) {
+  // Try PageCollection first (newer, better data)
+  if (pageCollection.value) {
+    console.log(`Looking up PA 0x${physicalAddress.toString(16)} in PageCollection`);
+    const pageInfo = pageCollection.value.getPageInfo(physicalAddress);
+    console.log('PageInfo result:', pageInfo);
+    if (pageInfo && pageInfo.mappings.length > 0) {
+      // Generate tooltip text
+      const tooltipText = pageCollection.value.getPageTooltip(physicalAddress);
+      console.log('Page tooltip:', tooltipText);
+
+      // Convert to old format temporarily
+      tooltipPageInfo.value = {
+        physicalAddress,
+        references: pageInfo.mappings.map(m => ({
+          pid: m.pid,
+          processName: m.processName,
+          type: 'pte' as const,
+          virtualAddress: m.va,
+          permissions: m.perms,
+          sectionType: m.sectionType
+        })),
+        isKernel: pageInfo.isKernel,
+        isShared: pageInfo.mappings.length > 1,
+        isZero: false
+      };
+      tooltipPosition.value = { x: event.clientX, y: event.clientY }
+      tooltipVisible.value = true;
+      return;
+    }
+  }
+
+  // Fall back to old database
+  const pageInfo = kernelPageDB.getPageInfo(physicalAddress)
+  if (pageInfo && pageInfo.references.length > 0) {
+    tooltipPageInfo.value = pageInfo
+    tooltipPosition.value = { x: event.clientX, y: event.clientY }
+    tooltipVisible.value = true
+  } else {
+    // Show "not found" tooltip
+    tooltipPageInfo.value = {
+      physicalAddress,
+      references: [],
+      isKernel: false,
+      isShared: false,
+      isZero: false,
+      notFound: true
+    };
+    tooltipPosition.value = { x: event.clientX, y: event.clientY }
+    tooltipVisible.value = true
   }
 }
 
