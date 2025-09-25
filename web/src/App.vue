@@ -1349,6 +1349,12 @@ function updateTooltipContent(physicalAddress: number, event: MouseEvent) {
   if (pageCollection.value) {
     const pageInfo = pageCollection.value.getPageInfo(physicalAddress);
     if (pageInfo && pageInfo.mappings.length > 0) {
+      // Clear close timer since we found data
+      if (tooltipCloseTimer.value) {
+        clearTimeout(tooltipCloseTimer.value)
+        tooltipCloseTimer.value = null
+      }
+
       // Generate tooltip text
       const tooltipText = pageCollection.value.getPageTooltip(physicalAddress);
 
@@ -1376,12 +1382,23 @@ function updateTooltipContent(physicalAddress: number, event: MouseEvent) {
   // Fall back to old database
   const pageInfo = kernelPageDB.getPageInfo(physicalAddress)
   if (pageInfo && pageInfo.references.length > 0) {
+    // Clear close timer since we found data
+    if (tooltipCloseTimer.value) {
+      clearTimeout(tooltipCloseTimer.value)
+      tooltipCloseTimer.value = null
+    }
+
     tooltipPageInfo.value = pageInfo
     tooltipPosition.value = { x: event.clientX, y: event.clientY }
     tooltipVisible.value = true
+  } else {
+    // No data found - if tooltip is visible, start close timer
+    if (tooltipVisible.value && !tooltipCloseTimer.value) {
+      tooltipCloseTimer.value = window.setTimeout(() => {
+        closeTooltip()
+      }, 800) // 800ms delay before closing tooltip
+    }
   }
-  // If no data found, don't immediately close - let the close timer handle it
-  // This prevents flickering when moving between known pages
 }
 
 function closeTooltip() {
