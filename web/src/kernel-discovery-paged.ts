@@ -912,26 +912,32 @@ export class PagedKernelDiscovery {
         let pgdIndex: number;
         if ((virtualAddr >> 48n) === 0xffffn) {
             // Kernel address using TTBR1 (swapper_pg_dir)
-            // vmalloc at 0xffff0000... actually uses PGD[0] in the kernel table!
-            // Linear map at 0xffff8000... uses PGD[256]
-            // Fixmap at 0xffffff80... uses PGD[511]
+            // SPECIAL CASE: 0xffff0000xxxxxxxx range uses PGD[0]!
+            // This is a clever optimization where the same page tables serve dual purpose
 
-            // Just extract bits 47-39 normally
-            pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);
-
-            // For debugging: show what we're doing
-            if (pgdIndex === 0) {
-                // This is vmalloc/modules range
+            if ((virtualAddr >> 32n) === 0xffff0000n) {
+                // vmalloc/modules range (0xffff0000xxxxxxxx) uses PGD[0]
+                pgdIndex = 0;
+            } else {
+                // Other kernel ranges use normal calculation
+                // 0xffff8000... uses PGD[256], 0xffffff... uses higher indices
+                pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);
             }
         } else {
             // User space address
             pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);  // bits 47-39
         }
 
-        const pudIndex = Number((virtualAddr >> 30n) & 0x1FFn);  // bits 38-30
-        const pmdIndex = Number((virtualAddr >> 21n) & 0x1FFn);  // bits 29-21
-        const pteIndex = Number((virtualAddr >> 12n) & 0x1FFn);  // bits 20-12
-        const pageOffset = Number(virtualAddr & 0xFFFn);        // bits 11-0
+        // For 0xffff0000xxxxxxxx addresses, we need to use the lower 32 bits for indexing
+        let effectiveAddr = virtualAddr;
+        if ((virtualAddr >> 32n) === 0xffff0000n) {
+            effectiveAddr = virtualAddr & 0xFFFFFFFFn;  // Use lower 32 bits only
+        }
+
+        const pudIndex = Number((effectiveAddr >> 30n) & 0x1FFn);  // bits 38-30 (or 30-22 for masked)
+        const pmdIndex = Number((effectiveAddr >> 21n) & 0x1FFn);  // bits 29-21
+        const pteIndex = Number((effectiveAddr >> 12n) & 0x1FFn);  // bits 20-12
+        const pageOffset = Number(effectiveAddr & 0xFFFn);        // bits 11-0
 
         // Read PGD entry
         const pgdOffset = pgdBase - KernelConstants.GUEST_RAM_START + (pgdIndex * 8);
@@ -1106,15 +1112,25 @@ export class PagedKernelDiscovery {
         // Extract indices - same logic as fixed translateVA
         let pgdIndex: number;
         if ((virtualAddr >> 48n) === 0xffffn) {
-            // Kernel address - just extract bits normally
-            // vmalloc at 0xffff0000... uses PGD[0]
-            pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);
+            // SPECIAL CASE: 0xffff0000xxxxxxxx range uses PGD[0]!
+            if ((virtualAddr >> 32n) === 0xffff0000n) {
+                pgdIndex = 0;
+            } else {
+                pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);
+            }
         } else {
             pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);
         }
-        const pudIndex = Number((virtualAddr >> 30n) & 0x1FFn);
-        const pmdIndex = Number((virtualAddr >> 21n) & 0x1FFn);
-        const pteIndex = Number((virtualAddr >> 12n) & 0x1FFn);
+
+        // For 0xffff0000xxxxxxxx addresses, use lower 32 bits for indexing
+        let effectiveAddr = virtualAddr;
+        if ((virtualAddr >> 32n) === 0xffff0000n) {
+            effectiveAddr = virtualAddr & 0xFFFFFFFFn;
+        }
+
+        const pudIndex = Number((effectiveAddr >> 30n) & 0x1FFn);
+        const pmdIndex = Number((effectiveAddr >> 21n) & 0x1FFn);
+        const pteIndex = Number((effectiveAddr >> 12n) & 0x1FFn);
 
         console.log(`      Indices: PGD[${pgdIndex}] PUD[${pudIndex}] PMD[${pmdIndex}] PTE[${pteIndex}]`);
 
@@ -1937,8 +1953,9 @@ export class PagedKernelDiscovery {
      */
     private walkKernelPortionOfPageTables(process: ProcessInfo): PTE[] {
         const ptes: PTE[] = [];
-        const debug = false;  // Enable for debugging
+        const debug = true;  // Enable for debugging
         let validEntries = 0;
+        const nonZeroEntries: number[] = [];
 
         // Walk kernel space portion of PGD (indices 256-511)
         for (let pgdIdx = 256; pgdIdx < 512; pgdIdx++) {
@@ -1948,7 +1965,18 @@ export class PagedKernelDiscovery {
             const pgdOffset = pgdPhysAddr - KernelConstants.GUEST_RAM_START;
             const pgdEntry = this.memory.readU64(pgdOffset);
 
-            if (!pgdEntry || Number(pgdEntry & 3n) === 0) {
+            if (!pgdEntry) {
+                continue;
+            }
+
+            if (pgdEntry !== 0n) {
+                nonZeroEntries.push(pgdIdx);
+                if (debug && nonZeroEntries.length <= 5) {
+                    console.log(`      PGD[${pgdIdx}]: 0x${pgdEntry.toString(16)} (type=${Number(pgdEntry & 3n)})`);
+                }
+            }
+
+            if (Number(pgdEntry & 3n) === 0) {
                 continue;  // Entry not present
             }
 
@@ -1970,7 +1998,10 @@ export class PagedKernelDiscovery {
         }
 
         if (debug || validEntries > 0) {
-            console.log(`    Walked kernel PGD: ${validEntries} valid entries, ${ptes.length} PTEs found`);
+            console.log(`    Walked kernel PGD indices 256-511:`);
+            console.log(`      Non-zero entries at indices: ${nonZeroEntries.join(', ')}`);
+            console.log(`      Valid entries (type 1 or 3): ${validEntries}`);
+            console.log(`      Total PTEs found: ${ptes.length}`);
         }
 
         return ptes;
