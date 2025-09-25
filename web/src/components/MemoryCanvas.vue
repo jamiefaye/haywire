@@ -50,6 +50,7 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
   memoryClick: [offset: number]
   memoryHover: [offset: number, event: MouseEvent]
+  memoryLeave: []
 }>()
 
 const canvasRef = ref<HTMLCanvasElement>()
