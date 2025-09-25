@@ -4,6 +4,8 @@
 
 Haywire is a VM memory introspection tool that bypasses QEMU's memory isolation to inspect kernel structures and process memory without guest cooperation.
 
+**Current Status**: Transitioning from C++ implementation to web/JavaScript-based version for future development. The web version provides better visualization, cross-platform support, and easier deployment.
+
 ## Key Technical Context
 
 ### Memory Protection Discovery
@@ -20,16 +22,21 @@ Haywire is a VM memory introspection tool that bypasses QEMU's memory isolation 
 
 ## Project Structure
 
-### Core Implementation (C++)
-- `walk_process_list.cpp` - Main process walking implementation
-- `find_processes_qmp.cpp` - QMP-based process discovery
-- `include/` - Header files
-- `src/` - Source files
+### Web Implementation (JavaScript/TypeScript) - PRIMARY
+- `web/src/kernel-discovery-paged.ts` - Main kernel discovery with paged memory support
+- `web/src/kernel-discovery.ts` - Core discovery algorithms and types
+- `web/src/paged-memory.ts` - Efficient large file handling
+- `web/src/components/` - Vue.js UI components
+- `web/src/electron/` - Electron-specific functionality (QMP access)
 
-### Test Scripts (Python)
-- All `.py` files in root are test/research scripts
-- Not part of production Haywire
-- Used for prototyping and investigation
+### Legacy C++ Implementation (DEPRECATED)
+- `companion-oneshot` - Current companion process (replaces beacon scheme)
+- Previous beacon-based companions are obsolete
+
+### Test Scripts
+- `test_*.mjs` - Node.js test scripts for validation
+- `test_swapper_*.mjs` - Swapper PGD discovery validation
+- Python scripts (`.py`) - Legacy research scripts
 
 ### QEMU Modifications
 - `qemu-mods/` - Modified QEMU source
@@ -37,11 +44,12 @@ Haywire is a VM memory introspection tool that bypasses QEMU's memory isolation 
 - `qemu-mods/qemu-src/target/arm/arm-qmp-cmds.c` - Implementation
 
 ### Documentation
-- `docs/qemu_memory_introspection.md` - Technical architecture
-- `docs/build_qemu.md` - Building modified QEMU
-- `docs/kernel_structs.md` - Kernel structure layouts
-- `docs/rendering_pipeline.md` - Memory rendering pipeline and column mode
-- `docs/gpu_memory_introspection.md` - GPU memory access analysis and limitations
+- `docs/memory-map-visual.md` - Physical memory layout and mapping diagram (CURRENT)
+- `docs/rendering_pipeline.md` - Memory rendering pipeline and column mode (CURRENT)
+- `docs/address_notation.md` - Address notation system (CURRENT)
+- `docs/vm_setup_guide.md` - VM setup instructions (CURRENT)
+- `docs/build_qemu.md` - Building modified QEMU (CURRENT)
+- Other docs may be obsolete - verify before use
 
 ## Common Tasks
 
@@ -98,11 +106,6 @@ response = json.loads(sock.recv(4096).decode())
 - Requires guest cooperation
 - Doesn't work for forensics/incident response
 
-### Why Not Use memory-backend-file?
-- QEMU intentionally hides kernel structures
-- Security feature prevents kernel inspection
-- Must use QMP bypass for access
-
 ### Why Python for Tests?
 - Rapid prototyping
 - Easy QMP interaction
@@ -118,6 +121,30 @@ response = json.loads(sock.recv(4096).decode())
 6. **tmpfs NOT visible** - /dev/shm doesn't appear in memory-backend-file
 7. **Page alignment critical** - Beacons must be on 4KB boundaries
 8. **Zero page optimization** - memset(0) doesn't allocate physical pages
+
+## Recent Progress (August 2025)
+
+### PID to PGD Mapping Success
+- **Fixed maple tree walker**: Using kernel's exact node type detection `(ptr >> 3) & 0x0F`
+- **Leaf vs internal nodes**: Types 0-1 are leaves (contain VMAs), 2-3 are internal (contain children)
+- **Live memory critical**: Snapshot had 21% success, live memory has 100% success rate
+- **Successfully extracted**: 39/39 user process PGDs from live memory
+- **Key offsets confirmed**:
+  - `mm_struct.pgd` at offset 0x68
+  - `mm_struct.mm_mt` (maple tree) at offset 0x40
+  - Maple tree root at offset 0x48
+
+### Process Discovery Methods
+- **Memory scan**: Finds task_structs by scanning memory for signatures
+- **Filters**: Strict validation of process names, PIDs, linked lists
+- **Tombstones**: Snapshot contained stale processes, live memory only has active ones
+- **Ground truth**: GuestAgent class can get `ps aux` via QGA for comparison
+
+### Kernel Structure Offsets Needed for Portability
+- **task_struct**: pid, comm, mm, tasks list
+- **mm_struct**: pgd (0x68), mm_mt (0x40), mm_users
+- **vm_area_struct**: vm_start (0x00), vm_end (0x08), vm_flags
+- **Detection methods**: BTF/pahole, kallsyms, debug symbols, heuristics
 
 ## Recent Progress (September 2025)
 
@@ -161,35 +188,10 @@ response = json.loads(sock.recv(4096).decode())
 - Select button in memory visualizer opens Process Selector window
 - Removed redundant Process Selector [P] button (kept hotkey)
 
-### New Beacon Encoder/Decoder Architecture
-- Simplified beacon protocol with page-based encoding (no entries span pages)
-- Encoder (companion side): `beacon_encoder.c/h` - writes structured data to shared memory
-- Decoder (Haywire side): `beacon_decoder.cpp/h` - reads and parses beacon data
-- Multiple observer types: OBSERVER_PID_SCANNER, OBSERVER_CAMERA, etc.
-
-### Beacon Page Structure
-- 4096-byte pages with header containing magic numbers (0x3142FACE, 0xCAFEBABE)
-- Header includes: observer_type, generation, write_seq, timestamp, entry_count
-- Entry types: ENTRY_PID, ENTRY_SECTION, ENTRY_PTE, ENTRY_CAMERA_HEADER
-- Tear-resistant design: complete entries only, no cross-page spans
-
-### Beacon Communication Architecture
-- **Memory allocation**: Companion programs use malloc (page-aligned) to allocate beacon pages
-- **Visibility**: malloc'd memory IS visible through QEMU's memory-backend-file
-- **Unidirectional channels**: Each page is either g2h (guest-to-haywire) OR h2g (haywire-to-guest)
-  - g2h pages: Companion writes, Haywire reads (e.g., PID lists, camera data)
-  - h2g pages: Haywire writes, companion reads (e.g., camera control commands)
-- **Tear detection**: Both directions use sequence number matching for consistency
-- **Discovery**: All beacon pages (both g2h and h2g) are found via the same scanning mechanism
-
-### Camera Implementation
-- **Page 0**: h2g beacon page (control page) - Haywire writes focus commands here
-- **Pages 1-N**: g2h beacon pages - Companion writes sections/PTEs here
-- Control page has beacon headers but data area contains CameraControlPage structure
-- Companion checks control page for torn reads before processing commands
-
-### Current Companion Processes
-- `companion_camera_v2` - Monitors specific process memory maps (working)
+### Companion Process (C++ - Legacy)
+- **Current**: `companion-oneshot` - Single-shot process information gatherer
+- **Deprecated**: Previous beacon-based architecture (beacon_encoder/decoder)
+- **Note**: C++ companion approach is being phased out in favor of web-based discovery
 
 ### SSH Setup
 - Primary user: `ubuntu` (passwordless via SSH key)
@@ -225,7 +227,16 @@ response = json.loads(sock.recv(4096).decode())
 - Specific optimized versions for common sizes (4KB, 64KB, 1MB)
 - Compiled with Emscripten `-msimd128` flag for SIMD support
 
-## Recent Optimizations (September 14, 2024)
+## Recent Progress (September 25, 2025)
+
+### Swapper PGD Discovery
+- **Dual approach**: QMP ground truth + adaptive signature search
+- **Scoring algorithm**: Detects RAM size from PUD count, validates structure
+- **100% accuracy**: Signature search confirms QMP ground truth
+- **Memory efficient**: Optimized scanning prevents OOM errors
+- **Works everywhere**: Electron (with QMP), browser mode, memory snapshots
+
+## Recent Optimizations (September 14, 2025)
 
 ### Memory Scanning Performance
 - **Zero-copy page scanning**: Added `TestPageNonZero` methods to avoid memory allocation
@@ -243,30 +254,29 @@ response = json.loads(sock.recv(4096).decode())
 ## TODO/Future Work
 
 ### Immediate Tasks
-- Fix remaining switch warnings for HEX_PIXEL and CHAR_8BIT formats
-- Add export functionality for bitmap viewers
-- Implement bookmarks/saved locations
+- Complete migration from C++ to web-based implementation
+- Remove obsolete beacon-based code and documentation
+- Enhance web UI with discovered kernel information visualization
 
 ### Medium-term Goals
+- Support different kernel versions with offset configuration files
 - Windows guest support via EPROCESS structures
-- Additional h2g control pages for dynamic buffer resizing
-- Search history and persistent settings
-- Memory diff/comparison between snapshots
-- Electron version for native file access and QEMU communication
-- WebSocket proxy for browser-to-QMP bridging
+- Implement process memory dumping via discovered PGDs
+- Add PTE analysis and memory mapping visualization
+- Create process tree visualization from parent/child relationships
 
 ### Long-term Vision
 - Multi-VM support with synchronized views
-- Plugin architecture for custom visualizations
-- Recording and playback of memory access patterns
+- Automatic kernel version detection and offset discovery
 - Integration with debugging tools (GDB, LLDB)
+- Live memory diffing between snapshots
 
 
 ## Debugging Tips
 
 - Use `fprintf(stderr, ...)` in QEMU code for debugging
 - Check `/tmp/kernel_dump.txt` for QMP dump output
-- Shared memory file is at `/dev/shm/haywire_pid_scanner` (both host and guest)
+- Memory file is at `/tmp/haywire-vm-mem` (memory-backend-file)
 - QMP port is usually 4445, monitor port 4444
 - Kill background processes with: `killall ssh haywire`
 
