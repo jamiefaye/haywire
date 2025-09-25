@@ -89,7 +89,11 @@ export const KernelConstants = {
 
     // Address ranges
     GUEST_RAM_START: 0x40000000,
-    GUEST_RAM_END: 0x1C0000000,  // 6GB guest (0x40000000 + 6GB)
+    GUEST_RAM_END: 0x1C0000000,  // 7GB total (1GB start + 6GB size)
+
+    // Physical address mask for ARM64 (bits [47:12])
+    PA_MASK: 0x0000FFFFFFFFF000,
+
     KERNEL_VA_START: 0xffff000000000000n, // BigInt for 64-bit
 } as const;
 
@@ -265,21 +269,36 @@ export class KernelDiscovery {
         const mmPtr = Number(this.readU64(offset + KernelConstants.MM_OFFSET) || 0n);
 
         // Get PGD if mm_struct is valid
+        // Kernel structures can be at ~5GB mark (0x13XXXXXXX), within our 6GB file
         let pgdPtr = 0;
-        if (mmPtr && mmPtr >= KernelConstants.GUEST_RAM_START && mmPtr < KernelConstants.GUEST_RAM_END) {
-            const mmAbsoluteOffset = mmPtr - KernelConstants.GUEST_RAM_START;
-            const mmRelativeOffset = mmAbsoluteOffset - this.baseOffset;
+        if (mmPtr) {
+            // Calculate offset directly from file start
+            const mmFileOffset = mmPtr - KernelConstants.GUEST_RAM_START;
 
-            // Only read if mm_struct is within our chunk
-            if (mmRelativeOffset >= 0 && mmRelativeOffset + KernelConstants.PGD_OFFSET_IN_MM + 8 <= this.memory.byteLength) {
-                pgdPtr = Number(this.readU64(mmRelativeOffset + KernelConstants.PGD_OFFSET_IN_MM) || 0n);
+            // Only read if mm_struct is within our memory buffer
+            if (mmFileOffset >= 0 && mmFileOffset + KernelConstants.PGD_OFFSET_IN_MM + 8 <= this.memory.byteLength) {
+                const pgdValue = this.readU64(mmFileOffset + KernelConstants.PGD_OFFSET_IN_MM);
+                if (pgdValue) {
+                    // Mask to get physical address
+                    pgdPtr = Number(pgdValue & BigInt(KernelConstants.PA_MASK));
+
+                    // Log first few for debugging
+                    if (this.processes.size < 5) {
+                        console.log(`  PID ${pid} (${name}): mm_struct=0x${mmPtr.toString(16)}, pgd_raw=0x${pgdValue.toString(16)}, pgd_pa=0x${pgdPtr.toString(16)}`);
+                    }
+                }
+            } else {
+                // mm_struct is outside our buffer
+                if (this.processes.size < 5) {
+                    console.log(`  PID ${pid} (${name}): mm_struct=0x${mmPtr.toString(16)} is outside buffer (offset would be 0x${mmFileOffset.toString(16)})`);
+                }
             }
         }
 
         return {
             pid,
             name,
-            taskStruct: KernelConstants.GUEST_RAM_START + this.baseOffset + offset, // Adjust for chunk's position
+            taskStruct: offset + this.baseOffset + KernelConstants.GUEST_RAM_START, // Absolute physical address
             mmStruct: BigInt(mmPtr),
             pgd: pgdPtr,
             isKernelThread: mmPtr === 0,
@@ -335,29 +354,32 @@ export class KernelDiscovery {
     private walkPageTable(tableAddr: number, level: number = 0): PTE[] {
         const ptes: PTE[] = [];
 
-        if (tableAddr < KernelConstants.GUEST_RAM_START || tableAddr >= KernelConstants.GUEST_RAM_END) {
+        // Page tables are at physical addresses around 5GB mark (0x13XXXXXXX)
+        // They ARE in the memory-backend-file but might be beyond traditional "guest RAM"
+
+        // Calculate offset from start of memory file
+        const fileOffset = tableAddr - KernelConstants.GUEST_RAM_START;
+
+        // Check if this is within our memory buffer
+        if (fileOffset < 0 || fileOffset + KernelConstants.PAGE_SIZE > this.memory.byteLength) {
+            // Page table not in our current view
+            if (level === 0) {
+                console.log(`    PGD at 0x${tableAddr.toString(16)} (file offset 0x${fileOffset.toString(16)}) is outside buffer range (0-0x${this.memory.byteLength.toString(16)})`);
+            }
             return ptes;
         }
 
-        // Adjust for chunk offset - tableAddr is absolute, but we need relative to this chunk
-        const absoluteOffset = tableAddr - KernelConstants.GUEST_RAM_START;
-        const relativeOffset = absoluteOffset - this.baseOffset;
-
-        if (relativeOffset < 0 || relativeOffset + KernelConstants.PAGE_SIZE > this.memory.byteLength) {
-            return ptes; // This table is not in our chunk
-        }
-
         for (let i = 0; i < KernelConstants.PTE_ENTRIES; i++) {
-            const entryOffset = relativeOffset + i * 8;
+            const entryOffset = fileOffset + i * 8;
             const entry = this.readU64(entryOffset);
             if (!entry) continue;
 
-            // Check if valid
-            if ((Number(entry) & KernelConstants.PTE_VALID_MASK) !== KernelConstants.PTE_VALID_BITS) {
-                continue;
-            }
+            // Check if valid (bits [1:0] should be 0x3 for table or 0x1 for block)
+            const entryType = Number(entry) & 0x3;
+            if (entryType === 0) continue; // Invalid entry
 
-            const physAddr = Number((entry >> BigInt(KernelConstants.PAGE_SHIFT)) << BigInt(KernelConstants.PAGE_SHIFT));
+            // Extract physical address using proper mask (bits [47:12])
+            const physAddr = Number(entry & BigInt(KernelConstants.PA_MASK));
 
             if (level === 3) { // PTE level
                 const virtualAddr = i << KernelConstants.PAGE_SHIFT;
@@ -371,10 +393,13 @@ export class KernelDiscovery {
                     w: (flags & 0x2) !== 0,
                     x: (flags & 0x4) === 0, // NX bit inverted
                 });
-            } else {
-                // Recurse to next level
+            } else if (entryType === 0x3 && level < 3) {
+                // Table descriptor - recurse to next level
                 const nextPtes = this.walkPageTable(physAddr, level + 1);
                 ptes.push(...nextPtes);
+            } else if (entryType === 0x1) {
+                // Block descriptor - huge page
+                // TODO: Handle huge pages properly based on level
             }
         }
 
@@ -386,10 +411,20 @@ export class KernelDiscovery {
      */
     private findProcessPTEs(): void {
         console.log('Finding PTEs for processes...');
+        let processedCount = 0;
+        let pteCount = 0;
 
         for (const process of this.processes.values()) {
             if (process.pgd && process.pgd !== 0) {
+                console.log(`  Walking page table for PID ${process.pid} (${process.name}), PGD: 0x${process.pgd.toString(16)}`);
                 process.ptes = this.walkPageTable(process.pgd);
+
+                if (process.ptes.length > 0) {
+                    console.log(`    Found ${process.ptes.length} PTEs`);
+                    pteCount += process.ptes.length;
+                } else {
+                    console.log(`    No PTEs found (PGD might be outside accessible range)`);
+                }
 
                 // Build reverse mapping
                 for (const pte of process.ptes) {
@@ -400,8 +435,17 @@ export class KernelDiscovery {
                         this.pageToPids.get(pte.pa)!.add(process.pid);
                     }
                 }
+
+                processedCount++;
+                // Only log first 5 to avoid spam
+                if (processedCount >= 5) {
+                    console.log(`  ... (processing ${this.processes.size} total processes)`);
+                    break;
+                }
             }
         }
+
+        console.log(`Total PTEs found: ${pteCount}`);
 
         this.stats.totalPTEs = Array.from(this.processes.values())
             .reduce((sum, p) => sum + p.ptes.length, 0);
@@ -527,8 +571,8 @@ export class KernelDiscovery {
                 continue;
             }
 
-            // Follow to next level
-            const nextTable = Number((entry >> BigInt(KernelConstants.PAGE_SHIFT)) << BigInt(KernelConstants.PAGE_SHIFT));
+            // Follow to next level - extract physical address properly
+            const nextTable = Number(entry & BigInt(KernelConstants.PA_MASK));
             const kernelPtes = this.walkPageTable(nextTable, 1);
 
             // Adjust virtual addresses for kernel space
