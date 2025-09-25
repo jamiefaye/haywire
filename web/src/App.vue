@@ -1303,17 +1303,35 @@ function handleMemoryHover(offset: number, event?: MouseEvent) {
       tooltipTimer.value = null
     }
 
-    // Set timer to show tooltip after short delay
-    tooltipTimer.value = window.setTimeout(() => {
-      const fileOffset = offset + currentOffset.value;
-      let physicalAddress;
-      if (fileOffset < 0x40000000) {
-        physicalAddress = fileOffset;
-      } else {
-        physicalAddress = fileOffset + 0x40000000;
-      }
+    // Calculate physical address
+    const fileOffset = offset + currentOffset.value;
+    let physicalAddress;
+    if (fileOffset < 0x40000000) {
+      physicalAddress = fileOffset;
+    } else {
+      physicalAddress = fileOffset + 0x40000000;
+    }
+
+    // Check if we have data for this page - if so, show immediately
+    let hasPageData = false;
+    if (pageCollection.value) {
+      const pageInfo = pageCollection.value.getPageInfo(physicalAddress);
+      hasPageData = pageInfo && pageInfo.mappings.length > 0;
+    }
+    if (!hasPageData) {
+      const pageInfo = kernelPageDB.getPageInfo(physicalAddress);
+      hasPageData = pageInfo && pageInfo.references.length > 0;
+    }
+
+    if (hasPageData) {
+      // Show immediately for known pages
       updateTooltipContent(physicalAddress, event)
-    }, 500) // 500ms delay before showing tooltip
+    } else {
+      // Use timer for unknown pages (in case slow lookup)
+      tooltipTimer.value = window.setTimeout(() => {
+        updateTooltipContent(physicalAddress, event)
+      }, 500) // 500ms delay before showing tooltip
+    }
   }
 }
 
