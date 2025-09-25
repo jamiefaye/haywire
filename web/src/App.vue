@@ -1379,12 +1379,9 @@ function updateTooltipContent(physicalAddress: number, event: MouseEvent) {
     tooltipPageInfo.value = pageInfo
     tooltipPosition.value = { x: event.clientX, y: event.clientY }
     tooltipVisible.value = true
-  } else {
-    // No data found - hide tooltip if it was showing
-    if (tooltipVisible.value) {
-      closeTooltip()
-    }
   }
+  // If no data found, don't immediately close - let the close timer handle it
+  // This prevents flickering when moving between known pages
 }
 
 function closeTooltip() {
@@ -1404,8 +1401,9 @@ function closeTooltip() {
 function handleMemoryLeave() {
   hoveredOffset.value = null
 
-  // Only close tooltip if it's showing and we have page data
-  if (tooltipVisible.value && tooltipPageInfo.value) {
+  // If tooltip is visible, set timer to close it after delay
+  // This gives time to move to another known page without flicker
+  if (tooltipVisible.value) {
     // Clear any existing close timer
     if (tooltipCloseTimer.value) {
       clearTimeout(tooltipCloseTimer.value)
