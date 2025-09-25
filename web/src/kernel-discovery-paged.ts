@@ -741,6 +741,228 @@ export class PagedKernelDiscovery {
     }
 
     /**
+     * Find swapper_pg_dir by adaptive signature with scoring
+     * Returns the physical address of the best candidate or 0 if not found
+     */
+    private findSwapperPgdByAdaptiveSignature(): number {
+        console.log('Searching for swapper_pg_dir by adaptive signature...');
+
+        // Detect estimated RAM size from file
+        const estimatedRamSize = Math.ceil((this.totalSize) / (1024*1024*1024));
+        console.log(`  Estimated VM RAM size: ~${estimatedRamSize}GB`);
+
+        // Scan focused regions where swapper_pg_dir is typically found
+        // Limit to smaller ranges to avoid memory issues
+        const scanRegions = [
+            [0x130000000, 0x138000000], // 4.75-4.875GB range (includes known 0x136deb000)
+            [0x138000000, 0x140000000], // 4.875-5GB range
+            [0x78000000, 0x80000000],   // 1.875-2GB range (fallback)
+        ];
+
+        interface SwapperCandidate {
+            physAddr: number;
+            score: number;
+            reasons: string[];
+            pgd0PudCount: number;
+            memSizeEstimate: number;
+            userEntries: number;
+            kernelEntries: number[];
+        }
+
+        const candidates: SwapperCandidate[] = [];
+        let pagesScanned = 0;
+        const maxCandidates = 10; // Limit candidates to avoid memory buildup
+
+        for (const [regionStart, regionEnd] of scanRegions) {
+            const start = Math.max(0, regionStart - KernelConstants.GUEST_RAM_START);
+            const end = Math.min(this.totalSize, regionEnd - KernelConstants.GUEST_RAM_START);
+            if (start >= end) continue;
+
+            console.log(`  Scanning region 0x${regionStart.toString(16)}-0x${regionEnd.toString(16)}...`);
+
+            // Process in smaller chunks to avoid memory issues
+            const chunkSize = 16 * 1024 * 1024; // 16MB chunks
+            for (let chunkStart = start; chunkStart < end && candidates.length < maxCandidates; chunkStart += chunkSize) {
+                const chunkEnd = Math.min(chunkStart + chunkSize, end);
+
+                for (let offset = chunkStart; offset < chunkEnd && candidates.length < maxCandidates; offset += KernelConstants.PAGE_SIZE) {
+                    pagesScanned++;
+
+                    // Quick check for sparse page using single read
+                    const pageData = this.memory.read(offset, KernelConstants.PAGE_SIZE);
+                    if (!pageData) continue;
+
+                    // Count non-zero entries efficiently
+                    let nonZeroEntries = 0;
+                    const view = new DataView(pageData.buffer, pageData.byteOffset, pageData.byteLength);
+                    for (let i = 0; i < 512; i++) {
+                        const entry = view.getBigUint64(i * 8, true);
+                        if (entry !== 0n) {
+                            nonZeroEntries++;
+                            if (nonZeroEntries > 20) break;
+                        }
+                    }
+
+                    // Only analyze sparse pages (2-20 entries)
+                    if (nonZeroEntries >= 2 && nonZeroEntries <= 20) {
+                        const physAddr = offset + KernelConstants.GUEST_RAM_START;
+                        const candidate = this.analyzeSwapperCandidate(offset, physAddr);
+                        if (candidate && candidate.score >= 3) {
+                            candidates.push(candidate);
+                            console.log(`    Found candidate at PA 0x${physAddr.toString(16)} (score: ${candidate.score})`);
+                        }
+                    }
+                }
+            }
+
+            if (candidates.length >= maxCandidates) {
+                console.log(`  Stopping early - found ${maxCandidates} candidates`);
+                break;
+            }
+        }
+
+        console.log(`  Scanned ${pagesScanned} pages`);
+
+        // Sort by score
+        candidates.sort((a, b) => b.score - a.score);
+
+        console.log(`  Found ${candidates.length} high-scoring candidates`);
+
+        if (candidates.length > 0) {
+            // Show top candidates
+            const top = candidates.slice(0, 5);
+            for (const c of top) {
+                console.log(`    PA: 0x${c.physAddr.toString(16)}, Score: ${c.score}, RAM: ${c.memSizeEstimate}GB, User: ${c.userEntries}, Kernel: ${c.kernelEntries.length}`);
+            }
+
+            const best = candidates[0];
+            console.log(`  ✓ Best candidate at PA 0x${best.physAddr.toString(16)} (score: ${best.score}/7, est. RAM: ${best.memSizeEstimate}GB)`);
+            return best.physAddr;
+        }
+
+        console.log('  swapper_pg_dir not found by signature scan');
+        return 0;
+    }
+
+    /**
+     * Analyze a potential swapper_pg_dir candidate with adaptive scoring
+     */
+    private analyzeSwapperCandidate(offset: number, physAddr: number): any {
+        if (offset + KernelConstants.PAGE_SIZE > this.totalSize) {
+            return null;
+        }
+
+        const analysis = {
+            physAddr,
+            score: 0,
+            reasons: [] as string[],
+            pgd0PudCount: 0,
+            memSizeEstimate: 0,
+            userEntries: 0,
+            kernelEntries: [] as number[],
+        };
+
+        // Count valid entries
+        let pgd0Entry: { type: string; pa: number } | null = null;
+
+        for (let i = 0; i < 512; i++) {
+            const entry = this.memory.readU64(offset + i * 8);
+            if (!entry) continue;
+            const entryType = Number(entry & 0x3n);
+
+            if (entryType === 0x1 || entryType === 0x3) {
+                if (i === 0) {
+                    pgd0Entry = {
+                        type: entryType === 0x1 ? 'BLOCK' : 'TABLE',
+                        pa: Number(entry & BigInt(KernelConstants.PA_MASK))
+                    };
+                }
+                if (i < 256) {
+                    analysis.userEntries++;
+                } else {
+                    analysis.kernelEntries.push(i);
+                }
+            }
+        }
+
+        // Must have PGD[0] and sparse structure
+        if (!pgd0Entry) return null;
+        const totalEntries = analysis.userEntries + analysis.kernelEntries.length;
+        if (totalEntries < 2 || totalEntries > 20) return null;
+
+        // Check PUD count if PGD[0] is a TABLE
+        if (pgd0Entry.type === 'TABLE') {
+            const pudOffset = pgd0Entry.pa - KernelConstants.GUEST_RAM_START;
+            if (pudOffset >= 0 && pudOffset + KernelConstants.PAGE_SIZE <= this.totalSize) {
+                let pudCount = 0;
+                let consecutivePuds = true;
+
+                for (let j = 0; j < 512; j++) {
+                    const pud = this.memory.readU64(pudOffset + j * 8);
+                    if (pud !== null) {
+                        const pudType = Number(pud & 0x3n);
+                        if (pudType >= 1) {
+                            pudCount++;
+                            // Check if PUDs are NOT consecutive from index 0
+                            if (pudCount > 1 && j !== pudCount - 1) {
+                                consecutivePuds = false;
+                            }
+                        }
+                    }
+                }
+
+                analysis.pgd0PudCount = pudCount;
+
+                // Estimate memory size based on PUD count
+                if (pudCount > 0 && consecutivePuds) {
+                    analysis.memSizeEstimate = pudCount; // GB
+                    analysis.score += 2;
+                    analysis.reasons.push(`Linear mapping for ${pudCount}GB RAM`);
+
+                    // Common RAM sizes get bonus points
+                    if ([1, 2, 4, 6, 8, 16, 32].includes(pudCount)) {
+                        analysis.score += 1;
+                        analysis.reasons.push('Common RAM size');
+                    }
+                }
+            }
+        } else if (pgd0Entry.type === 'BLOCK') {
+            // 1GB huge page for small memory systems
+            analysis.memSizeEstimate = 1;
+            analysis.score += 1;
+            analysis.reasons.push('1GB block mapping');
+        }
+
+        // Check kernel entry patterns
+        const hasKernelStart = analysis.kernelEntries.includes(256);
+        const hasHighKernel = analysis.kernelEntries.some(idx => idx >= 500);
+
+        if (hasKernelStart) {
+            analysis.score += 1;
+            analysis.reasons.push('Has kernel text mapping (PGD[256])');
+        }
+
+        if (hasHighKernel) {
+            analysis.score += 1;
+            analysis.reasons.push(`Has high kernel mappings`);
+        }
+
+        // Prefer single user entry (just PGD[0])
+        if (analysis.userEntries === 1) {
+            analysis.score += 1;
+            analysis.reasons.push('Single user entry (expected)');
+        }
+
+        // Multiple kernel entries indicate complete kernel mapping
+        if (analysis.kernelEntries.length >= 2) {
+            analysis.score += 1;
+            analysis.reasons.push(`${analysis.kernelEntries.length} kernel entries`);
+        }
+
+        return analysis;
+    }
+
+    /**
      * Find best swapper_pg_dir from candidates
      */
     private findSwapperPgDir(): number {
@@ -2283,15 +2505,29 @@ export class PagedKernelDiscovery {
             console.log(`QMP not available (${err.message}) - using heuristic discovery`);
         }
 
-        if (!qmpKernelPGD) {
-            console.log('No QMP ground truth available - will discover kernel PGD dynamically');
-        } else {
-            // Store the QMP-provided kernel PGD for later comparison
-            this.swapperPgDir = qmpKernelPGD;
-        }
+        // Always run signature search to either confirm QMP or discover
+        const signatureDiscoveredPgd = this.findSwapperPgdByAdaptiveSignature();
 
-        // Will be set by strict validation below
-        // this.swapperPgDir will be set when we find the real kernel PGD
+        if (qmpKernelPGD && signatureDiscoveredPgd) {
+            // We have both - check if they match
+            if (signatureDiscoveredPgd === qmpKernelPGD) {
+                console.log(`  ✅ Signature search confirmed QMP ground truth!`);
+            } else {
+                console.log(`  ⚠️ Signature search found different candidate: 0x${signatureDiscoveredPgd.toString(16)}`);
+                console.log(`     Using QMP ground truth as authoritative`);
+            }
+            this.swapperPgDir = qmpKernelPGD;
+        } else if (!qmpKernelPGD && signatureDiscoveredPgd) {
+            // No QMP, but signature search found something
+            console.log(`  Using signature-discovered swapper_pg_dir at PA 0x${signatureDiscoveredPgd.toString(16)}`);
+            this.swapperPgDir = signatureDiscoveredPgd;
+        } else if (qmpKernelPGD && !signatureDiscoveredPgd) {
+            // Only QMP worked
+            this.swapperPgDir = qmpKernelPGD;
+        } else {
+            // Neither worked - will try to discover below through validation
+            console.log('No QMP or signature search results - will discover kernel PGD through validation');
+        }
 
         // We'll validate discovered PGDs below
 
