@@ -219,8 +219,6 @@ export class PageCollection {
             if (pa > maxPA) maxPA = pa;
         });
 
-        console.log(`PageCollection PA range: 0x${minPA.toString(16)} - 0x${maxPA.toString(16)}`);
-
         return {
             totalPages,
             totalMappings,

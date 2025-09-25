@@ -101,7 +101,6 @@ export class QMPClient {
                                 console.log(`QMP: Got kernel info - TTBR1=0x${info.ttbr1?.toString(16)}`);
                                 resolve(info);
                             } else {
-                                console.log('QMP: No kernel info in response');
                                 resolve(null);
                             }
                         } else if (msg.error) {
