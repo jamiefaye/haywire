@@ -6,6 +6,7 @@
       :height="height"
       @click="handleClick"
       @mousemove="handleMouseMove"
+      @mouseleave="handleMouseLeave"
       class="memory-canvas"
     />
     <div v-if="isLoading" class="loading-overlay">
@@ -48,7 +49,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<{
   memoryClick: [offset: number]
-  memoryHover: [offset: number]
+  memoryHover: [offset: number, event: MouseEvent]
 }>()
 
 const canvasRef = ref<HTMLCanvasElement>()
@@ -161,11 +162,15 @@ function handleMouseMove(event: MouseEvent) {
     if (coords.x >= 0 && coords.y >= 0) {
       const bytesPerPixel = getBytesPerPixelForFormat(baseFormat)
       const offset = coords.y * (props.stride || props.width) * bytesPerPixel + coords.x * bytesPerPixel
-      emit('memoryHover', props.sourceOffset + offset)
+      emit('memoryHover', props.sourceOffset + offset, event)
     }
   } catch (err) {
     console.warn('Error in handleMouseMove:', err)
   }
+}
+
+function handleMouseLeave() {
+  emit('memoryLeave')
 }
 
 // Helper function for bytes per pixel

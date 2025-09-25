@@ -256,6 +256,7 @@
           :column-gap="columnGap"
           @memory-click="handleMemoryClick"
           @memory-hover="(offset, event) => handleMemoryHover(offset, event)"
+          @memory-leave="handleMemoryLeave"
         />
         <div v-else-if="isFileOpen" class="placeholder">
           Loading memory data...
@@ -725,6 +726,7 @@ const tooltipVisible = ref(false)
 const tooltipPageInfo = ref<PageInfo | null>(null)
 const tooltipPosition = ref({ x: 0, y: 0 })
 const tooltipTimer = ref<number | null>(null)
+const tooltipCloseTimer = ref<number | null>(null)
 
 // Combined error state
 const error = computed(() => fileError.value)
@@ -1269,6 +1271,12 @@ function handleMemoryClick(offset: number) {
 function handleMemoryHover(offset: number, event?: MouseEvent) {
   hoveredOffset.value = offset
 
+  // Clear any pending close timer since we're hovering
+  if (tooltipCloseTimer.value) {
+    clearTimeout(tooltipCloseTimer.value)
+    tooltipCloseTimer.value = null
+  }
+
   // Show tooltip if we have page data
   const hasData = pageCollection.value || kernelPageDB.hasData();
   if (hasData && event) {
@@ -1371,8 +1379,12 @@ function updateTooltipContent(physicalAddress: number, event: MouseEvent) {
     tooltipPageInfo.value = pageInfo
     tooltipPosition.value = { x: event.clientX, y: event.clientY }
     tooltipVisible.value = true
+  } else {
+    // No data found - hide tooltip if it was showing
+    if (tooltipVisible.value) {
+      closeTooltip()
+    }
   }
-  // Don't show tooltip if no data found
 }
 
 function closeTooltip() {
@@ -1381,6 +1393,28 @@ function closeTooltip() {
   if (tooltipTimer.value) {
     clearTimeout(tooltipTimer.value)
     tooltipTimer.value = null
+  }
+  if (tooltipCloseTimer.value) {
+    clearTimeout(tooltipCloseTimer.value)
+    tooltipCloseTimer.value = null
+  }
+}
+
+// Handle mouse leaving the memory canvas
+function handleMemoryLeave() {
+  hoveredOffset.value = null
+
+  // Only close tooltip if it's showing and we have page data
+  if (tooltipVisible.value && tooltipPageInfo.value) {
+    // Clear any existing close timer
+    if (tooltipCloseTimer.value) {
+      clearTimeout(tooltipCloseTimer.value)
+    }
+
+    // Set timer to close tooltip after a short delay
+    tooltipCloseTimer.value = window.setTimeout(() => {
+      closeTooltip()
+    }, 800) // 800ms delay before closing tooltip
   }
 }
 
