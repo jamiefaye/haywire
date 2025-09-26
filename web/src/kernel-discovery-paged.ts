@@ -2276,16 +2276,9 @@ export class PagedKernelDiscovery {
         let validEntries = 0;
         const nonZeroEntries: number[] = [];
 
-        // Walk important kernel PGD entries:
-        // - PGD[0]: Linear map of physical RAM (critical for finding all memory)
-        // - PGD[256-511]: Traditional kernel space regions
-        const pgdRanges = [
-            { start: 0, end: 1, name: "Linear map" },      // PGD[0] contains linear mapping
-            { start: 256, end: 512, name: "Kernel space" }  // Traditional kernel regions
-        ];
-
-        for (const range of pgdRanges) {
-            for (let pgdIdx = range.start; pgdIdx < range.end; pgdIdx++) {
+        // Walk kernel space portion of PGD (indices 256-511)
+        // Note: PGD[0] contains linear map but scanning it causes performance issues
+        for (let pgdIdx = 256; pgdIdx < 512; pgdIdx++) {
             // process.pgd is stored as physical address (with GUEST_RAM_START added)
             // We need to convert back to file offset
             const pgdPhysAddr = process.pgd + (pgdIdx * 8);
@@ -2319,19 +2312,13 @@ export class PagedKernelDiscovery {
                 validEntries++;
                 // Extract PA from bits [47:30] for 1GB pages at PGD level - mask off upper flag bits
                 const pa = Number(pgdEntry & 0x0000FFFFC0000000n);
-                // Calculate VA based on PGD index
-                // PGD[0-255]: Direct linear map (VA = index << 39)
-                // PGD[256-511]: Kernel space (VA = 0xffff000000000000 + (index-256) << 39)
-                const va = pgdIdx < 256
-                    ? BigInt(pgdIdx) << 39n
-                    : 0xffff000000000000n + (BigInt(pgdIdx - 256) << 39n);
+                const va = BigInt(pgdIdx) << 39n;  // PGD index determines bits [47:39]
                 ptes.push({ va, pa, flags: pgdEntry, level: 1, pageSize: 1073741824 });
-            }
             }
         }
 
         if (debug || validEntries > 0) {
-//             console.log(`    Walked kernel PGD entries:`);
+//             console.log(`    Walked kernel PGD indices 256-511:`);
 //             console.log(`      Non-zero entries at indices: ${nonZeroEntries.join(', ')}`);
 //             console.log(`      Valid entries (type 1 or 3): ${validEntries}`);
 //             console.log(`      Total PTEs found: ${ptes.length}`);
@@ -2362,14 +2349,12 @@ export class PagedKernelDiscovery {
             const entryType = Number(pudEntry & 3n);
             if (entryType === 1) {
                 // 1GB huge page - use BigInt for proper 64-bit arithmetic
-                // Calculate VA based on PGD index
-                const vaBase = pgdIdx < 256
-                    ? BigInt(pgdIdx) << 39n
-                    : 0xffff000000000000n + (BigInt(pgdIdx - 256) << 39n);
-                const va = vaBase | (BigInt(pudIdx) << 30n);
+                const va = (BigInt(pgdIdx) << 39n) | (BigInt(pudIdx) << 30n);
 
-                // Don't skip any VAs - we want all kernel mappings
-                // Both linear map (PGD[0]) and kernel space (PGD[256+]) are important
+                // Skip kernel VAs (those with bits 63-48 all set)
+                if ((va >> 48n) === 0xFFFFn) {
+                    continue;
+                }
 
                 const pudFlags = Number(pudEntry & 0xFFFn);
                 // Extract PA from bits [47:30] for 1GB pages - mask off upper flag bits
@@ -2412,14 +2397,12 @@ export class PagedKernelDiscovery {
             const entryType = Number(pmdEntry & 3n);
             if (entryType === 1) {
                 // 2MB huge page - use BigInt for proper 64-bit arithmetic
-                // Calculate VA based on PGD index
-                const vaBase = pgdIdx < 256
-                    ? BigInt(pgdIdx) << 39n
-                    : 0xffff000000000000n + (BigInt(pgdIdx - 256) << 39n);
-                const va = vaBase | (BigInt(pudIdx) << 30n) | (BigInt(pmdIdx) << 21n);
+                const va = (BigInt(pgdIdx) << 39n) | (BigInt(pudIdx) << 30n) | (BigInt(pmdIdx) << 21n);
 
-                // Don't skip any VAs - we want all kernel mappings
-                // Both linear map (PGD[0]) and kernel space (PGD[256+]) are important
+                // Skip kernel VAs (those with bits 63-48 all set)
+                if ((va >> 48n) === 0xFFFFn) {
+                    continue;
+                }
 
                 const pmdFlags = Number(pmdEntry & 0xFFFn);
                 // Extract PA from bits [47:21] for 2MB pages - mask off upper flag bits
@@ -2460,11 +2443,7 @@ export class PagedKernelDiscovery {
             }
 
             // Regular 4KB page - use BigInt for proper 64-bit arithmetic
-            // Calculate VA based on PGD index
-            const vaBase = pgdIdx < 256
-                ? BigInt(pgdIdx) << 39n
-                : 0xffff000000000000n + (BigInt(pgdIdx - 256) << 39n);
-            const va = vaBase | (BigInt(pudIdx) << 30n) | (BigInt(pmdIdx) << 21n) | (BigInt(pteIdx) << 12n);
+            const va = (BigInt(pgdIdx) << 39n) | (BigInt(pudIdx) << 30n) | (BigInt(pmdIdx) << 21n) | (BigInt(pteIdx) << 12n);
 
             // Debug suspicious VAs
             if (va > 0x0000FFFFFFFFFFFFn && va < 0xFFFF000000000000n) {
@@ -2473,8 +2452,11 @@ export class PagedKernelDiscovery {
 //                 console.log(`  Components: pgd<<39=0x${(BigInt(pgdIdx) << 39n).toString(16)}, pud<<30=0x${(BigInt(pudIdx) << 30n).toString(16)}, pmd<<21=0x${(BigInt(pmdIdx) << 21n).toString(16)}, pte<<12=0x${(pteIdx << 12).toString(16)}`);
             }
 
-            // Don't skip any addresses - we want all kernel mappings
-            // PGD[0] linear map and PGD[256+] kernel space are both important
+            // With modern ARM64 + ASLR, user processes can use high addresses
+            // Only skip actual kernel space addresses (0xFFFF...)
+            if ((va >> 48n) === 0xFFFFn) {
+                continue;  // This is a kernel VA (bits 63-48 all set)
+            }
 
             const pteFlags = Number(pteEntry & 0xFFFn);
             // Extract PA from bits [47:12] - mask off upper flag bits
