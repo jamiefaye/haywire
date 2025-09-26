@@ -353,6 +353,12 @@
       @close="closeTooltip"
     />
 
+    <!-- Statistics Gathering Indicator -->
+    <div v-if="isGatheringStats" class="stats-loading-indicator">
+      <div class="spinner"></div>
+      <span>Gathering statistics...</span>
+    </div>
+
     <!-- Status Bar -->
     <div class="status-bar">
       <span v-if="hoveredOffset !== null">
@@ -830,9 +836,15 @@ const tooltipPageInfo = ref<PageInfo | null>(null)
 const tooltipPosition = ref({ x: 0, y: 0 })
 const tooltipTimer = ref<number | null>(null)
 const tooltipCloseTimer = ref<number | null>(null)
+const isGatheringStats = ref(false)
 
 // Combined error state
 const error = computed(() => fileError.value)
+
+// Cached stats to avoid repeated computation
+const cachedStats = ref<any>(null)
+const statsCacheTime = ref<number>(0)
+const STATS_CACHE_TTL = 5000 // Cache stats for 5 seconds
 
 // Page coverage metric - percentage of memory pages we have info for
 const pageCoverage = computed(() => {
@@ -842,8 +854,25 @@ const pageCoverage = computed(() => {
   const pageSize = 4096
   const totalPagesInFile = Math.floor(fileSize.value / pageSize)
 
-  // Get stats from PageCollection
+  // Check if we have cached stats that are still fresh
+  const now = Date.now()
+  if (cachedStats.value && (now - statsCacheTime.value) < STATS_CACHE_TTL) {
+    const mappedPages = cachedStats.value.totalPages
+    const percentage = (mappedPages / totalPagesInFile) * 100
+    return percentage.toFixed(1)
+  }
+
+  // Get fresh stats from PageCollection (synchronously for now)
+  // Show indicator if it takes time
+  isGatheringStats.value = true
   const stats = pageCollection.value.getStats()
+  cachedStats.value = stats
+  statsCacheTime.value = now
+  // Use nextTick to ensure UI updates before clearing indicator
+  nextTick(() => {
+    isGatheringStats.value = false
+  })
+
   const mappedPages = stats.totalPages
 
   // Calculate percentage
@@ -3340,6 +3369,42 @@ button:disabled {
   display: flex;
   gap: 20px;
   min-height: 28px;
+}
+
+/* Statistics Loading Indicator */
+.stats-loading-indicator {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(30, 30, 30, 0.95);
+  border: 1px solid #007acc;
+  border-radius: 8px;
+  padding: 20px 30px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  z-index: 9999;
+  box-shadow: 0 4px 20px rgba(0, 122, 204, 0.3);
+}
+
+.stats-loading-indicator .spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(0, 122, 204, 0.3);
+  border-top-color: #007acc;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.stats-loading-indicator span {
+  color: #e0e0e0;
+  font-size: 14px;
+  font-family: 'Courier New', monospace;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .status-bar .error {
