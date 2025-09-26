@@ -227,6 +227,27 @@ response = json.loads(sock.recv(4096).decode())
 - Specific optimized versions for common sizes (4KB, 64KB, 1MB)
 - Compiled with Emscripten `-msimd128` flag for SIMD support
 
+## Recent Progress (December 2025)
+
+### Important Discovery: ARM64 + ASLR Memory Layout
+- **OLD ASSUMPTION (WRONG)**: User space uses PGD indices 0-255, kernel uses 256-511
+- **REALITY WITH ASLR**: User processes use PGD indices throughout 0-511!
+  - Example: VLC at 0xc3048ea20000 uses PGD index 390
+  - Most processes start at 0xe... or 0xf... addresses (PGD indices 448-511)
+  - This is due to ASLR placing processes high in the 48-bit address space for security
+
+### Actual Memory Layout
+- **User Space**: 0x0000000000000000 - 0x0000FFFFFFFFFFFF (48-bit addresses)
+  - With ASLR enabled: Processes placed at HIGH addresses
+  - Common ranges: 0xc3..., 0xe7..., 0xf1... (PGD indices 390, 463, 482, etc.)
+- **Kernel Space**: 0xFFFF000000000000 - 0xFFFFFFFFFFFFFFFF (bits 63-48 all set)
+  - Identified by top 16 bits being 0xFFFF
+
+### PGD Index Mapping
+- Each PGD entry covers 512GB (2^39 bytes)
+- PGD index = bits [47:39] of virtual address
+- Example: 0xc3048ea20000 >> 39 = 390 (PGD index)
+
 ## Recent Progress (September 25, 2025)
 
 ### Swapper PGD Discovery
@@ -251,12 +272,57 @@ response = json.loads(sock.recv(4096).decode())
 - CrunchedMemoryReader now supports zero-copy TestPageNonZero
 - Smart region skipping in PA mode to avoid unmapped memory
 
+## Recent Progress (September 26, 2025)
+
+### Major Bug Fixes
+- **Fixed mm_users offset**: Was reading from 0x38, correct offset is 0x74 (verified via pahole)
+- **Fixed translateVA special case bug**: Removed incorrect 0xffff0000 routing through PGD[0]
+- **Fixed maple tree walking**: Now correctly walks even with mm_users=0
+- **VLC memory maps now working**: Shows correct filenames and addresses
+
+### UI/UX Improvements
+- **Kernel discovery caching**: Results cached after first run, instant subsequent lookups
+- **Shift-key tooltips**: Tooltips only appear when Shift is held (reduced spam)
+- **Fixed memory maps display**: Removed 26-space gap, removed meaningless "00:00 0"
+- **Added refresh button**: Manual refresh in kernel discovery modal
+
+### Code Cleanup
+- **Removed 450+ debug statements**: Only 9 essential console.logs remain
+- **Organized test files**: All test scripts moved to test_attempts/
+- **Cleaner memory maps**: Simplified format without device/inode info
+
+## Upcoming: Memory View Mapping System
+
+### Goal
+Create flexible sorting/filtering of memory pages without moving data, using mapping tables for indirection.
+
+### Architecture
+```typescript
+class MemoryMapping {
+  displayToFile: number[]              // Forward: display index → file page index
+  fileToDisplay: Map<number, number[]> // Reverse: file → multiple display positions
+}
+```
+
+### Implementation Plan
+1. **Phase 1**: Linear identity mapping (NOP) - no visual change
+2. **Phase 2**: Test with reverse mapping (highest address at top)
+3. **Phase 3**: Sort by PID + Virtual Address
+4. **Phase 4**: Add crunching to remove gaps
+5. **Phase 5**: Complex views (group by type, security analysis, etc.)
+
+### Key Challenges
+- Many-to-one mappings (shared memory/libraries)
+- One-to-many reverse lookups
+- Non-linear mouse/scroll behavior
+- Rendering discontinuous memory regions efficiently
+
 ## TODO/Future Work
 
 ### Immediate Tasks
-- Complete migration from C++ to web-based implementation
-- Remove obsolete beacon-based code and documentation
-- Enhance web UI with discovered kernel information visualization
+- Implement memory mapping system for flexible page sorting/filtering
+- Update all rendering code to use mapping indirection
+- Add UI controls for different view modes (by PID, by type, crunched, etc.)
 
 ### Medium-term Goals
 - Support different kernel versions with offset configuration files
