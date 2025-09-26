@@ -60,7 +60,7 @@ export class PagedKernelDiscovery {
     private dumpPudTable(pudTablePA: number, pgdIndex: number): void {
         const pudOffset = pudTablePA - KernelConstants.GUEST_RAM_START;
         if (pudOffset < 0 || pudOffset >= this.totalSize) {
-            console.log(`      PUD table PA 0x${pudTablePA.toString(16)} is outside memory range`);
+//             console.log(`      PUD table PA 0x${pudTablePA.toString(16)} is outside memory range`);
             return;
         }
 
@@ -85,9 +85,9 @@ export class PagedKernelDiscovery {
         }
 
         // Just show summary instead of dumping all 512 entries
-        console.log(`      PUD table at PA 0x${pudTablePA.toString(16)}: ${nonZeroEntries} non-zero entries`);
+//         console.log(`      PUD table at PA 0x${pudTablePA.toString(16)}: ${nonZeroEntries} non-zero entries`);
         if (nonZeroIndices.length > 0) {
-            console.log(`        Non-zero at indices: ${nonZeroIndices.join(', ')}${nonZeroEntries > 10 ? '...' : ''}`);
+//             console.log(`        Non-zero at indices: ${nonZeroIndices.join(', ')}${nonZeroEntries > 10 ? '...' : ''}`);
         }
     }
 
@@ -155,7 +155,7 @@ export class PagedKernelDiscovery {
         // Debug: Look for Firefox and other interesting processes
         if (pid === 6969 || name.toLowerCase().includes('firefox') ||
             name.toLowerCase().includes('vlc') || name.toLowerCase().includes('chrome')) {
-            console.log(`*** FOUND ${name}! PID=${pid} at offset 0x${offset.toString(16)}`);
+//             console.log(`*** FOUND ${name}! PID=${pid} at offset 0x${offset.toString(16)}`);
         }
 
         // Get mm_struct pointer
@@ -171,25 +171,25 @@ export class PagedKernelDiscovery {
             // Look for interesting processes
             const isInteresting = name && (name.includes('systemd') || name.includes('ssh') || name.includes('bash'));
             if ((debugCount < 10 || isInteresting) && pid > 0 && pid < 100000 && name && name.length > 0) {
-                console.log(`\n  [DEBUG] PID ${pid} (${name}):`);
-                console.log(`    task_struct offset: 0x${offset.toString(16)}`);
-                console.log(`    mm field offset: 0x${(offset + KernelConstants.MM_OFFSET).toString(16)} (task + 0x${KernelConstants.MM_OFFSET.toString(16)})`);
-                console.log(`    Raw mm value: 0x${mmRaw.toString(16)}`);
+//                 console.log(`\n  [DEBUG] PID ${pid} (${name}):`);
+//                 console.log(`    task_struct offset: 0x${offset.toString(16)}`);
+//                 console.log(`    mm field offset: 0x${(offset + KernelConstants.MM_OFFSET).toString(16)} (task + 0x${KernelConstants.MM_OFFSET.toString(16)})`);
+//                 console.log(`    Raw mm value: 0x${mmRaw.toString(16)}`);
 
                 // Read some context around the mm field
                 const contextStart = offset + KernelConstants.MM_OFFSET - 16;
                 const contextBytes = this.memory.readBytes(contextStart, 48);
                 if (contextBytes) {
-                    console.log(`    Context around mm field:`);
+//                     console.log(`    Context around mm field:`);
                     for (let i = 0; i < 48; i += 8) {
                         const val = new DataView(contextBytes.buffer, contextBytes.byteOffset + i, 8).getBigUint64(0, true);
                         const marker = (i === 16) ? ' <- mm field' : '';
-                        console.log(`      [${(contextStart + i).toString(16)}]: 0x${val.toString(16).padStart(16, '0')}${marker}`);
+//                         console.log(`      [${(contextStart + i).toString(16)}]: 0x${val.toString(16).padStart(16, '0')}${marker}`);
                     }
                 }
 
                 if (mmRaw !== mmStripped) {
-                    console.log(`    Stripped: 0x${mmStripped.toString(16)} (PAC removed)`);
+//                     console.log(`    Stripped: 0x${mmStripped.toString(16)} (PAC removed)`);
                 }
             }
         }
@@ -221,9 +221,9 @@ export class PagedKernelDiscovery {
 
         // Log successful process discovery
         if (pid === 1545 || (name && name.includes('dbus'))) {
-            console.log(`Found process: PID ${pid}, name="${name || 'NULL'}", mm=0x${mmStripped.toString(16)}, kernel=${isKernel}`);
+//             console.log(`Found process: PID ${pid}, name="${name || 'NULL'}", mm=0x${mmStripped.toString(16)}, kernel=${isKernel}`);
             if (pid === 1545 && name !== 'dbus-daemon') {
-                console.log(`  WARNING: PID 1545 found but name is "${name}" not "dbus-daemon"`);
+//                 console.log(`  WARNING: PID 1545 found but name is "${name}" not "dbus-daemon"`);
             }
         }
 
@@ -338,14 +338,14 @@ export class PagedKernelDiscovery {
      * Search specifically for a PID value in memory
      */
     private searchForSpecificPID(targetPID: number, totalSize: number): void {
-        console.log(`\nSearching for PID ${targetPID} in memory...`);
+//         console.log(`\nSearching for PID ${targetPID} in memory...`);
         let foundCount = 0;
         const locations: number[] = [];
 
         // Search entire memory for this PID value
         for (let offset = 0; offset < totalSize - 4; offset += 4) {
             if (offset % (500 * 1024 * 1024) === 0 && offset > 0) {
-                console.log(`  Scanned ${offset / (1024 * 1024)}MB...`);
+//                 console.log(`  Scanned ${offset / (1024 * 1024)}MB...`);
             }
 
             const value = this.memory.readU32(offset);
@@ -360,19 +360,19 @@ export class PagedKernelDiscovery {
                     const mmRaw = this.memory.readU64(possibleTaskOffset + KernelConstants.MM_OFFSET) || 0n;
                     const tgid = this.memory.readU32(possibleTaskOffset + KernelConstants.PID_OFFSET + 4);
 
-                    console.log(`\n  Found PID ${targetPID} at offset 0x${offset.toString(16)}`);
-                    console.log(`    Possible task_struct at 0x${possibleTaskOffset.toString(16)}`);
-                    console.log(`    Physical address: 0x${(KernelConstants.GUEST_RAM_START + possibleTaskOffset).toString(16)}`);
-                    console.log(`    Comm field: "${name || 'null'}" (length: ${name?.length || 0})`);
-                    console.log(`    TGID field: ${tgid}`);
-                    console.log(`    MM field: 0x${mmRaw.toString(16)}`);
+//                     console.log(`\n  Found PID ${targetPID} at offset 0x${offset.toString(16)}`);
+//                     console.log(`    Possible task_struct at 0x${possibleTaskOffset.toString(16)}`);
+//                     console.log(`    Physical address: 0x${(KernelConstants.GUEST_RAM_START + possibleTaskOffset).toString(16)}`);
+//                     console.log(`    Comm field: "${name || 'null'}" (length: ${name?.length || 0})`);
+//                     console.log(`    TGID field: ${tgid}`);
+//                     console.log(`    MM field: 0x${mmRaw.toString(16)}`);
 
                     // If this looks like a valid task_struct, add it to our process list
                     if (name && this.isPrintableString(name) && tgid && tgid > 0 && tgid < 100000) {
-                        console.log(`    ✓ This looks like a valid task_struct!`);
+//                         console.log(`    ✓ This looks like a valid task_struct!`);
                         const process = this.checkTaskStruct(possibleTaskOffset);
                         if (process && !this.processes.has(process.pid)) {
-                            console.log(`    ✓✓ Added to process list!`);
+//                             console.log(`    ✓✓ Added to process list!`);
                             this.processes.set(process.pid, process);
                         }
                     }
@@ -384,9 +384,9 @@ export class PagedKernelDiscovery {
             }
         }
 
-        console.log(`\nFound ${foundCount} occurrences of PID ${targetPID}`);
+//         console.log(`\nFound ${foundCount} occurrences of PID ${targetPID}`);
         if (locations.length > 0) {
-            console.log('Locations:', locations.map(l => '0x' + l.toString(16)).join(', '));
+//             console.log('Locations:', locations.map(l => '0x' + l.toString(16)).join(', '));
         }
     }
 
@@ -460,16 +460,16 @@ export class PagedKernelDiscovery {
                         const mmRaw = this.memory.readU64(possibleTaskOffset + KernelConstants.MM_OFFSET) || 0n;
                         const tgid = this.memory.readU32(possibleTaskOffset + KernelConstants.PID_OFFSET + 4);
 
-                        console.log(`\n  Found PID ${targetPID} at offset 0x${offset.toString(16)}`);
-                        console.log(`    Possible task_struct at 0x${possibleTaskOffset.toString(16)}`);
-                        console.log(`    Physical address: 0x${(KernelConstants.GUEST_RAM_START + possibleTaskOffset).toString(16)}`);
-                        console.log(`    Comm field: "${name || 'null'}" (length: ${name?.length || 0})`);
-                        console.log(`    TGID field: ${tgid}`);
-                        console.log(`    MM field: 0x${mmRaw.toString(16)}`);
+//                         console.log(`\n  Found PID ${targetPID} at offset 0x${offset.toString(16)}`);
+//                         console.log(`    Possible task_struct at 0x${possibleTaskOffset.toString(16)}`);
+//                         console.log(`    Physical address: 0x${(KernelConstants.GUEST_RAM_START + possibleTaskOffset).toString(16)}`);
+//                         console.log(`    Comm field: "${name || 'null'}" (length: ${name?.length || 0})`);
+//                         console.log(`    TGID field: ${tgid}`);
+//                         console.log(`    MM field: 0x${mmRaw.toString(16)}`);
 
                         // If this looks like a valid task_struct, add it to our process list
                         if (name && this.isPrintableString(name) && tgid && tgid > 0 && tgid < 100000) {
-                            console.log(`    ✓ VALID TASK_STRUCT FOR PID ${targetPID}!`);
+//                             console.log(`    ✓ VALID TASK_STRUCT FOR PID ${targetPID}!`);
                             const process = this.checkTaskStruct(possibleTaskOffset);
                             if (process) {
                                 this.processes.set(process.pid, process);
@@ -482,9 +482,9 @@ export class PagedKernelDiscovery {
         }
 
         if (foundCount === 0) {
-            console.log(`  ⚠️  PID ${targetPID} not found in memory`);
+//             console.log(`  ⚠️  PID ${targetPID} not found in memory`);
         } else {
-            console.log(`  ✓ Found ${foundCount} instances of PID ${targetPID}`);
+//             console.log(`  ✓ Found ${foundCount} instances of PID ${targetPID}`);
         }
     }
 
@@ -492,13 +492,13 @@ export class PagedKernelDiscovery {
      * Find all processes by scanning for task_structs
      */
     private findProcesses(totalSize: number): void {
-        console.log('Finding processes...');
+//         console.log('Finding processes...');
         const knownFound: string[] = [];
 
 
         for (let pageStart = 0; pageStart < totalSize; pageStart += KernelConstants.PAGE_SIZE) {
             if (pageStart % (500 * 1024 * 1024) === 0) {  // Report every 500MB instead of 100MB
-                console.log(`  Scanning ${pageStart / (1024 * 1024)}MB... (${this.processes.size} processes)`);
+//                 console.log(`  Scanning ${pageStart / (1024 * 1024)}MB... (${this.processes.size} processes)`);
             }
 
             // Try both SLAB offsets (for 32KB aligned regions) and page-straddle offsets
@@ -530,25 +530,25 @@ export class PagedKernelDiscovery {
             .filter(p => p.isKernelThread).length;
         this.stats.userProcesses = this.stats.totalProcesses - this.stats.kernelThreads;
 
-        console.log(`Found ${this.processes.size} processes (${this.stats.kernelThreads} kernel, ${this.stats.userProcesses} user)`);
+//         console.log(`Found ${this.processes.size} processes (${this.stats.kernelThreads} kernel, ${this.stats.userProcesses} user)`);
 
         // Debug: Show what mm_struct values we have
-        console.log('\nDEBUG: Sample mm_struct values:');
+//         console.log('\nDEBUG: Sample mm_struct values:');
         let debugCount = 0;
         for (const process of this.processes.values()) {
             if (debugCount >= 5) break;
-            console.log(`  PID ${process.pid} (${process.name}): mm_struct=0x${process.mmStruct.toString(16)} (kernel=${process.isKernelThread})`);
+//             console.log(`  PID ${process.pid} (${process.name}): mm_struct=0x${process.mmStruct.toString(16)} (kernel=${process.isKernelThread})`);
             debugCount++;
         }
         const withMm = Array.from(this.processes.values()).filter(p => p.mmStruct && p.mmStruct > 0xffff000000000000n);
-        console.log(`  Processes with kernel mm_struct: ${withMm.length}/${this.processes.size}`);
+//         console.log(`  Processes with kernel mm_struct: ${withMm.length}/${this.processes.size}`);
     }
 
     /**
      * Find all swapper_pg_dir candidates
      */
     private findSwapperPgDirCandidates(): Array<{addr: number, score: number, kernelEntries: number, userEntries: number}> {
-        console.log('Finding swapper_pg_dir candidates...');
+//         console.log('Finding swapper_pg_dir candidates...');
         const candidates: Array<{addr: number, score: number, kernelEntries: number, userEntries: number}> = [];
 
         // Common locations for swapper_pg_dir (relative to GUEST_RAM_START)
@@ -570,7 +570,7 @@ export class PagedKernelDiscovery {
                 candidates.push(candidate);
                 // Only log if it's a good candidate
                 if (candidate.score > 40) {
-                    console.log(`  Known location candidate at 0x${candidate.addr.toString(16)}: score=${candidate.score}`);
+//                     console.log(`  Known location candidate at 0x${candidate.addr.toString(16)}: score=${candidate.score}`);
                 }
             }
         }
@@ -594,7 +594,7 @@ export class PagedKernelDiscovery {
                     candidates.push(candidate);
                     // Only log very high-scoring candidates during scan
                     if (candidate.score > 70) {
-                        console.log(`  High-score candidate at 0x${candidate.addr.toString(16)}: score=${candidate.score}`);
+//                         console.log(`  High-score candidate at 0x${candidate.addr.toString(16)}: score=${candidate.score}`);
                     }
                 }
             }
@@ -615,16 +615,16 @@ export class PagedKernelDiscovery {
         const isRealPGD = offset === 0xf6dbf000;
         const isExtractedPGD = offset === 0x228d000 || offset === 0x2c40000; // 0x4228d000 - GUEST_RAM_START
         if (isRealPGD) {
-            console.log('  DEBUG: Evaluating REAL PGD at offset 0xf6dbf000');
+//             console.log('  DEBUG: Evaluating REAL PGD at offset 0xf6dbf000');
         }
         if (isExtractedPGD) {
-            console.log(`  DEBUG: Evaluating extracted PGD at offset 0x${offset.toString(16)} (PA: 0x${(offset + KernelConstants.GUEST_RAM_START).toString(16)})`);
+//             console.log(`  DEBUG: Evaluating extracted PGD at offset 0x${offset.toString(16)} (PA: 0x${(offset + KernelConstants.GUEST_RAM_START).toString(16)})`);
         }
 
         // Read the page
         const pageBuffer = this.memory.readBytes(offset, KernelConstants.PAGE_SIZE);
         if (!pageBuffer) {
-            if (isRealPGD) console.log('    Failed: Could not read page buffer');
+//             if (isRealPGD) console.log('    Failed: Could not read page buffer');
             return null;
         }
 
@@ -643,7 +643,7 @@ export class PagedKernelDiscovery {
             // Check if this is a valid table descriptor (bits [1:0] = 0b11)
             if (lowBits !== 0x3) {
                 if ((isRealPGD || isExtractedPGD) && (i === 0 || i === 256)) {
-                    console.log(`    PGD[${i}]: entry=0x${entryBig.toString(16)}, bits[1:0]=${lowBits.toString(2)} (need 0b11)`);
+//                     console.log(`    PGD[${i}]: entry=0x${entryBig.toString(16)}, bits[1:0]=${lowBits.toString(2)} (need 0b11)`);
                 }
                 continue;
             }
@@ -662,8 +662,8 @@ export class PagedKernelDiscovery {
             // But still reject clearly invalid addresses
             if (pudAddr < 0x1000 || pudAddr > 0x200000000) { // Reject if below 4KB or above 8GB
                 if ((isRealPGD || isExtractedPGD) && (i === 0 || i === 256)) {
-                    console.log(`    PGD[${i}]: entry=0x${entryBig.toString(16)}, pudAddr=0x${pudAddrBig.toString(16)}`);
-                    console.log(`    Rejecting: pudAddr clearly invalid (< 4KB or > 8GB)`);
+//                     console.log(`    PGD[${i}]: entry=0x${entryBig.toString(16)}, pudAddr=0x${pudAddrBig.toString(16)}`);
+//                     console.log(`    Rejecting: pudAddr clearly invalid (< 4KB or > 8GB)`);
                 }
                 continue;
             }
@@ -708,7 +708,7 @@ export class PagedKernelDiscovery {
         // Need at least one valid chain to be a potential PGD
         if (validChains < 1) {
             if (isRealPGD || isExtractedPGD) {
-                console.log(`    Failed: validChains=${validChains} (need >=1), kernel=${kernelEntries}, user=${userEntries}`);
+//                 console.log(`    Failed: validChains=${validChains} (need >=1), kernel=${kernelEntries}, user=${userEntries}`);
             }
             return null;
         }
@@ -733,7 +733,7 @@ export class PagedKernelDiscovery {
         if (totalUserEntries <= 5) score += (5 - totalUserEntries) * 5;
 
         if (isExtractedPGD) {
-            console.log(`    Success: validChains=${validChains}, totalKernelEntries=${totalKernelEntries}, totalUserEntries=${totalUserEntries}, score=${score}`);
+//             console.log(`    Success: validChains=${validChains}, totalKernelEntries=${totalKernelEntries}, totalUserEntries=${totalUserEntries}, score=${score}`);
         }
 
         return {
@@ -749,11 +749,11 @@ export class PagedKernelDiscovery {
      * Returns the physical address of the best candidate or 0 if not found
      */
     private findSwapperPgdByAdaptiveSignature(): number {
-        console.log('Searching for swapper_pg_dir by adaptive signature...');
+//         console.log('Searching for swapper_pg_dir by adaptive signature...');
 
         // Detect estimated RAM size from file
         const estimatedRamSize = Math.ceil((this.totalSize) / (1024*1024*1024));
-        console.log(`  Estimated VM RAM size: ~${estimatedRamSize}GB`);
+//         console.log(`  Estimated VM RAM size: ~${estimatedRamSize}GB`);
 
         // Scan focused regions where swapper_pg_dir is typically found
         // Limit to smaller ranges to avoid memory issues
@@ -782,7 +782,7 @@ export class PagedKernelDiscovery {
             const end = Math.min(this.totalSize, regionEnd - KernelConstants.GUEST_RAM_START);
             if (start >= end) continue;
 
-            console.log(`  Scanning region 0x${regionStart.toString(16)}-0x${regionEnd.toString(16)}...`);
+//             console.log(`  Scanning region 0x${regionStart.toString(16)}-0x${regionEnd.toString(16)}...`);
 
             // Process in smaller chunks to avoid memory issues
             const chunkSize = 16 * 1024 * 1024; // 16MB chunks
@@ -813,38 +813,38 @@ export class PagedKernelDiscovery {
                         const candidate = this.analyzeSwapperCandidate(offset, physAddr);
                         if (candidate && candidate.score >= 3) {
                             candidates.push(candidate);
-                            console.log(`    Found candidate at PA 0x${physAddr.toString(16)} (score: ${candidate.score})`);
+//                             console.log(`    Found candidate at PA 0x${physAddr.toString(16)} (score: ${candidate.score})`);
                         }
                     }
                 }
             }
 
             if (candidates.length >= maxCandidates) {
-                console.log(`  Stopping early - found ${maxCandidates} candidates`);
+//                 console.log(`  Stopping early - found ${maxCandidates} candidates`);
                 break;
             }
         }
 
-        console.log(`  Scanned ${pagesScanned} pages`);
+//         console.log(`  Scanned ${pagesScanned} pages`);
 
         // Sort by score
         candidates.sort((a, b) => b.score - a.score);
 
-        console.log(`  Found ${candidates.length} high-scoring candidates`);
+//         console.log(`  Found ${candidates.length} high-scoring candidates`);
 
         if (candidates.length > 0) {
             // Show top candidates
             const top = candidates.slice(0, 5);
             for (const c of top) {
-                console.log(`    PA: 0x${c.physAddr.toString(16)}, Score: ${c.score}, RAM: ${c.memSizeEstimate}GB, User: ${c.userEntries}, Kernel: ${c.kernelEntries.length}`);
+//                 console.log(`    PA: 0x${c.physAddr.toString(16)}, Score: ${c.score}, RAM: ${c.memSizeEstimate}GB, User: ${c.userEntries}, Kernel: ${c.kernelEntries.length}`);
             }
 
             const best = candidates[0];
-            console.log(`  ✓ Best candidate at PA 0x${best.physAddr.toString(16)} (score: ${best.score}/7, est. RAM: ${best.memSizeEstimate}GB)`);
+//             console.log(`  ✓ Best candidate at PA 0x${best.physAddr.toString(16)} (score: ${best.score}/7, est. RAM: ${best.memSizeEstimate}GB)`);
             return best.physAddr;
         }
 
-        console.log('  swapper_pg_dir not found by signature scan');
+//         console.log('  swapper_pg_dir not found by signature scan');
         return 0;
     }
 
@@ -973,21 +973,21 @@ export class PagedKernelDiscovery {
         const candidates = this.findSwapperPgDirCandidates();
 
         if (candidates.length === 0) {
-            console.log('No swapper_pg_dir candidates found');
+//             console.log('No swapper_pg_dir candidates found');
             return 0;
         }
 
         // Sort by score
         candidates.sort((a, b) => b.score - a.score);
 
-        console.log(`Found ${candidates.length} swapper_pg_dir candidates`);
+//         console.log(`Found ${candidates.length} swapper_pg_dir candidates`);
 
         // Debug: Show what processes we're working with
         let processCount = 0;
-        console.log('Sample processes with kernel mm_structs:');
+//         console.log('Sample processes with kernel mm_structs:');
         for (const process of this.processes.values()) {
             if (process.mmStruct && process.mmStruct > 0xffff000000000000) {
-                console.log(`  ${process.name}: mm_struct=0x${process.mmStruct.toString(16)}`);
+//                 console.log(`  ${process.name}: mm_struct=0x${process.mmStruct.toString(16)}`);
                 processCount++;
                 if (processCount >= 5) break;
             }
@@ -995,35 +995,35 @@ export class PagedKernelDiscovery {
 
         // First, specifically test our known good candidate
         const knownGood = 0x463d4000;
-        console.log(`Testing known candidate: 0x${knownGood.toString(16)}`);
+//         console.log(`Testing known candidate: 0x${knownGood.toString(16)}`);
         if (this.validateSwapperPgDir(knownGood)) {
-            console.log(`  ✓ VALIDATED - Known candidate works!`);
+//             console.log(`  ✓ VALIDATED - Known candidate works!`);
             return knownGood;
         } else {
-            console.log(`  ✗ Known candidate failed validation`);
+//             console.log(`  ✗ Known candidate failed validation`);
         }
 
         // Test top candidates with actual VA translation
         let validatedCandidate: number = 0;
         for (let i = 0; i < Math.min(10, candidates.length); i++) {
             const c = candidates[i];
-            console.log(`Testing candidate #${i+1}: 0x${c.addr.toString(16)} (score: ${c.score})`);
+//             console.log(`Testing candidate #${i+1}: 0x${c.addr.toString(16)} (score: ${c.score})`);
 
             if (this.validateSwapperPgDir(c.addr)) {
-                console.log(`  ✓ VALIDATED - This appears to be the correct swapper_pg_dir!`);
+//                 console.log(`  ✓ VALIDATED - This appears to be the correct swapper_pg_dir!`);
                 validatedCandidate = c.addr;
                 break;
             } else {
-                console.log(`  ✗ Failed validation`);
+//                 console.log(`  ✗ Failed validation`);
             }
         }
 
         if (!validatedCandidate) {
-            console.log('Warning: No candidates passed validation, using highest score');
+//             console.log('Warning: No candidates passed validation, using highest score');
             validatedCandidate = candidates[0].addr;
         }
 
-        console.log(`Selected swapper_pg_dir: 0x${validatedCandidate.toString(16)}`);
+//         console.log(`Selected swapper_pg_dir: 0x${validatedCandidate.toString(16)}`);
         return validatedCandidate;
     }
 
@@ -1031,7 +1031,7 @@ export class PagedKernelDiscovery {
      * Find page tables directly by scanning memory
      */
     private findPageTables(totalSize: number): void {
-        console.log('Finding page tables...');
+//         console.log('Finding page tables...');
         let pteTableCount = 0;
 
         // Scan the entire memory space, with progress updates every 500MB
@@ -1040,7 +1040,7 @@ export class PagedKernelDiscovery {
         for (let chunkStart = 0; chunkStart < totalSize; chunkStart += chunkSize) {
             const chunkEnd = Math.min(chunkStart + chunkSize, totalSize);
 
-            console.log(`  Scanning ${(chunkStart / (1024*1024)).toFixed(0)}-${(chunkEnd / (1024*1024)).toFixed(0)}MB...`);
+//             console.log(`  Scanning ${(chunkStart / (1024*1024)).toFixed(0)}-${(chunkEnd / (1024*1024)).toFixed(0)}MB...`);
             let pageCount = 0;
 
             for (let offset = chunkStart; offset < chunkEnd - KernelConstants.PAGE_SIZE; offset += KernelConstants.PAGE_SIZE) {
@@ -1063,11 +1063,11 @@ export class PagedKernelDiscovery {
 
             // Log progress every 500 PTEs found
             if (pteTableCount > 0 && pteTableCount % 500 === 0) {
-                console.log(`    Found ${pteTableCount} page tables so far`);
+//                 console.log(`    Found ${pteTableCount} page tables so far`);
             }
         }
 
-        console.log(`Found ${pteTableCount} page tables total`);
+//         console.log(`Found ${pteTableCount} page tables total`);
         this.stats.kernelPTEs = pteTableCount;
     }
 
@@ -1085,7 +1085,7 @@ export class PagedKernelDiscovery {
         // Check if it's a kernel VA in the expected range
         if ((virtualAddr >> 32n) !== 0xffff0000n) {
             if (this.simpleTranslationFailures < this.maxSimpleTranslationFailureLogs) {
-                console.log(`  [SimpleTranslate] Failed: VA 0x${virtualAddr.toString(16)} not in 0xffff0000xxxxxxxx range`);
+//                 console.log(`  [SimpleTranslate] Failed: VA 0x${virtualAddr.toString(16)} not in 0xffff0000xxxxxxxx range`);
                 this.simpleTranslationFailures++;
             }
             return null; // Not in the simple translation range
@@ -1098,7 +1098,7 @@ export class PagedKernelDiscovery {
         // PagedMemory stores totalSize as a private field, we need to use the totalSize passed to constructor
         if (physAddr >= BigInt(this.totalSize)) {
             if (this.simpleTranslationFailures < this.maxSimpleTranslationFailureLogs) {
-                console.log(`  [SimpleTranslate] Failed: PA 0x${physAddr.toString(16)} exceeds file size (${(this.totalSize / (1024*1024*1024)).toFixed(2)} GB)`);
+//                 console.log(`  [SimpleTranslate] Failed: PA 0x${physAddr.toString(16)} exceeds file size (${(this.totalSize / (1024*1024*1024)).toFixed(2)} GB)`);
                 this.simpleTranslationFailures++;
             }
             return null;
@@ -1106,7 +1106,7 @@ export class PagedKernelDiscovery {
 
         this.simpleTranslationSuccesses++;
         if (this.simpleTranslationSuccesses <= 5) {
-            console.log(`  [SimpleTranslate] Success #${this.simpleTranslationSuccesses}: VA 0x${virtualAddr.toString(16)} -> PA 0x${physAddr.toString(16)}`);
+//             console.log(`  [SimpleTranslate] Success #${this.simpleTranslationSuccesses}: VA 0x${virtualAddr.toString(16)} -> PA 0x${physAddr.toString(16)}`);
         }
 
         return Number(physAddr);
@@ -1122,7 +1122,7 @@ export class PagedKernelDiscovery {
 
         // Debug for specific VA
         if (virtualAddr === 0xffff0000c557d000n) {
-            console.log(`      [translateVA] Input VA: 0x${virtualAddr.toString(16)}`);
+//             console.log(`      [translateVA] Input VA: 0x${virtualAddr.toString(16)}`);
         }
 
         // ARM64 uses SEPARATE page tables:
@@ -1148,7 +1148,7 @@ export class PagedKernelDiscovery {
         const pgdEntry = this.memory.readU64(pgdOffset);
 
         if (virtualAddr === 0xffff0000c557d000n) {
-            console.log(`      [translateVA] PGD index: ${pgdIndex}, entry: ${pgdEntry ? '0x' + pgdEntry.toString(16) : 'null'}`);
+//             console.log(`      [translateVA] PGD index: ${pgdIndex}, entry: ${pgdEntry ? '0x' + pgdEntry.toString(16) : 'null'}`);
         }
 
         if (!pgdEntry) return null;
@@ -1205,8 +1205,8 @@ export class PagedKernelDiscovery {
 
         // Debug for specific VA
         if (virtualAddr === 0xffff0000c557d000n) {
-            console.log(`      [translateVA] PTE entry: ${pteEntry ? '0x' + pteEntry.toString(16) : 'null'}`);
-            console.log(`      [translateVA] PTE type: ${pteEntry ? Number(pteEntry & 3n) : 'N/A'}`);
+//             console.log(`      [translateVA] PTE entry: ${pteEntry ? '0x' + pteEntry.toString(16) : 'null'}`);
+//             console.log(`      [translateVA] PTE type: ${pteEntry ? Number(pteEntry & 3n) : 'N/A'}`);
         }
 
         if (!pteEntry || (Number(pteEntry & 3n)) !== 3) {
@@ -1234,12 +1234,12 @@ export class PagedKernelDiscovery {
                 const mmPa = this.translateVA(BigInt(process.mmStruct), pgdAddr);
 
                 if (debugFirst) {
-                    console.log(`    Testing ${process.name}:`);
-                    console.log(`      mm_struct VA: 0x${process.mmStruct.toString(16)}`);
+//                     console.log(`    Testing ${process.name}:`);
+//                     console.log(`      mm_struct VA: 0x${process.mmStruct.toString(16)}`);
                     if (mmPa) {
-                        console.log(`      → mm_struct PA: 0x${mmPa.toString(16)}`);
+//                         console.log(`      → mm_struct PA: 0x${mmPa.toString(16)}`);
                     } else {
-                        console.log(`      → Translation failed`);
+//                         console.log(`      → Translation failed`);
                         this.debugTranslateVA(BigInt(process.mmStruct), pgdAddr);
                         debugFirst = false;
                         failCount++;
@@ -1262,13 +1262,13 @@ export class PagedKernelDiscovery {
 
                 const processPgd = Number(processPgdPtr);
                 if (debugFirst) {
-                    console.log(`      Process PGD from mm_struct: 0x${processPgd.toString(16)}`);
+//                     console.log(`      Process PGD from mm_struct: 0x${processPgd.toString(16)}`);
                 }
 
                 // Step 3: Validate the process PGD looks reasonable
                 if (processPgd < KernelConstants.GUEST_RAM_START || processPgd >= KernelConstants.GUEST_RAM_END) {
                     if (debugFirst) {
-                        console.log(`      → Invalid PGD address`);
+//                         console.log(`      → Invalid PGD address`);
                     }
                     failCount++;
                     continue;
@@ -1278,14 +1278,14 @@ export class PagedKernelDiscovery {
                 const verifyPa = this.translateVA(BigInt(process.mmStruct), processPgd);
                 if (verifyPa === mmPa) {
                     if (debugFirst) {
-                        console.log(`      ✓ Process PGD successfully translates its own mm_struct!`);
+//                         console.log(`      ✓ Process PGD successfully translates its own mm_struct!`);
                     }
                     successCount++;
                     process.pgd = processPgd;
                 } else {
                     if (debugFirst) {
-                        console.log(`      ✗ Process PGD failed to translate correctly`);
-                        console.log(`        Expected PA: 0x${mmPa.toString(16)}, got: ${verifyPa ? '0x' + verifyPa.toString(16) : 'null'}`);
+//                         console.log(`      ✗ Process PGD failed to translate correctly`);
+//                         console.log(`        Expected PA: 0x${mmPa.toString(16)}, got: ${verifyPa ? '0x' + verifyPa.toString(16) : 'null'}`);
                     }
                     failCount++;
                 }
@@ -1298,12 +1298,12 @@ export class PagedKernelDiscovery {
         }
 
         if (successCount + failCount === 0) {
-            console.log(`    No kernel VAs found to test`);
+//             console.log(`    No kernel VAs found to test`);
             return false;
         }
 
         const successRate = successCount / (successCount + failCount);
-        console.log(`    Final: ${successCount}/${successCount + failCount} full chains validated (${(successRate * 100).toFixed(0)}%)`);
+//         console.log(`    Final: ${successCount}/${successCount + failCount} full chains validated (${(successRate * 100).toFixed(0)}%)`);
         return successRate > 0.6;  // Lower threshold since this is harder
     }
 
@@ -1319,63 +1319,63 @@ export class PagedKernelDiscovery {
         const pmdIndex = Number((virtualAddr >> 21n) & 0x1FFn);  // bits 29-21
         const pteIndex = Number((virtualAddr >> 12n) & 0x1FFn);  // bits 20-12
 
-        console.log(`      Indices: PGD[${pgdIndex}] PUD[${pudIndex}] PMD[${pmdIndex}] PTE[${pteIndex}]`);
+//         console.log(`      Indices: PGD[${pgdIndex}] PUD[${pudIndex}] PMD[${pmdIndex}] PTE[${pteIndex}]`);
 
         // Read PGD entry
         const pgdOffset = pgdBase - KernelConstants.GUEST_RAM_START + (pgdIndex * 8);
         const pgdEntry = this.memory.readU64(pgdOffset);
-        console.log(`      PGD entry at 0x${(pgdBase + pgdIndex * 8).toString(16)}: ${pgdEntry ? '0x' + pgdEntry.toString(16) : 'null'}`);
+//         console.log(`      PGD entry at 0x${(pgdBase + pgdIndex * 8).toString(16)}: ${pgdEntry ? '0x' + pgdEntry.toString(16) : 'null'}`);
 
         // Check validity using BigInt to avoid precision loss
         const pgdTypeBits = pgdEntry ? pgdEntry & 3n : 0n;
-        console.log(`      Entry type bits [1:0]: ${pgdTypeBits} (binary: 0b${pgdTypeBits.toString(2)})`);
+//         console.log(`      Entry type bits [1:0]: ${pgdTypeBits} (binary: 0b${pgdTypeBits.toString(2)})`);
         if (!pgdEntry || pgdTypeBits !== 3n) {
-            console.log(`      → PGD entry invalid or not present`);
+//             console.log(`      → PGD entry invalid or not present`);
             return;
         }
-        console.log(`      → PGD entry is valid table descriptor`);
+//         console.log(`      → PGD entry is valid table descriptor`);
 
         const pudBase = Number(pgdEntry & 0x0000FFFFFFFFF000n);  // Extract bits [47:12] with BigInt
         const pudOffset = pudBase - KernelConstants.GUEST_RAM_START + (pudIndex * 8);
         const pudEntry = this.memory.readU64(pudOffset);
-        console.log(`      PUD entry at 0x${(pudBase + pudIndex * 8).toString(16)}: ${pudEntry ? '0x' + pudEntry.toString(16) : 'null'}`);
+//         console.log(`      PUD entry at 0x${(pudBase + pudIndex * 8).toString(16)}: ${pudEntry ? '0x' + pudEntry.toString(16) : 'null'}`);
 
         // Check validity using BigInt to avoid precision loss
         const pudTypeBits = pudEntry ? pudEntry & 3n : 0n;
         if (!pudEntry || pudTypeBits !== 3n) {
-            console.log(`      → PUD entry invalid or not present (type bits: ${pudTypeBits})`);
+//             console.log(`      → PUD entry invalid or not present (type bits: ${pudTypeBits})`);
             return;
         }
-        console.log(`      → PUD entry is valid table descriptor`);
+//         console.log(`      → PUD entry is valid table descriptor`);
 
         // Continue to PMD level
         const pmdBase = Number(pudEntry & 0x0000FFFFFFFFF000n);  // Extract bits [47:12] with BigInt
         const pmdOffset = pmdBase - KernelConstants.GUEST_RAM_START + (pmdIndex * 8);
         const pmdEntry = this.memory.readU64(pmdOffset);
-        console.log(`      PMD entry at 0x${(pmdBase + pmdIndex * 8).toString(16)}: ${pmdEntry ? '0x' + pmdEntry.toString(16) : 'null'}`);
+//         console.log(`      PMD entry at 0x${(pmdBase + pmdIndex * 8).toString(16)}: ${pmdEntry ? '0x' + pmdEntry.toString(16) : 'null'}`);
 
         const pmdTypeBits = pmdEntry ? pmdEntry & 3n : 0n;
         if (!pmdEntry || pmdTypeBits !== 3n) {
-            console.log(`      → PMD entry invalid or not present (type bits: ${pmdTypeBits})`);
+//             console.log(`      → PMD entry invalid or not present (type bits: ${pmdTypeBits})`);
             return;
         }
-        console.log(`      → PMD entry is valid table descriptor`);
+//         console.log(`      → PMD entry is valid table descriptor`);
 
         // Continue to PTE level
         const pteBase = Number(pmdEntry & 0x0000FFFFFFFFF000n);  // Extract bits [47:12] with BigInt
         const pteOffset = pteBase - KernelConstants.GUEST_RAM_START + (pteIndex * 8);
         const pteEntry = this.memory.readU64(pteOffset);
-        console.log(`      PTE entry at 0x${(pteBase + pteIndex * 8).toString(16)}: ${pteEntry ? '0x' + pteEntry.toString(16) : 'null'}`);
+//         console.log(`      PTE entry at 0x${(pteBase + pteIndex * 8).toString(16)}: ${pteEntry ? '0x' + pteEntry.toString(16) : 'null'}`);
 
         const pteTypeBits = pteEntry ? pteEntry & 3n : 0n;
         if (!pteEntry || pteTypeBits !== 3n) {
-            console.log(`      → PTE entry invalid or not present (type bits: ${pteTypeBits})`);
+//             console.log(`      → PTE entry invalid or not present (type bits: ${pteTypeBits})`);
             return;
         }
 
         // Success! Extract final physical address
         const finalPA = Number(pteEntry & 0x0000FFFFFFFFF000n) + Number(virtualAddr & 0xFFFn);
-        console.log(`      ✓ SUCCESSFUL TRANSLATION: VA 0x${virtualAddr.toString(16)} → PA 0x${finalPA.toString(16)}`);
+//         console.log(`      ✓ SUCCESSFUL TRANSLATION: VA 0x${virtualAddr.toString(16)} → PA 0x${finalPA.toString(16)}`);
     }
 
     /**
@@ -1384,7 +1384,7 @@ export class PagedKernelDiscovery {
     private walkMapleTree(nodePtr: bigint, sections: MemorySection[], depth: number): void {
         if (!nodePtr || nodePtr === 0n || depth > 15) {  // Increased depth limit to find deeper VMAs
             if (depth > 15 && sections.length === 0) {
-                console.log(`  WARNING: Hit depth limit ${depth} without finding VMAs`);
+//                 console.log(`  WARNING: Hit depth limit ${depth} without finding VMAs`);
             }
             return; // Prevent infinite recursion
         }
@@ -1436,7 +1436,7 @@ export class PagedKernelDiscovery {
             } else {
                 nodeTypeStr = `unknown type ${mapleType}`;
             }
-            console.log(`${'  '.repeat(depth)}Maple node at depth ${depth}: 0x${nodePtr.toString(16)} (${nodeTypeStr})`);
+//             console.log(`${'  '.repeat(depth)}Maple node at depth ${depth}: 0x${nodePtr.toString(16)} (${nodeTypeStr})`);
         }
 
         // Translate kernel VA to physical address
@@ -1450,7 +1450,7 @@ export class PagedKernelDiscovery {
         } else {
             // Check if the address is safe to convert to Number
             if (cleanNodePtr > 0x1FFFFFFFFFFFFFn) { // Larger than safe integer range
-                console.log(`  Warning: Node pointer 0x${cleanNodePtr.toString(16)} exceeds safe integer range`);
+//                 console.log(`  Warning: Node pointer 0x${cleanNodePtr.toString(16)} exceeds safe integer range`);
                 return;
             }
             actualNodePa = Number(cleanNodePtr);
@@ -1476,7 +1476,7 @@ export class PagedKernelDiscovery {
             slotsOffset = 80;
             metadataOffset = 240;
             if (depth <= 1) {
-                console.log(`${'  '.repeat(depth)}  Internal node (arange_64) - slots contain child node pointers`);
+//                 console.log(`${'  '.repeat(depth)}  Internal node (arange_64) - slots contain child node pointers`);
             }
         } else if (mapleType === MAPLE_RANGE_64) {
             // maple_range_64 - ALWAYS an internal node!
@@ -1484,7 +1484,7 @@ export class PagedKernelDiscovery {
             slotsOffset = 128;
             metadataOffset = 256;
             if (depth <= 1) {
-                console.log(`${'  '.repeat(depth)}  Internal node (range_64) - slots contain child node pointers`);
+//                 console.log(`${'  '.repeat(depth)}  Internal node (range_64) - slots contain child node pointers`);
             }
         } else if (isLeafNode) {
             // Leaf node - contains BOTH pivots (keys) and values (vm_area_struct pointers)
@@ -1509,9 +1509,9 @@ export class PagedKernelDiscovery {
                 metadataOffset = 256;
             }
             if (depth <= 1) {
-                console.log(`${'  '.repeat(depth)}  Leaf node (${mapleType === MAPLE_DENSE ? 'dense' : 'leaf_64'}, type=0x${nodeType.toString(16)})`);
+//                 console.log(`${'  '.repeat(depth)}  Leaf node (${mapleType === MAPLE_DENSE ? 'dense' : 'leaf_64'}, type=0x${nodeType.toString(16)})`);
                 if (mapleType === MAPLE_LEAF_64) {
-                    console.log(`${'  '.repeat(depth)}    Note: First 128 bytes are pivots (keys), next 128 bytes are slots (values)`);
+//                     console.log(`${'  '.repeat(depth)}    Note: First 128 bytes are pivots (keys), next 128 bytes are slots (values)`);
                 }
             }
         } else {
@@ -1520,7 +1520,7 @@ export class PagedKernelDiscovery {
             slotsOffset = 128;
             metadataOffset = 256;
             if (depth <= 1) {
-                console.log(`${'  '.repeat(depth)}  Unknown node type ${mapleType} (0x${nodeType.toString(16)})`);
+//                 console.log(`${'  '.repeat(depth)}  Unknown node type ${mapleType} (0x${nodeType.toString(16)})`);
             }
         }
 
@@ -1529,14 +1529,14 @@ export class PagedKernelDiscovery {
         let actualSlotCount = numSlots;
         if (metadata) {
             if (isLeafNode && depth <= 2) {
-                console.log(`${'  '.repeat(depth)}  Metadata bytes: ${Array.from(metadata).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(' ')}`);
+//                 console.log(`${'  '.repeat(depth)}  Metadata bytes: ${Array.from(metadata).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(' ')}`);
             }
             // For leaf nodes, metadata layout is different
             // The first byte often indicates the number of valid entries
             if (metadata[0] > 0 && metadata[0] < numSlots) {
                 actualSlotCount = metadata[0] + 1; // metadata[0] is often max_index
                 if (depth <= 2) {
-                    console.log(`${'  '.repeat(depth)}  Metadata indicates ${actualSlotCount} valid slots`);
+//                     console.log(`${'  '.repeat(depth)}  Metadata indicates ${actualSlotCount} valid slots`);
                 }
             }
         }
@@ -1544,18 +1544,18 @@ export class PagedKernelDiscovery {
 
         // For leaf_64 nodes, also show the pivots (keys) AND the corresponding slots (values)
         if (isLeafNode && mapleType === MAPLE_LEAF_64 && depth <= 2) {
-            console.log(`${'  '.repeat(depth)}  Reading pivots (keys) and slots (values):`);
+//             console.log(`${'  '.repeat(depth)}  Reading pivots (keys) and slots (values):`);
             for (let i = 0; i < Math.min(4, actualSlotCount); i++) {
                 const pivot = this.memory.readU64(nodeOffset + (i * 8));  // Pivot at offset 0 + i*8
                 const slot = this.memory.readU64(nodeOffset + 128 + (i * 8));  // Slot at offset 128 + i*8
                 if (pivot || slot) {
-                    console.log(`${'  '.repeat(depth)}    [${i}] Pivot: 0x${pivot?.toString(16) || '0'} -> Slot: 0x${slot?.toString(16) || '0'}`);
+//                     console.log(`${'  '.repeat(depth)}    [${i}] Pivot: 0x${pivot?.toString(16) || '0'} -> Slot: 0x${slot?.toString(16) || '0'}`);
                     // Check if this looks like a user VA boundary
                     if (pivot && pivot < 0x800000000000n) {
-                        console.log(`${'  '.repeat(depth)}      Pivot is user VA boundary`);
+//                         console.log(`${'  '.repeat(depth)}      Pivot is user VA boundary`);
                     }
                     if (slot && (slot & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
-                        console.log(`${'  '.repeat(depth)}      Slot looks like kernel VA (potential VMA pointer)`);
+//                         console.log(`${'  '.repeat(depth)}      Slot looks like kernel VA (potential VMA pointer)`);
                     }
                 }
             }
@@ -1576,7 +1576,7 @@ export class PagedKernelDiscovery {
                     const nextSlot = this.memory.readU64(nodeOffset + slotsOffset + ((i + 1) * 8));
                     if (nextSlot && (nextSlot & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
                         if (depth <= 2) {
-                            console.log(`${'  '.repeat(depth)}  Key-value pair: range_end=0x${slotPtr.toString(16)}, vma_ptr=0x${nextSlot.toString(16)}`);
+//                             console.log(`${'  '.repeat(depth)}  Key-value pair: range_end=0x${slotPtr.toString(16)}, vma_ptr=0x${nextSlot.toString(16)}`);
                         }
 
                         // Try to extract VMA from the value (odd slot)
@@ -1589,7 +1589,7 @@ export class PagedKernelDiscovery {
                                 const first64 = this.memory.readU64(vmaOffset);
                                 const second64 = this.memory.readU64(vmaOffset + 8);
                                 const third64 = this.memory.readU64(vmaOffset + 16);
-                                console.log(`${'  '.repeat(depth)}    VMA@${nextSlot.toString(16)}: [0]=0x${first64?.toString(16)||'?'} [8]=0x${second64?.toString(16)||'?'} [16]=0x${third64?.toString(16)||'?'}`);
+//                                 console.log(`${'  '.repeat(depth)}    VMA@${nextSlot.toString(16)}: [0]=0x${first64?.toString(16)||'?'} [8]=0x${second64?.toString(16)||'?'} [16]=0x${third64?.toString(16)||'?'}`);
                             }
 
                             const vmStart = this.memory.readU64(vmaOffset);
@@ -1602,7 +1602,7 @@ export class PagedKernelDiscovery {
 
                                 const vmFlags = this.memory.readU64(vmaOffset + 32);
 
-                                console.log(`${'  '.repeat(depth)}    ✓ FOUND VALID VMA: 0x${vmStart.toString(16)}-0x${vmEnd.toString(16)} (${((vmEnd - vmStart) / 1024n / 1024n)}MB, flags=0x${vmFlags?.toString(16) || '0'})`);
+//                                 console.log(`${'  '.repeat(depth)}    ✓ FOUND VALID VMA: 0x${vmStart.toString(16)}-0x${vmEnd.toString(16)} (${((vmEnd - vmStart) / 1024n / 1024n)}MB, flags=0x${vmFlags?.toString(16) || '0'})`);
 
                                 sections.push({
                                     startVa: Number(vmStart),
@@ -1634,7 +1634,7 @@ export class PagedKernelDiscovery {
                     // This looks like a kernel VA - follow it as a child node
                     if (depth <= 2) {
                         const childType = Number(slotPtr & 0xFFn);
-                        console.log(`${'  '.repeat(depth)}  Slot[${i}]: Following child 0x${slotPtr.toString(16)} (type=0x${childType.toString(16)})`);
+//                         console.log(`${'  '.repeat(depth)}  Slot[${i}]: Following child 0x${slotPtr.toString(16)} (type=0x${childType.toString(16)})`);
                     }
                     this.walkMapleTree(slotPtr, sections, depth + 1);
                 }
@@ -1642,7 +1642,7 @@ export class PagedKernelDiscovery {
                 // LEAF NODE: Slots contain actual data (vm_area_structs)
                 // These should be kernel VAs WITHOUT special encoding
                 if (depth <= 2) {
-                    console.log(`${'  '.repeat(depth)}  Leaf slot[${i}]: 0x${slotPtr.toString(16)}`);
+//                     console.log(`${'  '.repeat(depth)}  Leaf slot[${i}]: 0x${slotPtr.toString(16)}`);
 
                     // Check if this could be ASCII text
                     const bytes: number[] = [];
@@ -1653,7 +1653,7 @@ export class PagedKernelDiscovery {
                     const isPrintable = bytes.every(b => (b >= 32 && b <= 126) || b === 0);
                     if (isPrintable && bytes.some(b => b >= 32 && b <= 126)) {
                         const ascii = bytes.map(b => b >= 32 && b <= 126 ? String.fromCharCode(b) : '.').join('');
-                        console.log(`${'  '.repeat(depth)}    ASCII: "${ascii}"`);
+//                         console.log(`${'  '.repeat(depth)}    ASCII: "${ascii}"`);
                     }
                 }
 
@@ -1662,7 +1662,7 @@ export class PagedKernelDiscovery {
                     const translated = this.translateVA(slotPtr, this.swapperPgDir);
                     if (!translated) {
                         if (depth <= 2) {
-                            console.log(`${'  '.repeat(depth)}    Could not translate VA 0x${slotPtr.toString(16)}`);
+//                             console.log(`${'  '.repeat(depth)}    Could not translate VA 0x${slotPtr.toString(16)}`);
                         }
                         continue;
                     }
@@ -1676,19 +1676,19 @@ export class PagedKernelDiscovery {
                     const vmFile = this.memory.readU64(vmaOffset + 0x80);  // vm_file at offset 0x80 (128 decimal)
 
                     if (depth <= 2 || sections.length < 5) {
-                        console.log(`${'  '.repeat(depth)}    Checking potential VMA at VA 0x${slotPtr.toString(16)} (PA 0x${translated.toString(16)})`);
-                        console.log(`${'  '.repeat(depth)}      vm_start=0x${vmStart?.toString(16) || '?'}, vm_end=0x${vmEnd?.toString(16) || '?'}`);
+//                         console.log(`${'  '.repeat(depth)}    Checking potential VMA at VA 0x${slotPtr.toString(16)} (PA 0x${translated.toString(16)})`);
+//                         console.log(`${'  '.repeat(depth)}      vm_start=0x${vmStart?.toString(16) || '?'}, vm_end=0x${vmEnd?.toString(16) || '?'}`);
                         if (vmFile && vmFile !== 0n) {
-                            console.log(`${'  '.repeat(depth)}      vm_file=0x${vmFile.toString(16)} (has backing file)`);
+//                             console.log(`${'  '.repeat(depth)}      vm_file=0x${vmFile.toString(16)} (has backing file)`);
                         }
 
                         // If these values look wrong, dump more fields to understand the struct
                         if (!vmStart || !vmEnd || vmStart === 0x1n || vmEnd === 0n || vmStart >= vmEnd) {
-                            console.log(`${'  '.repeat(depth)}      Invalid VMA values - dumping first 64 bytes:`);
+//                             console.log(`${'  '.repeat(depth)}      Invalid VMA values - dumping first 64 bytes:`);
                             for (let off = 0; off < 64; off += 8) {
                                 const val = this.memory.readU64(vmaOffset + off);
                                 if (val && val !== 0n) {
-                                    console.log(`${'  '.repeat(depth)}        [+0x${off.toString(16)}] = 0x${val.toString(16)}`);
+//                                     console.log(`${'  '.repeat(depth)}        [+0x${off.toString(16)}] = 0x${val.toString(16)}`);
                                 }
                             }
                         }
@@ -1714,7 +1714,7 @@ export class PagedKernelDiscovery {
                                 // Only log for debugging specific issues
                                 const debugFileStruct = false;
                                 if (debugFileStruct && depth <= 2) {
-                                    console.log(`${'  '.repeat(depth)}        File struct at PA 0x${fileTranslated.toString(16)}`);
+//                                     console.log(`${'  '.repeat(depth)}        File struct at PA 0x${fileTranslated.toString(16)}`);
                                 }
 
                                 // Correct offsets from BTF:
@@ -1779,7 +1779,7 @@ export class PagedKernelDiscovery {
                             } else if (vmFile && vmFile !== 0n) {
                                 desc += ` [file@0x${vmFile.toString(16)}]`;
                             }
-                            console.log(`${'  '.repeat(depth)}  ${desc}`);
+//                             console.log(`${'  '.repeat(depth)}  ${desc}`);
                         }
 
                         // Determine type based on flags and filename
@@ -1818,40 +1818,40 @@ export class PagedKernelDiscovery {
 
                         // Debug: Log only sections with filenames
                         if (filename && sections.length < 5) {
-                            console.log(`VMA with filename: "${filename}" at 0x${vmStart.toString(16)}`);
+//                             console.log(`VMA with filename: "${filename}" at 0x${vmStart.toString(16)}`);
                         }
 
                         sections.push(section);
                     } else if (depth <= 2) {
                         // In leaf nodes, invalid values are just garbage, don't follow them
-                        console.log(`${'  '.repeat(depth)}      Invalid VMA values (vm_start=0x${vmStart?.toString(16)||'?'}, vm_end=0x${vmEnd?.toString(16)||'?'}) - not following as child`);
+//                         console.log(`${'  '.repeat(depth)}      Invalid VMA values (vm_start=0x${vmStart?.toString(16)||'?'}, vm_end=0x${vmEnd?.toString(16)||'?'}) - not following as child`);
                     }
                 } else if (depth <= 2) {
                     // Not a kernel VA - could be other data
-                    console.log(`${'  '.repeat(depth)}    Slot value 0x${slotPtr.toString(16)} is not a kernel VA`);
+//                     console.log(`${'  '.repeat(depth)}    Slot value 0x${slotPtr.toString(16)} is not a kernel VA`);
 
                     // Check if it could be a physical address in guest RAM range
                     if (slotPtr >= BigInt(KernelConstants.GUEST_RAM_START) && slotPtr < BigInt(KernelConstants.GUEST_RAM_END)) {
-                        console.log(`${'  '.repeat(depth)}      -> Could be PA in guest RAM`);
+//                         console.log(`${'  '.repeat(depth)}      -> Could be PA in guest RAM`);
                         // Try reading it as if it's a direct physical address
                         const directOffset = Number(slotPtr) - KernelConstants.GUEST_RAM_START;
                         const testVmStart = this.memory.readU64(directOffset);
                         const testVmEnd = this.memory.readU64(directOffset + 8);
                         if (testVmStart && testVmEnd) {
-                            console.log(`${'  '.repeat(depth)}      -> As PA: vm_start=0x${testVmStart.toString(16)}, vm_end=0x${testVmEnd.toString(16)}`);
+//                             console.log(`${'  '.repeat(depth)}      -> As PA: vm_start=0x${testVmStart.toString(16)}, vm_end=0x${testVmEnd.toString(16)}`);
                         }
                     }
 
                     // Check if the high bits might be flags/metadata
                     const maskedPtr = slotPtr & 0x0000FFFFFFFFFFFFn;
                     if (maskedPtr !== slotPtr) {
-                        console.log(`${'  '.repeat(depth)}      -> High bits: 0x${((slotPtr >> 48n) & 0xFFFFn).toString(16)}, masked: 0x${maskedPtr.toString(16)}`);
+//                         console.log(`${'  '.repeat(depth)}      -> High bits: 0x${((slotPtr >> 48n) & 0xFFFFn).toString(16)}, masked: 0x${maskedPtr.toString(16)}`);
                     }
 
                     // Check if this could be a user-space virtual address (key in the maple tree)
                     // User space VAs are typically < 0x0000800000000000
                     if (slotPtr < 0x800000000000n && slotPtr > 0x10000n) {
-                        console.log(`${'  '.repeat(depth)}      -> Could be user VA (key): maps to range around 0x${slotPtr.toString(16)}`);
+//                         console.log(`${'  '.repeat(depth)}      -> Could be user VA (key): maps to range around 0x${slotPtr.toString(16)}`);
                         // The next slot or a related slot might contain the vm_area_struct pointer
                     }
 
@@ -1861,11 +1861,11 @@ export class PagedKernelDiscovery {
                     if (highNibble === 0xE || highNibble === 0xD) {
                         // Try masking off the high nibble
                         const cleanAddr = slotPtr & 0x0FFFFFFFFFFFFFFFn;
-                        console.log(`${'  '.repeat(depth)}      -> High nibble 0x${highNibble.toString(16)}, cleaned: 0x${cleanAddr.toString(16)}`);
+//                         console.log(`${'  '.repeat(depth)}      -> High nibble 0x${highNibble.toString(16)}, cleaned: 0x${cleanAddr.toString(16)}`);
 
                         // Check if cleaned address makes more sense
                         if (cleanAddr < 0x800000000000n) {
-                            console.log(`${'  '.repeat(depth)}         -> Cleaned addr could be user VA!`);
+//                             console.log(`${'  '.repeat(depth)}         -> Cleaned addr could be user VA!`);
                         }
                     }
                 }
@@ -1884,28 +1884,11 @@ export class PagedKernelDiscovery {
             return sections;
         }
 
-        // Debug VLC specifically
-        const isVLC = process.name.toLowerCase().includes('vlc');
-        if (isVLC) {
-            console.log(`\n=== walkVMAs for VLC PID ${process.pid} ===`);
-            console.log(`  mm_struct VA: 0x${process.mmStruct.toString(16)}`);
-            console.log(`  swapper_pg_dir: 0x${this.swapperPgDir.toString(16)}`);
-        }
-
         // Translate mm_struct VA to PA using kernel PGD
         const mmPa = this.translateVA(process.mmStruct, this.swapperPgDir);
         if (!mmPa) {
-            if (isVLC) {
-                console.log(`  ✗ Failed to translate mm_struct VA to PA`);
-                console.log(`  Attempting debug translation...`);
-                this.debugTranslateVA(process.mmStruct, this.swapperPgDir);
-            }
             // Silently fail - not all processes have accessible mm_structs
             return sections;
-        }
-
-        if (isVLC) {
-            console.log(`  ✓ Translated mm_struct to PA: 0x${mmPa.toString(16)}`);
         }
 
         // Modern kernels use maple tree, not linked list
@@ -1935,33 +1918,33 @@ export class PagedKernelDiscovery {
             process.pid === 6969 ||  // Firefox
             process.pid === 4917 || process.pid === 9909 ||  // VLC PIDs
             process.pid === 7168) {  // Firefox pool thread
-            console.log(`\n=== Checking mm_struct for PID ${process.pid} (${process.name}) ===`);
-            console.log(`    mm_struct VA: 0x${process.mmStruct.toString(16)}`);
-            console.log(`    mm_struct PA: 0x${mmPa.toString(16)}`);
-            console.log(`    maple root @ offset 0x48 = 0x${mapleRoot?.toString(16) || '?'}`);
-            console.log(`    pgd @ offset 0x68 = 0x${pgd?.toString(16) || '?'}`);
-            console.log(`    mm_count @ offset 0x00 = ${mmCount || 0}`);
+//             console.log(`\n=== Checking mm_struct for PID ${process.pid} (${process.name}) ===`);
+//             console.log(`    mm_struct VA: 0x${process.mmStruct.toString(16)}`);
+//             console.log(`    mm_struct PA: 0x${mmPa.toString(16)}`);
+//             console.log(`    maple root @ offset 0x48 = 0x${mapleRoot?.toString(16) || '?'}`);
+//             console.log(`    pgd @ offset 0x68 = 0x${pgd?.toString(16) || '?'}`);
+//             console.log(`    mm_count @ offset 0x00 = ${mmCount || 0}`);
             console.log(`    mm_users @ offset 0x74 = ${mmUsers74 || 0} (CORRECT)`);
-            console.log(`    mm_users @ offset 0x38 = ${mmUsers38 || 0} (wrong offset)`);
+//             console.log(`    mm_users @ offset 0x38 = ${mmUsers38 || 0} (wrong offset)`);
 
             // Dump first few fields to understand structure (only for processes with active mm_users)
             if (mmUsers > 0) {
-                console.log(`    ✓ Process has active mm_users, should have valid VMAs`);
+//                 console.log(`    ✓ Process has active mm_users, should have valid VMAs`);
                 for (let i = 0; i < 128; i += 8) {
                     const val = this.memory.readU64(mmStructOffset + i);
                     if (val && val !== 0n) {
-                        console.log(`    [0x${i.toString(16)}] = 0x${val.toString(16)}`);
+//                         console.log(`    [0x${i.toString(16)}] = 0x${val.toString(16)}`);
                     }
                 }
             } else {
-                console.log(`    ⚠️  mm_users = ${mmUsers}, mm_count = ${mmCount}`);
+//                 console.log(`    ⚠️  mm_users = ${mmUsers}, mm_count = ${mmCount}`);
                 if (mmUsers === 0 && mmCount > 0) {
-                    console.log(`    Process exiting but mm still valid (mm_count > 0)`);
+//                     console.log(`    Process exiting but mm still valid (mm_count > 0)`);
                 } else if (mmUsers === 0 && mmCount === 0) {
-                    console.log(`    Process completely freed - maple tree may be corrupted`);
+//                     console.log(`    Process completely freed - maple tree may be corrupted`);
                 }
                 // Continue anyway to see what we find
-                console.log(`    Continuing maple tree walk...`);
+//                 console.log(`    Continuing maple tree walk...`);
             }
         }
 
@@ -1969,7 +1952,7 @@ export class PagedKernelDiscovery {
         // VMAs persist until mm_count hits 0, so we should try walking the maple tree anyway
         if (!mmUsers || mmUsers === 0) {
             if (process.pid < 2000 || process.name.includes('firefox') || process.name.includes('vlc')) {
-                console.log(`  Note: PID ${process.pid} (${process.name}) has mm_users = 0 but may still have VMAs`);
+//                 console.log(`  Note: PID ${process.pid} (${process.name}) has mm_users = 0 but may still have VMAs`);
             }
             // Don't skip - /proc/maps works even when mm_users=0
         }
@@ -1984,7 +1967,7 @@ export class PagedKernelDiscovery {
 
         const debug = process.pid < 100;
         if (debug) {
-            console.log(`  Maple tree root: 0x${maRootPtr.toString(16)}`);
+//             console.log(`  Maple tree root: 0x${maRootPtr.toString(16)}`);
         }
 
         // Check for special maple tree states (from kernel source and /proc/maps trace)
@@ -2001,12 +1984,12 @@ export class PagedKernelDiscovery {
                     0x9: 'MAS_STOP',
                     0x11: 'MAS_ACTIVE'
                 };
-                console.log(`  Special maple tree state: ${states[Number(maRootPtr)] || `unknown (0x${maRootPtr.toString(16)})`}`);
+//                 console.log(`  Special maple tree state: ${states[Number(maRootPtr)] || `unknown (0x${maRootPtr.toString(16)})`}`);
             }
 
             // MAS_START might actually have entries - let's not give up immediately
             if (maRootPtr === 0x5n) {
-                console.log(`  WARNING: MAS_START state but tree might have entries - kernel may be initializing`);
+//                 console.log(`  WARNING: MAS_START state but tree might have entries - kernel may be initializing`);
             }
 
             return sections; // No tree to walk for these special states
@@ -2028,7 +2011,7 @@ export class PagedKernelDiscovery {
                     if (vmStart && vmEnd && vmEnd > vmStart &&
                         vmStart < 0x800000000000n) {
                         if (debug) {
-                            console.log(`  Single VMA tree: 0x${vmStart.toString(16)}-0x${vmEnd.toString(16)}`);
+//                             console.log(`  Single VMA tree: 0x${vmStart.toString(16)}-0x${vmEnd.toString(16)}`);
                         }
                         sections.push({
                             startVa: Number(vmStart),
@@ -2048,13 +2031,13 @@ export class PagedKernelDiscovery {
         // Otherwise, it should be an encoded node pointer
         if (debug) {
             const nodeType = Number(maRootPtr & 0xFFn);
-            console.log(`  Maple tree root: 0x${maRootPtr.toString(16)} (type=0x${nodeType.toString(16)})`);
+//             console.log(`  Maple tree root: 0x${maRootPtr.toString(16)} (type=0x${nodeType.toString(16)})`);
         }
 
         // Pass the encoded pointer - walkMapleTree will clean it
         this.walkMapleTree(maRootPtr, sections, 0);
         if (sections.length > 0 && debug) {
-            console.log(`  Found ${sections.length} VMAs via maple tree`);
+//             console.log(`  Found ${sections.length} VMAs via maple tree`);
         }
         return sections;
     }
@@ -2069,9 +2052,9 @@ export class PagedKernelDiscovery {
 
         const debug = process.pid < 100;
         if (debug) {
-            console.log(`  Walking VMAs for PID ${process.pid} (${process.name})`);
-            console.log(`    mm_struct at VA 0x${process.mmStruct.toString(16)} → PA 0x${mmPa.toString(16)}`);
-            console.log(`    First VMA at VA 0x${vmaVa.toString(16)}`);
+//             console.log(`  Walking VMAs for PID ${process.pid} (${process.name})`);
+//             console.log(`    mm_struct at VA 0x${process.mmStruct.toString(16)} → PA 0x${mmPa.toString(16)}`);
+//             console.log(`    First VMA at VA 0x${vmaVa.toString(16)}`);
         }
 
         // Walk the VMA linked list
@@ -2083,14 +2066,14 @@ export class PagedKernelDiscovery {
         while (currentVmaVa && currentVmaVa !== 0n && vmaCount < maxVmas) {
             // Check for cycles
             if (seenVmas.has(currentVmaVa)) {
-                console.log(`VMA cycle detected at 0x${currentVmaVa.toString(16)}`);
+//                 console.log(`VMA cycle detected at 0x${currentVmaVa.toString(16)}`);
                 break;
             }
             seenVmas.add(currentVmaVa);
 
             // Check if VMA pointer is in kernel space
             if (currentVmaVa < 0xffff000000000000n) {
-                console.log(`Invalid VMA pointer (not kernel VA): 0x${currentVmaVa.toString(16)}`);
+//                 console.log(`Invalid VMA pointer (not kernel VA): 0x${currentVmaVa.toString(16)}`);
                 break;
             }
 
@@ -2116,30 +2099,30 @@ export class PagedKernelDiscovery {
             // Check for reasonable user-space addresses (not kernel)
             // User space is typically 0x0 to 0x0000800000000000 (128TB on ARM64)
             if (vmStart > 0x0000800000000000n || vmEnd > 0x0000800000000000n) {
-                console.log(`Invalid VMA range: 0x${vmStart.toString(16)}-0x${vmEnd.toString(16)}`);
+//                 console.log(`Invalid VMA range: 0x${vmStart.toString(16)}-0x${vmEnd.toString(16)}`);
                 break;
             }
 
             // Check for reasonable size (not bigger than 1TB)
             const size = vmEnd - vmStart;
             if (size > 0x10000000000n) { // 1TB
-                console.log(`VMA too large: ${size} bytes`);
+//                 console.log(`VMA too large: ${size} bytes`);
                 break;
             }
 
             // Debug output for first VMA
             if (debug && vmaCount === 0) {
-                console.log(`    First VMA details:`);
-                console.log(`      Start: 0x${vmStart.toString(16)}`);
-                console.log(`      End: 0x${vmEnd.toString(16)}`);
-                console.log(`      Size: 0x${size.toString(16)} (${Number(size / 1024n)}KB)`);
-                console.log(`      Flags: 0x${vmFlags.toString(16)}`);
-                console.log(`      Next: 0x${vmNext.toString(16)}`);
+//                 console.log(`    First VMA details:`);
+//                 console.log(`      Start: 0x${vmStart.toString(16)}`);
+//                 console.log(`      End: 0x${vmEnd.toString(16)}`);
+//                 console.log(`      Size: 0x${size.toString(16)} (${Number(size / 1024n)}KB)`);
+//                 console.log(`      Flags: 0x${vmFlags.toString(16)}`);
+//                 console.log(`      Next: 0x${vmNext.toString(16)}`);
             }
 
             // Skip if size is 0 or negative
             if (size <= 0) {
-                console.log(`Invalid VMA size: ${size}`);
+//                 console.log(`Invalid VMA size: ${size}`);
                 break;
             }
 
@@ -2245,7 +2228,7 @@ export class PagedKernelDiscovery {
         // to understand the actual memory layout
         const debugProcess = process.name === 'vlc' || process.pid === 9526;
         if (debugProcess) {
-            console.log(`\nDEBUG: Walking page tables for VLC (PID ${process.pid})`);
+//             console.log(`\nDEBUG: Walking page tables for VLC (PID ${process.pid})`);
         }
 
         for (let pgdIdx = 0; pgdIdx < 512; pgdIdx++) {
@@ -2261,7 +2244,7 @@ export class PagedKernelDiscovery {
 
             validEntries++;
             if (debug && validEntries === 1) {
-                console.log(`    First valid PGD entry at index ${pgdIdx}: 0x${pgdEntry.toString(16)}`);
+//                 console.log(`    First valid PGD entry at index ${pgdIdx}: 0x${pgdEntry.toString(16)}`);
             }
 
             // Walk through PUD, PMD, PTE levels
@@ -2269,15 +2252,15 @@ export class PagedKernelDiscovery {
         }
 
         if (debug && validEntries === 0) {
-            console.log(`    No valid PGD entries found in user space`);
+//             console.log(`    No valid PGD entries found in user space`);
         }
 
         if (debugProcess) {
-            console.log(`    Total PTEs found: ${ptes.length}`);
+//             console.log(`    Total PTEs found: ${ptes.length}`);
             if (ptes.length > 0) {
                 // Show sample VAs to understand the range
                 const sampleVAs = ptes.slice(0, 5).map(p => `0x${p.va.toString(16)}`);
-                console.log(`    Sample VAs: ${sampleVAs.join(', ')}`);
+//                 console.log(`    Sample VAs: ${sampleVAs.join(', ')}`);
             }
         }
 
@@ -2308,7 +2291,7 @@ export class PagedKernelDiscovery {
             if (pgdEntry !== 0n) {
                 nonZeroEntries.push(pgdIdx);
                 if (debug && nonZeroEntries.length <= 5) {
-                    console.log(`      PGD[${pgdIdx}]: 0x${pgdEntry.toString(16)} (type=${Number(pgdEntry & 3n)})`);
+//                     console.log(`      PGD[${pgdIdx}]: 0x${pgdEntry.toString(16)} (type=${Number(pgdEntry & 3n)})`);
                 }
             }
 
@@ -2321,7 +2304,7 @@ export class PagedKernelDiscovery {
             if (entryType === 3) {  // Table descriptor - points to PUD
                 validEntries++;
                 if (debug && validEntries <= 3) {
-                    console.log(`    PGD[${pgdIdx}]: 0x${pgdEntry.toString(16)} -> PUD table`);
+//                     console.log(`    PGD[${pgdIdx}]: 0x${pgdEntry.toString(16)} -> PUD table`);
                 }
                 this.walkPudLevel(pgdEntry, pgdIdx, ptes);
             } else if (entryType === 1) {  // Block descriptor - 1GB page
@@ -2334,10 +2317,10 @@ export class PagedKernelDiscovery {
         }
 
         if (debug || validEntries > 0) {
-            console.log(`    Walked kernel PGD indices 256-511:`);
-            console.log(`      Non-zero entries at indices: ${nonZeroEntries.join(', ')}`);
-            console.log(`      Valid entries (type 1 or 3): ${validEntries}`);
-            console.log(`      Total PTEs found: ${ptes.length}`);
+//             console.log(`    Walked kernel PGD indices 256-511:`);
+//             console.log(`      Non-zero entries at indices: ${nonZeroEntries.join(', ')}`);
+//             console.log(`      Valid entries (type 1 or 3): ${validEntries}`);
+//             console.log(`      Total PTEs found: ${ptes.length}`);
         }
 
         return ptes;
@@ -2463,9 +2446,9 @@ export class PagedKernelDiscovery {
 
             // Debug suspicious VAs
             if (va > 0x0000FFFFFFFFFFFFn && va < 0xFFFF000000000000n) {
-                console.log(`WARNING: Suspicious VA calculated: 0x${va.toString(16)}`);
-                console.log(`  pgdIdx=${pgdIdx}, pudIdx=${pudIdx}, pmdIdx=${pmdIdx}, pteIdx=${pteIdx}`);
-                console.log(`  Components: pgd<<39=0x${(BigInt(pgdIdx) << 39n).toString(16)}, pud<<30=0x${(BigInt(pudIdx) << 30n).toString(16)}, pmd<<21=0x${(BigInt(pmdIdx) << 21n).toString(16)}, pte<<12=0x${(pteIdx << 12).toString(16)}`);
+//                 console.log(`WARNING: Suspicious VA calculated: 0x${va.toString(16)}`);
+//                 console.log(`  pgdIdx=${pgdIdx}, pudIdx=${pudIdx}, pmdIdx=${pmdIdx}, pteIdx=${pteIdx}`);
+//                 console.log(`  Components: pgd<<39=0x${(BigInt(pgdIdx) << 39n).toString(16)}, pud<<30=0x${(BigInt(pudIdx) << 30n).toString(16)}, pmd<<21=0x${(BigInt(pmdIdx) << 21n).toString(16)}, pte<<12=0x${(pteIdx << 12).toString(16)}`);
             }
 
             // With modern ARM64 + ASLR, user processes can use high addresses
@@ -2494,13 +2477,13 @@ export class PagedKernelDiscovery {
      */
     public async discover(totalSize: number): Promise<DiscoveryOutput> {
         console.time('Paged Kernel Discovery');
-        console.log(`Starting discovery on ${(totalSize / (1024*1024)).toFixed(0)}MB of memory`);
-        console.log(`Memory usage: ${this.memory.getMemoryUsage()}`);
+//         console.log(`Starting discovery on ${(totalSize / (1024*1024)).toFixed(0)}MB of memory`);
+//         console.log(`Memory usage: ${this.memory.getMemoryUsage()}`);
 
         this.totalSize = totalSize;
 
         // Process discovery - restored original approach
-        console.log('\n=== PROCESS DISCOVERY (ORIGINAL APPROACH) ===');
+//         console.log('\n=== PROCESS DISCOVERY (ORIGINAL APPROACH) ===');
         this.findProcesses(totalSize);
 
         // Prepare tasks array from discovered processes
@@ -2516,9 +2499,9 @@ export class PagedKernelDiscovery {
             tasks.push({pid, name: process.name, offset: 0, mmPtr});
         }
 
-        console.log(`  Found ${tasks.length} processes`);
-        console.log(`    - ${kernelThreadCount} kernel threads (no mm_struct)`);
-        console.log(`    - ${tasks.length - kernelThreadCount} user processes`);
+//         console.log(`  Found ${tasks.length} processes`);
+//         console.log(`    - ${kernelThreadCount} kernel threads (no mm_struct)`);
+//         console.log(`    - ${tasks.length - kernelThreadCount} user processes`);
 
         // SKIP the expensive PGD scan
         const SKIP_FULL_PGD_SCAN = true;
@@ -2526,8 +2509,8 @@ export class PagedKernelDiscovery {
 
         if (SKIP_FULL_PGD_SCAN) {
             // We'll populate userPGDs later after we categorize the PGDs from our scan
-            console.log('\n=== WILL USE MIXED PGDs FOR MATCHING ===');
-            console.log('(Mixed PGDs have both user and kernel entries - needed for vmalloc translation)');
+//             console.log('\n=== WILL USE MIXED PGDs FOR MATCHING ===');
+//             console.log('(Mixed PGDs have both user and kernel entries - needed for vmalloc translation)');
         } else {
             // This code won't run unless we enable it
             const allPGDs = this.findAllPGDs();
@@ -2538,63 +2521,63 @@ export class PagedKernelDiscovery {
             const pureUserPGDs = allPGDs.filter(p => p.kernelEntries === 0 && p.userEntries > 0); // Unusual
             userPGDs = allPGDs.filter(p => p.kernelEntries > 0 && p.userEntries > 1);  // REAL user PGDs
 
-        console.log(`\nPGD Analysis:`);
-        console.log(`  Total PGDs found: ${allPGDs.length}`);
-        console.log(`  Likely kernel PGDs: ${kernelPGDs.length}`);
-        console.log(`  User process PGDs (with kernel mappings): ${userPGDs.length}`);
-        console.log(`  Pure user PGDs (no kernel - unusual): ${pureUserPGDs.length}`);
+//         console.log(`\nPGD Analysis:`);
+//         console.log(`  Total PGDs found: ${allPGDs.length}`);
+//         console.log(`  Likely kernel PGDs: ${kernelPGDs.length}`);
+//         console.log(`  User process PGDs (with kernel mappings): ${userPGDs.length}`);
+//         console.log(`  Pure user PGDs (no kernel - unusual): ${pureUserPGDs.length}`);
 
         // Show kernel PGDs (should be just one - swapper_pg_dir)
         if (kernelPGDs.length > 0) {
-            console.log(`\nKernel PGDs:`);
+//             console.log(`\nKernel PGDs:`);
             for (const pgd of kernelPGDs) {
-                console.log(`  0x${pgd.addr.toString(16)}: ${pgd.kernelEntries} kernel, ${pgd.userEntries} user entries`);
+//                 console.log(`  0x${pgd.addr.toString(16)}: ${pgd.kernelEntries} kernel, ${pgd.userEntries} user entries`);
                 if (pgd.addr === 0x136dbf000) {
-                    console.log(`    ^ This is the known swapper_pg_dir!`);
+//                     console.log(`    ^ This is the known swapper_pg_dir!`);
                 }
             }
         }
 
         // Show first few user PGDs
         if (userPGDs.length > 0) {
-            console.log(`\nFirst 10 user PGDs:`);
+//             console.log(`\nFirst 10 user PGDs:`);
             for (let i = 0; i < Math.min(10, userPGDs.length); i++) {
                 const pgd = userPGDs[i];
-                console.log(`  0x${pgd.addr.toString(16)}: ${pgd.userEntries} user entries`);
+//                 console.log(`  0x${pgd.addr.toString(16)}: ${pgd.userEntries} user entries`);
             }
         }
 
         // Tasks array was already populated above from findProcesses()
 
         // Show first 20 tasks
-        console.log(`\nFirst 20 processes:`);
+//         console.log(`\nFirst 20 processes:`);
         for (let i = 0; i < Math.min(20, tasks.length); i++) {
             const t = tasks[i];
             const mmStr = t.mmPtr !== 0n ? `0x${t.mmPtr.toString(16)}` : 'NULL';
-            console.log(`  PID ${t.pid}: ${t.name} (mm=${mmStr})`);
+//             console.log(`  PID ${t.pid}: ${t.name} (mm=${mmStr})`);
         }
 
         // Show summary
-        console.log(`\n=== DISCOVERY SUMMARY ===`);
-        console.log(`Task analysis:`);
-        console.log(`  ${tasks.length} total processes`);
-        console.log(`  ${tasks.length - kernelThreadCount} user processes`);
-        console.log(`  ${kernelThreadCount} kernel threads`);
-        console.log(`\nPGD analysis:`);
-        console.log(`  ${userPGDs.length} user PGDs found`);
-        console.log(`  ${kernelPGDs.length} kernel PGDs found`);
-        console.log(`\nMatching challenge:`);
-        console.log(`  We have ${tasks.length - kernelThreadCount} user processes`);
-        console.log(`  But only ${userPGDs.length} user PGDs`);
+//         console.log(`\n=== DISCOVERY SUMMARY ===`);
+//         console.log(`Task analysis:`);
+//         console.log(`  ${tasks.length} total processes`);
+//         console.log(`  ${tasks.length - kernelThreadCount} user processes`);
+//         console.log(`  ${kernelThreadCount} kernel threads`);
+//         console.log(`\nPGD analysis:`);
+//         console.log(`  ${userPGDs.length} user PGDs found`);
+//         console.log(`  ${kernelPGDs.length} kernel PGDs found`);
+//         console.log(`\nMatching challenge:`);
+//         console.log(`  We have ${tasks.length - kernelThreadCount} user processes`);
+//         console.log(`  But only ${userPGDs.length} user PGDs`);
         const diff = (tasks.length - kernelThreadCount) - userPGDs.length;
         if (diff > 0) {
-            console.log(`  ${diff} more processes than PGDs suggests:`);
-            console.log(`    - Processes sharing PGDs (threads of same process)`);
-            console.log(`    - False positives in task_struct detection`);
+//             console.log(`  ${diff} more processes than PGDs suggests:`);
+//             console.log(`    - Processes sharing PGDs (threads of same process)`);
+//             console.log(`    - False positives in task_struct detection`);
         } else if (diff < 0) {
-            console.log(`  ${-diff} more PGDs than processes suggests:`);
-            console.log(`    - Stale/unused PGDs still in memory`);
-            console.log(`    - Our task_struct detection missing some`);
+//             console.log(`  ${-diff} more PGDs than processes suggests:`);
+//             console.log(`    - Stale/unused PGDs still in memory`);
+//             console.log(`    - Our task_struct detection missing some`);
         }
         } // Close the else block from SKIP_FULL_PGD_SCAN
 
@@ -2604,19 +2587,19 @@ export class PagedKernelDiscovery {
         this.swapperPgDir = 0;  // Will be set by strict validation
 
         // Try to get ground truth from QMP if available
-        console.log('\n=== KERNEL PGD DISCOVERY ===');
+//         console.log('\n=== KERNEL PGD DISCOVERY ===');
 
         let qmpKernelPGD: number | null = null;
         try {
             // Check if we're in Electron and can use QMP via IPC
             if (typeof window !== 'undefined' && (window as any).electronAPI?.queryKernelInfo) {
-                console.log('Trying QMP via Electron IPC...');
+//                 console.log('Trying QMP via Electron IPC...');
                 const result = await (window as any).electronAPI.queryKernelInfo();
                 if (result.success && result.kernelPgd) {
                     qmpKernelPGD = result.kernelPgd;
-                    console.log(`QMP (via IPC): Got kernel PGD = 0x${qmpKernelPGD.toString(16)}`);
+//                     console.log(`QMP (via IPC): Got kernel PGD = 0x${qmpKernelPGD.toString(16)}`);
                 } else {
-                    console.log('QMP (via IPC): Failed -', result.error || 'No kernel PGD');
+//                     console.log('QMP (via IPC): Failed -', result.error || 'No kernel PGD');
                 }
             } else if (typeof window === 'undefined') {
                 // Node.js environment - can use direct connection
@@ -2625,27 +2608,27 @@ export class PagedKernelDiscovery {
             }
 
             if (qmpKernelPGD) {
-                console.log(`✓ QMP PROVIDED GROUND TRUTH: Kernel PGD at PA 0x${qmpKernelPGD.toString(16)}`);
+//                 console.log(`✓ QMP PROVIDED GROUND TRUTH: Kernel PGD at PA 0x${qmpKernelPGD.toString(16)}`);
 
                 // Verify it's in our accessible range
                     const offset = qmpKernelPGD - KernelConstants.GUEST_RAM_START;
                     if (offset >= 0 && offset < this.totalSize) {
                         // Validate the structure
                         const entryCount = this.testPgdWithEntryCountValidation(offset);
-                        console.log(`  Validation: ${entryCount.validEntries} entries (${entryCount.userEntries} user, ${entryCount.kernelEntries} kernel)`);
+//                         console.log(`  Validation: ${entryCount.validEntries} entries (${entryCount.userEntries} user, ${entryCount.kernelEntries} kernel)`);
 
                         if (entryCount.validEntries > 0) {
                             this.swapperPgDir = qmpKernelPGD;
-                            console.log(`  ✓ Using QMP-provided kernel PGD`);
+//                             console.log(`  ✓ Using QMP-provided kernel PGD`);
                         } else {
-                            console.log(`  ✗ QMP PGD has no valid entries - will use heuristic discovery`);
+//                             console.log(`  ✗ QMP PGD has no valid entries - will use heuristic discovery`);
                         }
                     } else {
-                        console.log(`  ✗ QMP PGD outside accessible range - will use heuristic discovery`);
+//                         console.log(`  ✗ QMP PGD outside accessible range - will use heuristic discovery`);
                     }
                 }
         } catch (err: any) {
-            console.log(`QMP not available (${err.message}) - using heuristic discovery`);
+//             console.log(`QMP not available (${err.message}) - using heuristic discovery`);
         }
 
         // Always run signature search to either confirm QMP or discover
@@ -2654,22 +2637,22 @@ export class PagedKernelDiscovery {
         if (qmpKernelPGD && signatureDiscoveredPgd) {
             // We have both - check if they match
             if (signatureDiscoveredPgd === qmpKernelPGD) {
-                console.log(`  ✅ Signature search confirmed QMP ground truth!`);
+//                 console.log(`  ✅ Signature search confirmed QMP ground truth!`);
             } else {
-                console.log(`  ⚠️ Signature search found different candidate: 0x${signatureDiscoveredPgd.toString(16)}`);
-                console.log(`     Using QMP ground truth as authoritative`);
+//                 console.log(`  ⚠️ Signature search found different candidate: 0x${signatureDiscoveredPgd.toString(16)}`);
+//                 console.log(`     Using QMP ground truth as authoritative`);
             }
             this.swapperPgDir = qmpKernelPGD;
         } else if (!qmpKernelPGD && signatureDiscoveredPgd) {
             // No QMP, but signature search found something
-            console.log(`  Using signature-discovered swapper_pg_dir at PA 0x${signatureDiscoveredPgd.toString(16)}`);
+//             console.log(`  Using signature-discovered swapper_pg_dir at PA 0x${signatureDiscoveredPgd.toString(16)}`);
             this.swapperPgDir = signatureDiscoveredPgd;
         } else if (qmpKernelPGD && !signatureDiscoveredPgd) {
             // Only QMP worked
             this.swapperPgDir = qmpKernelPGD;
         } else {
             // Neither worked - will try to discover below through validation
-            console.log('No QMP or signature search results - will discover kernel PGD through validation');
+//             console.log('No QMP or signature search results - will discover kernel PGD through validation');
         }
 
         // We'll validate discovered PGDs below
@@ -2684,15 +2667,15 @@ export class PagedKernelDiscovery {
 
         if (ENABLE_PGD_SCAN) {
             // Enable exhaustive search to test our corrected understanding
-            console.log('\n=== SCANNING FOR ALL PGDs WITH CORRECTED UNDERSTANDING ===');
-            console.log('(User process PGDs should have BOTH user and kernel entries)');
+//             console.log('\n=== SCANNING FOR ALL PGDs WITH CORRECTED UNDERSTANDING ===');
+//             console.log('(User process PGDs should have BOTH user and kernel entries)');
 
         // Scan for all PGDs
         const pgdScanStart = 0x40000000;  // Start at 0GB PA (includes extracted PGDs at 0x04xxxxxxx)
         const pgdScanEnd = Math.min(totalSize, 0x180000000);  // Up to 6GB
         const pgdStride = 0x1000;  // 4KB aligned
 
-        console.log(`Scanning range: 0x${pgdScanStart.toString(16)} to 0x${pgdScanEnd.toString(16)}`);
+//         console.log(`Scanning range: 0x${pgdScanStart.toString(16)} to 0x${pgdScanEnd.toString(16)}`);
         let candidateCount = 0;
 
         for (let pa = pgdScanStart; pa < pgdScanEnd; pa += pgdStride) {
@@ -2706,14 +2689,14 @@ export class PagedKernelDiscovery {
 
                 // Log interesting candidates with both user and kernel entries
                 if (candidate.userEntries > 0 && candidate.kernelEntries > 0) {
-                    console.log(`  Found mixed PGD at PA 0x${pa.toString(16)}: ${candidate.userEntries} user, ${candidate.kernelEntries} kernel entries`);
+//                     console.log(`  Found mixed PGD at PA 0x${pa.toString(16)}: ${candidate.userEntries} user, ${candidate.kernelEntries} kernel entries`);
                 }
             }
         }
 
-        console.log(`Found ${candidateCount} PGD candidates`);
+//         console.log(`Found ${candidateCount} PGD candidates`);
         } else {
-            console.log('\n=== PGD SCAN DISABLED (set ENABLE_PGD_SCAN=true for forensics) ===');
+//             console.log('\n=== PGD SCAN DISABLED (set ENABLE_PGD_SCAN=true for forensics) ===');
         }
 
         // We'll discover the real kernel PGD below
@@ -2724,14 +2707,14 @@ export class PagedKernelDiscovery {
 
         // Test ALL candidates to find the real kernel PGD with proper validation
         if (ENABLE_PGD_SCAN) {
-            console.log('\n=== TESTING ALL PGD CANDIDATES WITH STRICT VALIDATION ===');
+//             console.log('\n=== TESTING ALL PGD CANDIDATES WITH STRICT VALIDATION ===');
 
         // Debug: Show what's in top PGD candidates
         if (validationPGDs.length > 0) {
-            console.log('\n=== ANALYZING TOP PGD CANDIDATES ===');
+//             console.log('\n=== ANALYZING TOP PGD CANDIDATES ===');
             for (let i = 0; i < Math.min(3, validationPGDs.length); i++) {
                 const pgd = validationPGDs[i];
-                console.log(`\nCandidate #${i+1} at 0x${pgd.addr.toString(16)}:`);
+//                 console.log(`\nCandidate #${i+1} at 0x${pgd.addr.toString(16)}:`);
 
                 // Read kernel space entries (indices 256-511 for kernel VAs starting with 0xffff)
                 const kernelEntriesOffset = pgd.addr - KernelConstants.GUEST_RAM_START + (256 * 8);
@@ -2739,13 +2722,13 @@ export class PagedKernelDiscovery {
 
                 if (kernelData) {
                     const view = new DataView(kernelData.buffer, kernelData.byteOffset, kernelData.byteLength);
-                    console.log('  Kernel space entries (for 0xffff... addresses):');
+//                     console.log('  Kernel space entries (for 0xffff... addresses):');
                     for (let j = 0; j < 8; j++) {
                         const entry = view.getBigUint64(j * 8, true);
                         if (entry !== 0n) {
                             const pa = Number(entry & ~0xFFFn);
                             const type = Number(entry & 3n);
-                            console.log(`    PGD[${256+j}]: 0x${entry.toString(16)} (PA: 0x${pa.toString(16)}, type: ${type})`);
+//                             console.log(`    PGD[${256+j}]: 0x${entry.toString(16)} (PA: 0x${pa.toString(16)}, type: ${type})`);
                         }
                     }
                 }
@@ -2755,7 +2738,7 @@ export class PagedKernelDiscovery {
         for (let i = 0; i < validationPGDs.length; i++) {
             const candidate = validationPGDs[i];
             if (i < 10 || candidate.score >= 100) {
-                console.log(`\nTesting candidate #${i+1}: 0x${candidate.addr.toString(16)} (score=${candidate.score})`);
+//                 console.log(`\nTesting candidate #${i+1}: 0x${candidate.addr.toString(16)} (score=${candidate.score})`);
             }
 
             // NEW VALIDATION: Count valid entries instead of translating mm_struct VAs
@@ -2777,22 +2760,22 @@ export class PagedKernelDiscovery {
             if (entryCount.userEntries <= 5 &&
                 entryCount.kernelEntries >= 2 && entryCount.kernelEntries <= 10 &&
                 entryCount.validEntries <= 20) {
-                console.log(`  ✓✓✓ POTENTIAL KERNEL PGD! Low entry count matches swapper_pg_dir pattern:`);
-                console.log(`    - Total valid entries: ${entryCount.validEntries}`);
-                console.log(`    - Kernel entries: ${entryCount.kernelEntries}`);
-                console.log(`    - User entries: ${entryCount.userEntries}`);
+//                 console.log(`  ✓✓✓ POTENTIAL KERNEL PGD! Low entry count matches swapper_pg_dir pattern:`);
+//                 console.log(`    - Total valid entries: ${entryCount.validEntries}`);
+//                 console.log(`    - Kernel entries: ${entryCount.kernelEntries}`);
+//                 console.log(`    - User entries: ${entryCount.userEntries}`);
 
                 // Also verify with translation if possible
                 const canTranslate = this.verifyKernelPgdByTranslation(candidate.addr - KernelConstants.GUEST_RAM_START);
                 if (canTranslate) {
-                    console.log(`    - ✓ Translation verification PASSED`);
+//                     console.log(`    - ✓ Translation verification PASSED`);
                     realKernelPGD = candidate.addr;
                     if (!this.swapperPgDir) {
                         this.swapperPgDir = candidate.addr;
                     }
                     break; // Found it!
                 } else {
-                    console.log(`    - ✗ Translation verification failed, but entry count still suggests kernel PGD`);
+//                     console.log(`    - ✗ Translation verification failed, but entry count still suggests kernel PGD`);
                     // Still might be kernel PGD even if translation fails
                     // (translation might fail due to different kernel configs)
                 }
@@ -2802,18 +2785,18 @@ export class PagedKernelDiscovery {
                 break;
             } else if (i < 10 || candidate.score >= 100) {
                 if (entryCount.kernelEntries > 0) {
-                    console.log(`  → Partial validation: ${entryCount.kernelEntries} kernel entries (need ≥3 for analysis)`);
+//                     console.log(`  → Partial validation: ${entryCount.kernelEntries} kernel entries (need ≥3 for analysis)`);
                 } else {
-                    console.log(`  → No kernel entries found`);
+//                     console.log(`  → No kernel entries found`);
                 }
             }
         }
 
         // Report summary and categorize PGDs
-        console.log('\n=== PGD DISCOVERY RESULTS ===');
+//         console.log('\n=== PGD DISCOVERY RESULTS ===');
         const validCandidates = candidateResults.filter(c => c.validMmStructs > 0);
-        console.log(`Tested ${candidateResults.length} PGD candidates`);
-        console.log(`Found ${validCandidates.length} candidates with at least 1 valid entry`);
+//         console.log(`Tested ${candidateResults.length} PGD candidates`);
+//         console.log(`Found ${validCandidates.length} candidates with at least 1 valid entry`);
 
         // CORRECTED CATEGORIZATION: User process PGDs have BOTH user and kernel entries!
         const kernelOnlyPGDs = ENABLE_PGD_SCAN ? validationPGDs.filter(p => p.kernelEntries >= 2 && p.userEntries <= 1) : [];
@@ -2823,53 +2806,53 @@ export class PagedKernelDiscovery {
         // Populate userPGDs with the mixed PGDs for the matching code
         if (SKIP_FULL_PGD_SCAN) {
             userPGDs = mixedPGDs;
-            console.log(`\n=== NOW USING ${mixedPGDs.length} MIXED PGDs FOR MATCHING ===`);
+//             console.log(`\n=== NOW USING ${mixedPGDs.length} MIXED PGDs FOR MATCHING ===`);
         }
 
-        console.log('\n=== PGD CATEGORIZATION (Corrected Understanding) ===');
-        console.log(`  Kernel-only PGDs (swapper_pg_dir): ${kernelOnlyPGDs.length}`);
-        console.log(`  Mixed PGDs (user processes with kernel mappings): ${mixedPGDs.length}`);
-        console.log(`  User-only PGDs (unusual - should be none): ${userOnlyPGDs.length}`);
+//         console.log('\n=== PGD CATEGORIZATION (Corrected Understanding) ===');
+//         console.log(`  Kernel-only PGDs (swapper_pg_dir): ${kernelOnlyPGDs.length}`);
+//         console.log(`  Mixed PGDs (user processes with kernel mappings): ${mixedPGDs.length}`);
+//         console.log(`  User-only PGDs (unusual - should be none): ${userOnlyPGDs.length}`);
 
         if (kernelOnlyPGDs.length > 0) {
-            console.log('\nKernel PGDs (should be just swapper_pg_dir):');
+//             console.log('\nKernel PGDs (should be just swapper_pg_dir):');
             for (let i = 0; i < Math.min(3, kernelOnlyPGDs.length); i++) {
                 const pgd = kernelOnlyPGDs[i];
                 const pa = pgd.addr;
-                console.log(`  PA 0x${pa.toString(16)}: ${pgd.kernelEntries} kernel, ${pgd.userEntries} user entries`);
+//                 console.log(`  PA 0x${pa.toString(16)}: ${pgd.kernelEntries} kernel, ${pgd.userEntries} user entries`);
             }
         }
 
         if (mixedPGDs.length > 0) {
-            console.log('\nUser Process PGDs (with shared kernel mappings):');
+//             console.log('\nUser Process PGDs (with shared kernel mappings):');
             for (let i = 0; i < Math.min(10, mixedPGDs.length); i++) {
                 const pgd = mixedPGDs[i];
                 const pa = pgd.addr;
-                console.log(`  PA 0x${pa.toString(16)}: ${pgd.userEntries} user, ${pgd.kernelEntries} kernel entries`);
+//                 console.log(`  PA 0x${pa.toString(16)}: ${pgd.userEntries} user, ${pgd.kernelEntries} kernel entries`);
             }
             if (mixedPGDs.length > 10) {
-                console.log(`  ... and ${mixedPGDs.length - 10} more`);
+//                 console.log(`  ... and ${mixedPGDs.length - 10} more`);
             }
         }
 
         if (userOnlyPGDs.length > 0) {
-            console.log('\nUnusual: User-only PGDs (no kernel mappings - investigate these):');
+//             console.log('\nUnusual: User-only PGDs (no kernel mappings - investigate these):');
             for (const pgd of userOnlyPGDs.slice(0, 5)) {
                 const pa = pgd.addr;
-                console.log(`  PA 0x${pa.toString(16)}: ${pgd.userEntries} user entries only`);
+//                 console.log(`  PA 0x${pa.toString(16)}: ${pgd.userEntries} user entries only`);
             }
         }
 
         if (realKernelPGD) {
-            console.log(`\n✓ SUCCESS: Kernel PGD (swapper_pg_dir) confirmed at PA 0x${realKernelPGD.toString(16)}`);
+//             console.log(`\n✓ SUCCESS: Kernel PGD (swapper_pg_dir) confirmed at PA 0x${realKernelPGD.toString(16)}`);
         } else {
-            console.log(`\n⚠ WARNING: No PGD validated as kernel PGD with current criteria`);
+//             console.log(`\n⚠ WARNING: No PGD validated as kernel PGD with current criteria`);
         }
         } // End of ENABLE_PGD_SCAN block
 
         // Step 3: Match PIDs to PGDs using swapper_pg_dir (the kernel PGD)
-        console.log(`\n=== MATCHING PIDs TO PGDs ===`);
-        console.log(`Strategy: Use swapper_pg_dir to translate mm_struct addresses, then read PGD from mm_struct...`);
+//         console.log(`\n=== MATCHING PIDs TO PGDs ===`);
+//         console.log(`Strategy: Use swapper_pg_dir to translate mm_struct addresses, then read PGD from mm_struct...`);
 
         const pidToPgd = new Map<number, number>();
         let matchCount = 0;
@@ -2883,24 +2866,24 @@ export class PagedKernelDiscovery {
         if (!kernelPGDForTranslation) {
             console.log(`ERROR: No kernel PGD found - cannot translate mm_struct addresses`);
         } else {
-            console.log(`Using kernel PGD (swapper_pg_dir) at 0x${kernelPGDForTranslation.toString(16)} for translations`);
+//             console.log(`Using kernel PGD (swapper_pg_dir) at 0x${kernelPGDForTranslation.toString(16)} for translations`);
 
             // Check what PGD entries exist for vmalloc range
-            console.log('\n=== CHECKING KERNEL PGD FOR VMALLOC ENTRIES ===');
-            console.log('vmalloc range is 0xffff000000000000 - 0xffff7fffffffffff');
+//             console.log('\n=== CHECKING KERNEL PGD FOR VMALLOC ENTRIES ===');
+//             console.log('vmalloc range is 0xffff000000000000 - 0xffff7fffffffffff');
 
             // For ARM64 with 4KB pages and 48-bit VA:
             // PGD covers bits 47:39 (9 bits = 512 entries)
             // vmalloc at 0xffff0000... is in the kernel space (high canonical addresses)
 
-            console.log('Understanding ARM64 address space with ASLR:');
-            console.log('  0x0000000000000000 - 0x0000ffffffffffff : 48-bit user space');
-            console.log('    With ASLR: User processes use HIGH addresses (e.g., 0xc3..., 0xe7..., 0xf1...)');
-            console.log('    This maps to PGD indices throughout 0-511 (e.g., 371, 390, 482)');
-            console.log('  0xffff000000000000 - 0xffffffffffffffff : Kernel space (bits 63-48 all set)');
+//             console.log('Understanding ARM64 address space with ASLR:');
+//             console.log('  0x0000000000000000 - 0x0000ffffffffffff : 48-bit user space');
+//             console.log('    With ASLR: User processes use HIGH addresses (e.g., 0xc3..., 0xe7..., 0xf1...)');
+//             console.log('    This maps to PGD indices throughout 0-511 (e.g., 371, 390, 482)');
+//             console.log('  0xffff000000000000 - 0xffffffffffffffff : Kernel space (bits 63-48 all set)');
 
-            console.log('\nThe trick: vmalloc VA 0xffff000000000000 uses TTBR1 but maps to PGD[0]!');
-            console.log('This is because TTBR1 (kernel) sees the upper 256 entries as 0-255');
+//             console.log('\nThe trick: vmalloc VA 0xffff000000000000 uses TTBR1 but maps to PGD[0]!');
+//             console.log('This is because TTBR1 (kernel) sees the upper 256 entries as 0-255');
 
             // Read the kernel PGD to see what's mapped
             const pgdOffset = kernelPGDForTranslation - KernelConstants.GUEST_RAM_START;
@@ -2908,7 +2891,7 @@ export class PagedKernelDiscovery {
 
             if (pgdData) {
                 const view = new DataView(pgdData.buffer, pgdData.byteOffset, pgdData.byteLength);
-                console.log('Checking kernel PGD entries:');
+//                 console.log('Checking kernel PGD entries:');
 
                 // Just show all non-zero entries
                 const nonZero = [];
@@ -2918,31 +2901,31 @@ export class PagedKernelDiscovery {
                         nonZero.push(i);
                     }
                 }
-                console.log(`  Non-zero entries at indices: ${nonZero.join(', ')}`);
+//                 console.log(`  Non-zero entries at indices: ${nonZero.join(', ')}`);
 
                 // Check PGD[0] specifically
                 const pgd0 = view.getBigUint64(0, true);
                 if (pgd0 !== 0n) {
-                    console.log(`\n  PGD[0] = 0x${pgd0.toString(16)} - THIS COVERS VMALLOC!`);
-                    console.log('  vmalloc addresses 0xffff0000... should go through PGD[0]');
-                    console.log('  But the translation still fails - why?');
+//                     console.log(`\n  PGD[0] = 0x${pgd0.toString(16)} - THIS COVERS VMALLOC!`);
+//                     console.log('  vmalloc addresses 0xffff0000... should go through PGD[0]');
+//                     console.log('  But the translation still fails - why?');
                 }
             }
 
             // For each process with an mm_struct pointer
             const userProcesses = Array.from(this.processes.values()).filter(p => p.mmStruct && p.mmStruct !== 0);
-            console.log(`Testing ${Math.min(20, userProcesses.length)} user processes...`);
+//             console.log(`Testing ${Math.min(20, userProcesses.length)} user processes...`);
 
             // First show a summary of all vmalloc addresses
-            console.log('\n=== VMALLOC ADDRESS SUMMARY ===');
-            console.log('All mm_struct addresses are in vmalloc space (0xffff0000... range):');
+//             console.log('\n=== VMALLOC ADDRESS SUMMARY ===');
+//             console.log('All mm_struct addresses are in vmalloc space (0xffff0000... range):');
             for (const proc of userProcesses.slice(0, 10)) {
-                console.log(`  PID ${proc.pid.toString().padStart(5)}: 0x${proc.mmStruct.toString(16)} (${proc.name})`);
+//                 console.log(`  PID ${proc.pid.toString().padStart(5)}: 0x${proc.mmStruct.toString(16)} (${proc.name})`);
             }
             if (userProcesses.length > 10) {
-                console.log(`  ... and ${userProcesses.length - 10} more`);
+//                 console.log(`  ... and ${userProcesses.length - 10} more`);
             }
-            console.log('');
+//             console.log('');
 
             for (const process of userProcesses.slice(0, 20)) { // Test first 20 processes
                 const mmVA = process.mmStruct;
@@ -2950,16 +2933,16 @@ export class PagedKernelDiscovery {
                 const mmClean = stripPAC(BigInt(mmVA));
 
                 // Show the full VA and the cleaned VA after PAC stripping
-                console.log(`\nPID ${process.pid.toString().padStart(5)} (${process.name.padEnd(15)}): mm_struct VA = 0x${mmVA.toString(16)}`);
+//                 console.log(`\nPID ${process.pid.toString().padStart(5)} (${process.name.padEnd(15)}): mm_struct VA = 0x${mmVA.toString(16)}`);
                 if (mmClean !== BigInt(mmVA)) {
-                    console.log(`  PAC stripped: 0x${Number(mmClean).toString(16)}`);
+//                     console.log(`  PAC stripped: 0x${Number(mmClean).toString(16)}`);
                 }
 
                 // Show which vmalloc range this falls into
                 const mmVANum = typeof mmVA === 'bigint' ? Number(mmVA) : mmVA;
                 if (mmVANum >= 0xffff000000000000 && mmVANum < 0xffff800000000000) {
                     const offset = mmVANum - 0xffff000000000000;
-                    console.log(`  vmalloc range: 0xffff0000... + 0x${offset.toString(16)}`);
+//                     console.log(`  vmalloc range: 0xffff0000... + 0x${offset.toString(16)}`);
                 }
 
                 attemptCount++;
@@ -2967,8 +2950,8 @@ export class PagedKernelDiscovery {
                 // Use kernel PGD to translate this mm_struct VA
                 // First try the debug version to see where it fails
                 if (process.pid === 1736) { // Just debug the first one
-                    console.log('  DEBUG: Walking page table for VA 0x' + Number(mmClean).toString(16));
-                    console.log('  As BigInt: 0x' + mmClean.toString(16));
+//                     console.log('  DEBUG: Walking page table for VA 0x' + Number(mmClean).toString(16));
+//                     console.log('  As BigInt: 0x' + mmClean.toString(16));
                     this.debugTranslateVA(mmClean, kernelPGDForTranslation);
                 }
 
@@ -2977,31 +2960,31 @@ export class PagedKernelDiscovery {
 
                 // Debug: show what we got
                 if (process.pid === 1736) {
-                    console.log(`  translateVA returned: ${mmPA === null ? 'null' : '0x' + mmPA.toString(16)}`);
+//                     console.log(`  translateVA returned: ${mmPA === null ? 'null' : '0x' + mmPA.toString(16)}`);
                 }
 
                 if (mmPA && mmPA > 0) {  // Just check it's a valid PA, not in guest RAM range
                     translateSuccess++;
-                    console.log(`  ✓ Translated mm_struct to PA 0x${mmPA.toString(16)}`);
+//                     console.log(`  ✓ Translated mm_struct to PA 0x${mmPA.toString(16)}`);
 
                     // Note if it's outside the normal guest RAM range
                     if (mmPA < KernelConstants.GUEST_RAM_START) {
-                        console.log(`    Note: PA is below guest RAM start (0x${KernelConstants.GUEST_RAM_START.toString(16)})`);
+//                         console.log(`    Note: PA is below guest RAM start (0x${KernelConstants.GUEST_RAM_START.toString(16)})`);
                     }
 
                     // Read the PGD pointer from the mm_struct
                     // For PAs below GUEST_RAM_START, we need to handle them specially
                     // These are in a different memory region that we can't access through our memory file
                     if (mmPA < KernelConstants.GUEST_RAM_START) {
-                        console.log(`    ✗ Cannot read mm_struct - PA 0x${mmPA.toString(16)} is outside memory file range`);
-                        console.log(`    This confirms vmalloc allocations are in kernel-reserved memory!`);
+//                         console.log(`    ✗ Cannot read mm_struct - PA 0x${mmPA.toString(16)} is outside memory file range`);
+//                         console.log(`    This confirms vmalloc allocations are in kernel-reserved memory!`);
                     } else {
                         const mmOffset = mmPA - KernelConstants.GUEST_RAM_START;
                         const pgdInMm = this.memory.readU64(mmOffset + KernelConstants.PGD_OFFSET_IN_MM);
 
                         if (pgdInMm) {
                             // PGD is stored as a kernel VA in mm_struct - need to translate it
-                            console.log(`    PGD kernel VA from mm_struct: 0x${pgdInMm.toString(16)}`);
+//                             console.log(`    PGD kernel VA from mm_struct: 0x${pgdInMm.toString(16)}`);
 
                             let pgdPA: number;
                             if ((pgdInMm & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
@@ -3012,34 +2995,34 @@ export class PagedKernelDiscovery {
                                     continue;
                                 }
                                 pgdPA = translated;
-                                console.log(`    ✓ Translated PGD: VA 0x${pgdInMm.toString(16)} → PA 0x${pgdPA.toString(16)}`);
+//                                 console.log(`    ✓ Translated PGD: VA 0x${pgdInMm.toString(16)} → PA 0x${pgdPA.toString(16)}`);
                             } else if (pgdInMm >= BigInt(KernelConstants.GUEST_RAM_START) &&
                                       pgdInMm < BigInt(KernelConstants.GUEST_RAM_END)) {
                                 // Already a physical address
                                 pgdPA = Number(pgdInMm);
-                                console.log(`    PGD already physical: 0x${pgdPA.toString(16)}`);
+//                                 console.log(`    PGD already physical: 0x${pgdPA.toString(16)}`);
                             } else {
-                                console.log(`    ✗ Invalid PGD value: 0x${pgdInMm.toString(16)}`);
+//                                 console.log(`    ✗ Invalid PGD value: 0x${pgdInMm.toString(16)}`);
                                 continue;
                             }
 
                             pgdReadSuccess++;
-                            console.log(`    ✓ Got PGD PA: 0x${pgdPA.toString(16)}`);
+//                             console.log(`    ✓ Got PGD PA: 0x${pgdPA.toString(16)}`);
 
                             // Check if this PGD is in our list of mixed PGDs
                             const foundPgd = userPGDs.find(p => p.addr === pgdPA);
                             if (foundPgd) {
-                                console.log(`      ✓✓ CONFIRMED: PGD is in our mixed PGD list (${foundPgd.userEntries} user, ${foundPgd.kernelEntries} kernel entries)`);
+//                                 console.log(`      ✓✓ CONFIRMED: PGD is in our mixed PGD list (${foundPgd.userEntries} user, ${foundPgd.kernelEntries} kernel entries)`);
                                 pidToPgd.set(process.pid, pgdPA);
                                 matchCount++;
                             } else {
-                                console.log(`      ⚠ PGD not in our mixed PGD list - might be outside scan range`);
+//                                 console.log(`      ⚠ PGD not in our mixed PGD list - might be outside scan range`);
                                 // Still record it
                                 pidToPgd.set(process.pid, pgdPA);
                                 matchCount++;
                             }
                         } else {
-                            console.log(`    ✗ Invalid PGD in mm_struct: 0x${pgdInMm?.toString(16) || 'null'}`);
+//                             console.log(`    ✗ Invalid PGD in mm_struct: 0x${pgdInMm?.toString(16) || 'null'}`);
                         }
                     }
                 } else {
@@ -3048,30 +3031,30 @@ export class PagedKernelDiscovery {
             }
         }
 
-        console.log(`\n=== MATCHING RESULTS ===`);
-        console.log(`Attempted: ${attemptCount} processes`);
-        console.log(`Translated mm_struct: ${translateSuccess}/${attemptCount} (${(translateSuccess*100/attemptCount).toFixed(1)}%)`);
-        console.log(`Read valid PGD: ${pgdReadSuccess}/${translateSuccess} (${translateSuccess > 0 ? (pgdReadSuccess*100/translateSuccess).toFixed(1) : 0}%)`);
-        console.log(`Matched to PGDs: ${matchCount}/${pgdReadSuccess} (${pgdReadSuccess > 0 ? (matchCount*100/pgdReadSuccess).toFixed(1) : 0}%)`);
+//         console.log(`\n=== MATCHING RESULTS ===`);
+//         console.log(`Attempted: ${attemptCount} processes`);
+//         console.log(`Translated mm_struct: ${translateSuccess}/${attemptCount} (${(translateSuccess*100/attemptCount).toFixed(1)}%)`);
+//         console.log(`Read valid PGD: ${pgdReadSuccess}/${translateSuccess} (${translateSuccess > 0 ? (pgdReadSuccess*100/translateSuccess).toFixed(1) : 0}%)`);
+//         console.log(`Matched to PGDs: ${matchCount}/${pgdReadSuccess} (${pgdReadSuccess > 0 ? (matchCount*100/pgdReadSuccess).toFixed(1) : 0}%)`);
 
         if (matchCount > 0) {
-            console.log(`\nMatched PIDs:`);
+//             console.log(`\nMatched PIDs:`);
             for (const [pid, pgd] of pidToPgd) {
                 const process = this.processes.get(pid)!;
                 const foundPgd = userPGDs.find(p => p.addr === pgd);
                 if (foundPgd) {
-                    console.log(`  PID ${pid} (${process.name}) → PGD at 0x${pgd.toString(16)} (${foundPgd.userEntries} user, ${foundPgd.kernelEntries} kernel)`);
+//                     console.log(`  PID ${pid} (${process.name}) → PGD at 0x${pgd.toString(16)} (${foundPgd.userEntries} user, ${foundPgd.kernelEntries} kernel)`);
                 } else {
-                    console.log(`  PID ${pid} (${process.name}) → PGD at 0x${pgd.toString(16)} (not in scan range)`);
+//                     console.log(`  PID ${pid} (${process.name}) → PGD at 0x${pgd.toString(16)} (not in scan range)`);
                 }
             }
         } else {
-            console.log(`\nNo matches found. Possible reasons:`);
+//             console.log(`\nNo matches found. Possible reasons:`);
             if (translateSuccess === 0) {
-                console.log(`  - Kernel PGD cannot translate vmalloc addresses (expected!)`);
-                console.log(`  - vmalloc addresses need per-process or vmalloc-specific mappings`);
+//                 console.log(`  - Kernel PGD cannot translate vmalloc addresses (expected!)`);
+//                 console.log(`  - vmalloc addresses need per-process or vmalloc-specific mappings`);
             } else if (pgdReadSuccess === 0) {
-                console.log(`  - PGD offset in mm_struct might be different than ${KernelConstants.PGD_OFFSET_IN_MM}`);
+//                 console.log(`  - PGD offset in mm_struct might be different than ${KernelConstants.PGD_OFFSET_IN_MM}`);
             }
         }
 
@@ -3106,18 +3089,18 @@ export class PagedKernelDiscovery {
                 if (mmPa) {
                     // Debug: dump memory around mm_struct to see what we're reading
                     if (processCount < 5 || (process.pid > 0 && process.pid < 1000)) {
-                        console.log(`\n  PID ${process.pid} (${process.name}):`);
-                        console.log(`    mm_struct VA: 0x${process.mmStruct.toString(16)}`);
-                        console.log(`    mm_struct PA from translation: 0x${mmPa.toString(16)}`);
+//                         console.log(`\n  PID ${process.pid} (${process.name}):`);
+//                         console.log(`    mm_struct VA: 0x${process.mmStruct.toString(16)}`);
+//                         console.log(`    mm_struct PA from translation: 0x${mmPa.toString(16)}`);
 
                         // Check if the PA makes sense and determine file offset
                         if (mmPa < KernelConstants.GUEST_RAM_START) {
-                            console.log(`    PA 0x${mmPa.toString(16)} is below GUEST_RAM_START (0x${KernelConstants.GUEST_RAM_START.toString(16)})`);
-                            console.log(`    Will try direct file offset: 0x${mmPa.toString(16)}`);
+//                             console.log(`    PA 0x${mmPa.toString(16)} is below GUEST_RAM_START (0x${KernelConstants.GUEST_RAM_START.toString(16)})`);
+//                             console.log(`    Will try direct file offset: 0x${mmPa.toString(16)}`);
                         } else if (mmPa >= KernelConstants.GUEST_RAM_END) {
-                            console.log(`    WARNING: PA 0x${mmPa.toString(16)} is above GUEST_RAM_END (0x${KernelConstants.GUEST_RAM_END.toString(16)})`);
+//                             console.log(`    WARNING: PA 0x${mmPa.toString(16)} is above GUEST_RAM_END (0x${KernelConstants.GUEST_RAM_END.toString(16)})`);
                         } else {
-                            console.log(`    File offset: 0x${(mmPa - KernelConstants.GUEST_RAM_START).toString(16)}`);
+//                             console.log(`    File offset: 0x${(mmPa - KernelConstants.GUEST_RAM_START).toString(16)}`);
                         }
 
                         // Only try to read if the PA is in valid range OR if it's below GUEST_RAM_START
@@ -3130,18 +3113,18 @@ export class PagedKernelDiscovery {
                             mmBytes = this.memory.readBytes(effectiveOffset, 512);
                         } else if (mmPa < KernelConstants.GUEST_RAM_START && mmPa >= 0) {
                             // Try using PA directly as file offset for low memory
-                            console.log(`    Attempting to read from direct offset 0x${mmPa.toString(16)}`);
+//                             console.log(`    Attempting to read from direct offset 0x${mmPa.toString(16)}`);
                             effectiveOffset = mmPa;
                             try {
                                 mmBytes = this.memory.readBytes(effectiveOffset, 512);
                                 if (mmBytes) {
-                                    console.log(`    SUCCESS: Read from low memory at offset 0x${mmPa.toString(16)}`);
+//                                     console.log(`    SUCCESS: Read from low memory at offset 0x${mmPa.toString(16)}`);
                                 }
                             } catch (e) {
-                                console.log(`    FAILED: Cannot read from offset 0x${mmPa.toString(16)}`);
+//                                 console.log(`    FAILED: Cannot read from offset 0x${mmPa.toString(16)}`);
                             }
                         } else {
-                            console.log(`    Cannot read mm_struct - PA out of range`);
+//                             console.log(`    Cannot read mm_struct - PA out of range`);
                         }
 
                         // mmBytes available for further debugging if needed
@@ -3155,16 +3138,16 @@ export class PagedKernelDiscovery {
                         try {
                             pgdPtr = this.memory.readU64(mmPa + KernelConstants.PGD_OFFSET_IN_MM);
                             if (pgdPtr && processCount < 5) {
-                                console.log(`    Read PGD from PA 0x${mmPa.toString(16)}: 0x${pgdPtr.toString(16)}`);
+//                                 console.log(`    Read PGD from PA 0x${mmPa.toString(16)}: 0x${pgdPtr.toString(16)}`);
                             }
                         } catch (e) {
                             if (processCount < 5) {
-                                console.log(`    Cannot read PGD from PA offset 0x${mmPa.toString(16)}`);
+//                                 console.log(`    Cannot read PGD from PA offset 0x${mmPa.toString(16)}`);
                             }
                         }
                     } else {
                         if (processCount < 5 || (process.pid > 0 && process.pid < 1000)) {
-                            console.log(`    Cannot read PGD - mm_struct PA 0x${mmPa.toString(16)} is outside accessible range`);
+//                             console.log(`    Cannot read PGD - mm_struct PA 0x${mmPa.toString(16)} is outside accessible range`);
                         }
                     }
 
@@ -3185,7 +3168,7 @@ export class PagedKernelDiscovery {
                                 // So add GUEST_RAM_START to convert file offset to physical address
                                 finalPgd = translatedPgd + KernelConstants.GUEST_RAM_START;
                                 if (processCount < 5 || (process.pid > 0 && process.pid < 1000)) {
-                                    console.log(`    PGD: VA 0x${pgdPtr.toString(16)} -> file offset 0x${translatedPgd.toString(16)} -> PA 0x${finalPgd.toString(16)} ✓`);
+//                                     console.log(`    PGD: VA 0x${pgdPtr.toString(16)} -> file offset 0x${translatedPgd.toString(16)} -> PA 0x${finalPgd.toString(16)} ✓`);
                                 }
                             }
                         }
@@ -3193,7 +3176,7 @@ export class PagedKernelDiscovery {
                         else if (Number(pgdPtr) >= 0 && Number(pgdPtr) < this.totalSize) {
                             finalPgd = Number(pgdPtr);
                             if (processCount < 5 || (process.pid > 0 && process.pid < 1000)) {
-                                console.log(`    PGD: PA 0x${finalPgd.toString(16)} (direct) ✓`);
+//                                 console.log(`    PGD: PA 0x${finalPgd.toString(16)} (direct) ✓`);
                             }
                         }
                     }
@@ -3210,19 +3193,19 @@ export class PagedKernelDiscovery {
                             invalidSamples.push({pid: process.pid, name: process.name, value: pgdPtr?.toString(16) || null});
                         }
                         if (processCount < 5 || (process.pid > 0 && process.pid < 1000)) {
-                            console.log(`    PGD value: 0x${pgdPtr?.toString(16) || 'null'} - INVALID`);
+//                             console.log(`    PGD value: 0x${pgdPtr?.toString(16) || 'null'} - INVALID`);
                         }
                     }
                 } else {
                     translateFailCount++;
                     if (processCount < 3 || (process.pid > 0 && process.pid < 1000)) {
-                        console.log(`  PID ${process.pid} (${process.name}): Could not translate mm_struct VA 0x${process.mmStruct.toString(16)}`);
+//                         console.log(`  PID ${process.pid} (${process.name}): Could not translate mm_struct VA 0x${process.mmStruct.toString(16)}`);
                     }
                 }
             } else {
                 noMmStructCount++;
                 if (processCount < 3) {
-                    console.log(`  PID ${process.pid} (${process.name}): No mm_struct or swapper_pg_dir`);
+//                     console.log(`  PID ${process.pid} (${process.name}): No mm_struct or swapper_pg_dir`);
                 }
             }
 
@@ -3244,10 +3227,10 @@ export class PagedKernelDiscovery {
                     });
 
                     if (processCount < 3) {
-                        console.log(`    Found ${ptes.length} PTEs`);
+//                         console.log(`    Found ${ptes.length} PTEs`);
                     }
                 } else if (processCount < 3) {
-                    console.log(`    No PTEs found`);
+//                     console.log(`    No PTEs found`);
                 }
             }
 
@@ -3268,7 +3251,7 @@ export class PagedKernelDiscovery {
                 });
 
                 if (processCount < 3) {
-                    console.log(`    Found ${sections.length} memory sections via maple tree`);
+//                     console.log(`    Found ${sections.length} memory sections via maple tree`);
                 }
             }
 
@@ -3276,9 +3259,9 @@ export class PagedKernelDiscovery {
         }
 
         // Walk the kernel page tables (swapper_pg_dir) for kernel PTEs
-        console.log(`\n=== WALKING KERNEL PAGE TABLES (swapper_pg_dir) ===`);
+//         console.log(`\n=== WALKING KERNEL PAGE TABLES (swapper_pg_dir) ===`);
         if (this.swapperPgDir) {
-            console.log(`Kernel PGD at PA: 0x${this.swapperPgDir.toString(16)}`);
+//             console.log(`Kernel PGD at PA: 0x${this.swapperPgDir.toString(16)}`);
 
             // Create a pseudo-process for the kernel
             const kernelProcess: ProcessInfo = {
@@ -3293,7 +3276,7 @@ export class PagedKernelDiscovery {
             const kernelPtes = this.walkKernelPortionOfPageTables(kernelProcess);
 
             if (kernelPtes.length > 0) {
-                console.log(`  Found ${kernelPtes.length} kernel PTEs`);
+//                 console.log(`  Found ${kernelPtes.length} kernel PTEs`);
 
                 // Add kernel PTEs to the collection
                 kernelPtes.forEach(pte => {
@@ -3310,40 +3293,40 @@ export class PagedKernelDiscovery {
                 ptesByPid.set(0n, kernelPtes);
 
                 // Sample some kernel PTEs
-                console.log(`  Sample kernel PTEs (first 5):`);
+//                 console.log(`  Sample kernel PTEs (first 5):`);
                 kernelPtes.slice(0, 5).forEach(pte => {
                     const vaHex = pte.va.toString(16).padStart(16, '0');
                     const paHex = pte.pa.toString(16).padStart(12, '0');
-                    console.log(`    VA 0x${vaHex} -> PA 0x${paHex} (flags: 0x${pte.flags.toString(16)})`);
+//                     console.log(`    VA 0x${vaHex} -> PA 0x${paHex} (flags: 0x${pte.flags.toString(16)})`);
                 });
             } else {
-                console.log(`  No kernel PTEs found (this shouldn't happen!)`);
+//                 console.log(`  No kernel PTEs found (this shouldn't happen!)`);
             }
         } else {
             console.log(`  ERROR: swapper_pg_dir not found!`);
         }
 
         // Report PGD extraction statistics
-        console.log(`\n=== PGD EXTRACTION STATISTICS ===`);
-        console.log(`Total processes: ${processCount}`);
-        console.log(`  - Valid PGDs extracted: ${validPgdCount}`);
-        console.log(`  - Invalid PGD values: ${invalidPgdCount}`);
-        console.log(`  - Translation failures: ${translateFailCount}`);
-        console.log(`  - No mm_struct: ${noMmStructCount}`);
+//         console.log(`\n=== PGD EXTRACTION STATISTICS ===`);
+//         console.log(`Total processes: ${processCount}`);
+//         console.log(`  - Valid PGDs extracted: ${validPgdCount}`);
+//         console.log(`  - Invalid PGD values: ${invalidPgdCount}`);
+//         console.log(`  - Translation failures: ${translateFailCount}`);
+//         console.log(`  - No mm_struct: ${noMmStructCount}`);
 
         if (validSamples.length > 0) {
-            console.log(`\nValid PGD samples:`);
+//             console.log(`\nValid PGD samples:`);
             validSamples.forEach(s => {
-                console.log(`  PID ${s.pid} (${s.name}): PGD=0x${s.pgd.toString(16)}`);
+//                 console.log(`  PID ${s.pid} (${s.name}): PGD=0x${s.pgd.toString(16)}`);
             });
         }
 
         if (invalidSamples.length > 0) {
-            console.log(`\nInvalid PGD samples:`);
+//             console.log(`\nInvalid PGD samples:`);
             invalidSamples.forEach(s => {
                 // Handle null values
                 if (!s.value) {
-                    console.log(`  PID ${s.pid} (${s.name}): null`);
+//                     console.log(`  PID ${s.pid} (${s.name}): null`);
                     return;
                 }
 
@@ -3361,47 +3344,47 @@ export class PagedKernelDiscovery {
                         }
                     }
                 }
-                console.log(`  PID ${s.pid} (${s.name}): 0x${s.value}${asciiStr ? ` (ASCII: "${asciiStr}")` : ''}`);
+//                 console.log(`  PID ${s.pid} (${s.name}): 0x${s.value}${asciiStr ? ` (ASCII: "${asciiStr}")` : ''}`);
             });
         }
 
-        console.log(`\nProcessed ${processCount} processes:`);
-        console.log(`  - ${ptesByPid.size} processes with PTEs found`);
+//         console.log(`\nProcessed ${processCount} processes:`);
+//         console.log(`  - ${ptesByPid.size} processes with PTEs found`);
 
         // Report simple translation statistics
         if (this.simpleTranslationSuccesses > 0 || this.simpleTranslationFailures > 0) {
-            console.log(`\n=== SIMPLE TRANSLATION STATS ===`);
-            console.log(`  Successes: ${this.simpleTranslationSuccesses}`);
-            console.log(`  Failures: ${this.simpleTranslationFailures}`);
+//             console.log(`\n=== SIMPLE TRANSLATION STATS ===`);
+//             console.log(`  Successes: ${this.simpleTranslationSuccesses}`);
+//             console.log(`  Failures: ${this.simpleTranslationFailures}`);
             if (this.simpleTranslationSuccesses > 0) {
                 const successRate = (this.simpleTranslationSuccesses / (this.simpleTranslationSuccesses + this.simpleTranslationFailures) * 100).toFixed(1);
-                console.log(`  Success rate: ${successRate}%`);
+//                 console.log(`  Success rate: ${successRate}%`);
             }
         }
 
         // Get page collection statistics
         const pageStats = pageCollection.getStats();
-        console.log(`\n=== PAGE COLLECTION STATS ===`);
-        console.log(`  Total pages tracked: ${pageStats.totalPages}`);
-        console.log(`  Total mappings: ${pageStats.totalMappings}`);
-        console.log(`  Shared pages: ${pageStats.sharedPages}`);
-        console.log(`  Unique processes: ${pageStats.uniqueProcesses}`);
-        console.log(`  Avg mappings/page: ${pageStats.avgMappingsPerPage.toFixed(2)}`);
+//         console.log(`\n=== PAGE COLLECTION STATS ===`);
+//         console.log(`  Total pages tracked: ${pageStats.totalPages}`);
+//         console.log(`  Total mappings: ${pageStats.totalMappings}`);
+//         console.log(`  Shared pages: ${pageStats.sharedPages}`);
+//         console.log(`  Unique processes: ${pageStats.uniqueProcesses}`);
+//         console.log(`  Avg mappings/page: ${pageStats.avgMappingsPerPage.toFixed(2)}`);
 
         // Show page type breakdown
-        console.log(`  Page types:`);
+//         console.log(`  Page types:`);
         for (const [type, count] of pageStats.byType) {
-            console.log(`    ${type}: ${count}`);
+//             console.log(`    ${type}: ${count}`);
         }
 
         // Example: Show some shared pages
         const sharedPages = pageCollection.getSharedPages();
         if (sharedPages.length > 0) {
-            console.log(`\n  Sample shared pages (first 3):`);
+//             console.log(`\n  Sample shared pages (first 3):`);
             sharedPages.slice(0, 3).forEach(page => {
-                console.log(`    PA 0x${page.pa.toString(16)}: shared by ${page.mappings.length} processes`);
+//                 console.log(`    PA 0x${page.pa.toString(16)}: shared by ${page.mappings.length} processes`);
                 page.mappings.slice(0, 2).forEach(m => {
-                    console.log(`      - PID ${m.pid} (${m.processName}) at VA 0x${m.va.toString(16)}`);
+//                     console.log(`      - PID ${m.pid} (${m.processName}) at VA 0x${m.va.toString(16)}`);
                 });
             });
         }
@@ -3411,21 +3394,21 @@ export class PagedKernelDiscovery {
         // Compare with QMP ground truth if available
         if (qmpKernelPGD && realKernelPGD) {
             if (qmpKernelPGD === realKernelPGD) {
-                console.log('\n✓✓✓ VALIDATION SUCCESS: Discovered kernel PGD matches QMP ground truth!');
+//                 console.log('\n✓✓✓ VALIDATION SUCCESS: Discovered kernel PGD matches QMP ground truth!');
             } else {
-                console.log(`\n⚠ VALIDATION MISMATCH:`);
-                console.log(`  QMP says: 0x${qmpKernelPGD.toString(16)}`);
-                console.log(`  We found: 0x${realKernelPGD.toString(16)}`);
-                console.log(`  Using QMP value as it's authoritative`);
+//                 console.log(`\n⚠ VALIDATION MISMATCH:`);
+//                 console.log(`  QMP says: 0x${qmpKernelPGD.toString(16)}`);
+//                 console.log(`  We found: 0x${realKernelPGD.toString(16)}`);
+//                 console.log(`  Using QMP value as it's authoritative`);
                 realKernelPGD = qmpKernelPGD;
                 this.swapperPgDir = qmpKernelPGD;
             }
         }
 
         // FINAL SUMMARY - Concise output that won't get truncated
-        console.log('\n' + '='.repeat(60));
-        console.log('KERNEL DISCOVERY COMPLETE - FINAL SUMMARY');
-        console.log('='.repeat(60));
+//         console.log('\n' + '='.repeat(60));
+//         console.log('KERNEL DISCOVERY COMPLETE - FINAL SUMMARY');
+//         console.log('='.repeat(60));
 
         // Get real processes (not garbage)
         const realProcesses = Array.from(this.processes.values()).filter(p => {
@@ -3439,22 +3422,22 @@ export class PagedKernelDiscovery {
         const knownProcesses = realProcesses.filter(p =>
             KNOWN_PROCESSES.some(known => p.name.includes(known)));
 
-        console.log(`✓ Found ${realProcesses.length} REAL processes (filtered from ${this.processes.size} candidates)`);
-        console.log(`  - Known system processes: ${knownProcesses.length}`);
+//         console.log(`✓ Found ${realProcesses.length} REAL processes (filtered from ${this.processes.size} candidates)`);
+//         console.log(`  - Known system processes: ${knownProcesses.length}`);
         // Removed VLC special case
 
         if (this.swapperPgDir) {
-            console.log(`\n✓ Kernel PGD (swapper_pg_dir): 0x${this.swapperPgDir.toString(16)}`);
+//             console.log(`\n✓ Kernel PGD (swapper_pg_dir): 0x${this.swapperPgDir.toString(16)}`);
         } else {
-            console.log(`\n✗ No valid kernel PGD found`);
+//             console.log(`\n✗ No valid kernel PGD found`);
         }
 
-        console.log('\nSample processes:');
+//         console.log('\nSample processes:');
         realProcesses.slice(0, 5).forEach(p => {
-            console.log(`  ${p.pid}: ${p.name} (kernel=${p.isKernelThread})`);
+//             console.log(`  ${p.pid}: ${p.name} (kernel=${p.isKernelThread})`);
         });
 
-        console.log('='.repeat(60));
+//         console.log('='.repeat(60));
 
         return {
             processes: Array.from(this.processes.values()),
@@ -3488,7 +3471,7 @@ export class PagedKernelDiscovery {
                 // For linear mapping, VA offset should equal PA - RAM_START
                 const expectedPA = KernelConstants.GUEST_RAM_START + va;
                 if (translatedPA === expectedPA) {
-                    console.log(`  ✓ Linear mapping verified: VA 0x${va.toString(16)} → PA 0x${translatedPA.toString(16)}`);
+//                     console.log(`  ✓ Linear mapping verified: VA 0x${va.toString(16)} → PA 0x${translatedPA.toString(16)}`);
                     return true; // This IS the kernel PGD!
                 }
             }
@@ -3537,13 +3520,13 @@ export class PagedKernelDiscovery {
         // Special debug for real kernel PGD
         const isRealPGD = pgdAddr === 0x136dbf000;
         if (isRealPGD) {
-            console.log(`    DEBUG: Testing real kernel PGD with entry counting validation`);
+//             console.log(`    DEBUG: Testing real kernel PGD with entry counting validation`);
         }
 
         // Read the PGD page
         const pageBuffer = this.memory.readBytes(pgdOffset, KernelConstants.PAGE_SIZE);
         if (!pageBuffer) {
-            if (isRealPGD) console.log(`      Failed: Could not read PGD page`);
+//             if (isRealPGD) console.log(`      Failed: Could not read PGD page`);
             return {validEntries: 0, kernelEntries: 0, userEntries: 0};
         }
 
@@ -3581,22 +3564,22 @@ export class PagedKernelDiscovery {
             }
 
             if (isRealPGD && validEntries <= 10) {
-                console.log(`      PGD[${i}]: entry=0x${entryBig.toString(16)}, physAddr=0x${physAddr.toString(16)} (${i < 256 ? 'user' : 'kernel'})`);
+//                 console.log(`      PGD[${i}]: entry=0x${entryBig.toString(16)}, physAddr=0x${physAddr.toString(16)} (${i < 256 ? 'user' : 'kernel'})`);
             }
         }
 
         if (isRealPGD) {
-            console.log(`      Total valid entries: ${validEntries} (${userEntries} user, ${kernelEntries} kernel)`);
+//             console.log(`      Total valid entries: ${validEntries} (${userEntries} user, ${kernelEntries} kernel)`);
 
             // Analyze kernel PGD entries in detail
-            console.log(`      Detailed kernel PGD entry analysis:`);
+//             console.log(`      Detailed kernel PGD entry analysis:`);
             for (let i = 256; i < 512; i++) {
                 const entryBig = view.getBigUint64(i * 8, true);
                 const lowBits = Number(entryBig & 0x3n);
                 if (lowBits === 0x3) {
                     const physAddr = Number(entryBig & 0x0000FFFFFFFFF000n);
                     const vaBase = 0xffff000000000000n + (BigInt(i) << 39n);
-                    console.log(`        PGD[${i}]: VA range 0x${vaBase.toString(16)}-0x${(vaBase + (1n << 39n) - 1n).toString(16)} → PUD table at PA 0x${physAddr.toString(16)}`);
+//                     console.log(`        PGD[${i}]: VA range 0x${vaBase.toString(16)}-0x${(vaBase + (1n << 39n) - 1n).toString(16)} → PUD table at PA 0x${physAddr.toString(16)}`);
                 }
             }
         }
@@ -3608,10 +3591,10 @@ export class PagedKernelDiscovery {
      * Analyze kernel PTEs by virtual address ranges to validate PGD structure
      */
     private analyzeKernelPTEDistribution(): void {
-        console.log('\n=== KERNEL PTE DISTRIBUTION ANALYSIS ===');
+//         console.log('\n=== KERNEL PTE DISTRIBUTION ANALYSIS ===');
 
         if (!this.swapperPgDir) {
-            console.log('No kernel PGD found, skipping analysis');
+//             console.log('No kernel PGD found, skipping analysis');
             return;
         }
 
@@ -3639,7 +3622,7 @@ export class PagedKernelDiscovery {
                 regionType = "Kernel";
             }
 
-            console.log(`\nAnalyzing PGD[${pgdIndex}] (${regionType}) VA range 0x${vaBase.toString(16)}-0x${(vaBase + (1n << 39n) - 1n).toString(16)}:`);
+//             console.log(`\nAnalyzing PGD[${pgdIndex}] (${regionType}) VA range 0x${vaBase.toString(16)}-0x${(vaBase + (1n << 39n) - 1n).toString(16)}:`);
 
             // Walk this PGD entry's page tables
             const pgdPtes = this.walkKernelPageTablesForAnalysis(Number(pgdEntry & 0x0000FFFFFFFFF000n), vaBase, 1);
@@ -3670,11 +3653,11 @@ export class PagedKernelDiscovery {
             const mappedMB = totalMappedBytes / (1024 * 1024);
             const mappedGB = mappedMB / 1024;
 
-            console.log(`  Found ${pgdPtes.length} total mappings in this 512GB region:`);
-            console.log(`    - ${pteCount} × 4KB PTEs = ${(pteCount * 4 / 1024).toFixed(1)}MB`);
-            console.log(`    - ${blockCount2MB} × 2MB blocks = ${(blockCount2MB * 2).toFixed(1)}MB`);
-            console.log(`    - ${blockCount1GB} × 1GB blocks = ${blockCount1GB}.0GB`);
-            console.log(`    Total mapped: ${mappedGB >= 1 ? mappedGB.toFixed(2) + 'GB' : mappedMB.toFixed(1) + 'MB'}`);
+//             console.log(`  Found ${pgdPtes.length} total mappings in this 512GB region:`);
+//             console.log(`    - ${pteCount} × 4KB PTEs = ${(pteCount * 4 / 1024).toFixed(1)}MB`);
+//             console.log(`    - ${blockCount2MB} × 2MB blocks = ${(blockCount2MB * 2).toFixed(1)}MB`);
+//             console.log(`    - ${blockCount1GB} × 1GB blocks = ${blockCount1GB}.0GB`);
+//             console.log(`    Total mapped: ${mappedGB >= 1 ? mappedGB.toFixed(2) + 'GB' : mappedMB.toFixed(1) + 'MB'}`);
         }
 
         // Categorize PTEs by virtual address ranges
@@ -3707,13 +3690,13 @@ export class PagedKernelDiscovery {
             }
         }
 
-        console.log(`\nTotal kernel PTEs found: ${kernelPtes.length}`);
-        console.log('Distribution by virtual address range:');
+//         console.log(`\nTotal kernel PTEs found: ${kernelPtes.length}`);
+//         console.log('Distribution by virtual address range:');
         for (const [name, cat] of Object.entries(categories)) {
             if (cat.count > 0) {
                 const sizeMB = (cat.count * 4) / 1024; // 4KB pages to MB
-                console.log(`  ${name}: ${cat.count} PTEs (${sizeMB.toFixed(1)}MB) - ${cat.description}`);
-                console.log(`    Range: ${cat.range}`);
+//                 console.log(`  ${name}: ${cat.count} PTEs (${sizeMB.toFixed(1)}MB) - ${cat.description}`);
+//                 console.log(`    Range: ${cat.range}`);
             }
         }
 
@@ -3740,11 +3723,11 @@ export class PagedKernelDiscovery {
         const theoreticalMaxGB = 3 * 512; // 3 PGD entries × 512GB each
         const utilizationPercent = (totalMappedGB / theoreticalMaxGB) * 100;
 
-        console.log(`\nKernel memory utilization summary:`);
-        console.log(`  Total mappings: ${kernelPtes.length} (${totalPteCount} × 4KB + ${total2MBBlocks} × 2MB + ${total1GBBlocks} × 1GB)`);
-        console.log(`  Actually mapped: ${totalMappedGB.toFixed(2)}GB`);
-        console.log(`  Theoretical max (3 × 512GB): ${theoreticalMaxGB}GB`);
-        console.log(`  Utilization: ${utilizationPercent.toFixed(4)}%`);
+//         console.log(`\nKernel memory utilization summary:`);
+//         console.log(`  Total mappings: ${kernelPtes.length} (${totalPteCount} × 4KB + ${total2MBBlocks} × 2MB + ${total1GBBlocks} × 1GB)`);
+//         console.log(`  Actually mapped: ${totalMappedGB.toFixed(2)}GB`);
+//         console.log(`  Theoretical max (3 × 512GB): ${theoreticalMaxGB}GB`);
+//         console.log(`  Utilization: ${utilizationPercent.toFixed(4)}%`);
     }
 
     /**
@@ -3768,18 +3751,18 @@ export class PagedKernelDiscovery {
 
             // Aggressive limits to prevent browser crash
             if (processedTables > 1000) {
-                console.log(`    ⚠️  Processed ${processedTables} tables, stopping to prevent browser crash`);
+//                 console.log(`    ⚠️  Processed ${processedTables} tables, stopping to prevent browser crash`);
                 break;
             }
 
             if (queue.length > 5000) {
-                console.log(`    ⚠️  Queue size ${queue.length} too large, stopping to prevent memory exhaustion`);
+//                 console.log(`    ⚠️  Queue size ${queue.length} too large, stopping to prevent memory exhaustion`);
                 break;
             }
 
             // Cycle detection
             if (visitedTables.has(currentAddr)) {
-                console.log(`    🔄 Cycle detected at table 0x${currentAddr.toString(16)}, skipping`);
+//                 console.log(`    🔄 Cycle detected at table 0x${currentAddr.toString(16)}, skipping`);
                 continue;
             }
             visitedTables.add(currentAddr);
@@ -3850,13 +3833,13 @@ export class PagedKernelDiscovery {
 
             // Progress reporting every 100 tables
             if (processedTables % 100 === 0) {
-                console.log(`    📊 Processed ${processedTables} tables, found ${ptes.length} PTEs so far, queue size: ${queue.length}`);
+//                 console.log(`    📊 Processed ${processedTables} tables, found ${ptes.length} PTEs so far, queue size: ${queue.length}`);
             }
         }
 
         if (totalGarbageEntries > 0 || block1GBCount > 0 || block2MBCount > 0) {
-            console.log(`    📊 Total: processed ${processedTables} tables, filtered ${totalGarbageEntries} garbage entries`);
-            console.log(`    📊 Block mappings: ${block1GBCount} × 1GB blocks, ${block2MBCount} × 2MB blocks`);
+//             console.log(`    📊 Total: processed ${processedTables} tables, filtered ${totalGarbageEntries} garbage entries`);
+//             console.log(`    📊 Block mappings: ${block1GBCount} × 1GB blocks, ${block2MBCount} × 2MB blocks`);
         }
 
         return ptes;
@@ -3866,8 +3849,8 @@ export class PagedKernelDiscovery {
      * Find kernel PGD using universal characteristics
      */
     public findKernelPgdUniversal(): number | null {
-        console.log('=== UNIVERSAL KERNEL PGD DISCOVERY ===');
-        console.log('Using VA translation verification (works on any kernel)...');
+//         console.log('=== UNIVERSAL KERNEL PGD DISCOVERY ===');
+//         console.log('Using VA translation verification (works on any kernel)...');
 
         const candidates: Array<{offset: number, reason: string}> = [];
         let scanned = 0;
@@ -3883,7 +3866,7 @@ export class PagedKernelDiscovery {
         ];
 
         for (const range of scanRanges) {
-            console.log(`  Scanning ${(range.start/(1024*1024*1024)).toFixed(1)}GB - ${(range.end/(1024*1024*1024)).toFixed(1)}GB...`);
+//             console.log(`  Scanning ${(range.start/(1024*1024*1024)).toFixed(1)}GB - ${(range.end/(1024*1024*1024)).toFixed(1)}GB...`);
 
             for (let offset = range.start; offset < range.end; offset += 4096) {
                 if (offset < 0 || offset >= this.totalSize) continue;
@@ -3920,12 +3903,12 @@ export class PagedKernelDiscovery {
                         offset,
                         reason: 'Successfully translates linear mapping VAs'
                     });
-                    console.log(`  ✓ FOUND kernel PGD at offset 0x${offset.toString(16)} (PA: 0x${(offset + KernelConstants.GUEST_RAM_START).toString(16)})`);
-                    console.log(`    Reason: ${candidates[candidates.length - 1].reason}`);
+//                     console.log(`  ✓ FOUND kernel PGD at offset 0x${offset.toString(16)} (PA: 0x${(offset + KernelConstants.GUEST_RAM_START).toString(16)})`);
+//                     console.log(`    Reason: ${candidates[candidates.length - 1].reason}`);
 
                     // Validate with entry counting
                     const validation = this.testPgdWithEntryCountValidation(offset);
-                    console.log(`    Validation: ${validation.validEntries} entries (${validation.kernelEntries} kernel, ${validation.userEntries} user)`);
+//                     console.log(`    Validation: ${validation.validEntries} entries (${validation.kernelEntries} kernel, ${validation.userEntries} user)`);
 
                     // Usually only one kernel PGD, so we can return early
                     return offset + KernelConstants.GUEST_RAM_START;
@@ -3933,10 +3916,10 @@ export class PagedKernelDiscovery {
             }
         }
 
-        console.log(`\nScanned ${scanned} pages, tested ${testedTranslations} translation candidates`);
+//         console.log(`\nScanned ${scanned} pages, tested ${testedTranslations} translation candidates`);
 
         if (candidates.length === 0) {
-            console.log('No kernel PGD found using universal method!');
+//             console.log('No kernel PGD found using universal method!');
             return null;
         }
 
@@ -3947,8 +3930,8 @@ export class PagedKernelDiscovery {
      * Find ALL PGDs in the entire memory space (standalone, at bottom for easy finding)
      */
     public findAllPGDs(): Array<{addr: number, score: number, kernelEntries: number, userEntries: number}> {
-        console.log('=== EXHAUSTIVE PGD SEARCH ===');
-        console.log(`Scanning entire ${(this.totalSize / (1024*1024)).toFixed(0)}MB memory space for PGDs...`);
+//         console.log('=== EXHAUSTIVE PGD SEARCH ===');
+//         console.log(`Scanning entire ${(this.totalSize / (1024*1024)).toFixed(0)}MB memory space for PGDs...`);
 
         const pgdCandidates: Array<{addr: number, score: number, kernelEntries: number, userEntries: number}> = [];
         let pagesScanned = 0;
@@ -3960,7 +3943,7 @@ export class PagedKernelDiscovery {
 
             // Progress update every 1GB
             if (offset > 0 && offset % (1024 * 1024 * 1024) === 0) {
-                console.log(`  Scanned ${(offset / (1024*1024*1024)).toFixed(1)}GB: found ${candidatesFound} PGD candidates so far...`);
+//                 console.log(`  Scanned ${(offset / (1024*1024*1024)).toFixed(1)}GB: found ${candidatesFound} PGD candidates so far...`);
             }
 
             // Quick pre-check: Read first few entries to see if it could be a PGD
@@ -3994,21 +3977,21 @@ export class PagedKernelDiscovery {
 
                 // Log first 20 candidates or high-scoring ones
                 if (candidatesFound <= 20 || candidate.score >= 100) {
-                    console.log(`  Found PGD at 0x${candidate.addr.toString(16)}: score=${candidate.score}, kernel=${candidate.kernelEntries}, user=${candidate.userEntries}`);
+//                     console.log(`  Found PGD at 0x${candidate.addr.toString(16)}: score=${candidate.score}, kernel=${candidate.kernelEntries}, user=${candidate.userEntries}`);
                 }
             }
         }
 
-        console.log(`\n=== PGD SEARCH COMPLETE ===`);
-        console.log(`Scanned ${pagesScanned} pages (${(pagesScanned * 4 / 1024).toFixed(0)}MB)`);
-        console.log(`Found ${candidatesFound} PGD candidates total`);
+//         console.log(`\n=== PGD SEARCH COMPLETE ===`);
+//         console.log(`Scanned ${pagesScanned} pages (${(pagesScanned * 4 / 1024).toFixed(0)}MB)`);
+//         console.log(`Found ${candidatesFound} PGD candidates total`);
 
         // Sort by score and show top 10
         pgdCandidates.sort((a, b) => b.score - a.score);
-        console.log(`\nTop 10 PGD candidates:`);
+//         console.log(`\nTop 10 PGD candidates:`);
         for (let i = 0; i < Math.min(10, pgdCandidates.length); i++) {
             const c = pgdCandidates[i];
-            console.log(`  ${i+1}. 0x${c.addr.toString(16)}: score=${c.score}, kernel=${c.kernelEntries}, user=${c.userEntries}`);
+//             console.log(`  ${i+1}. 0x${c.addr.toString(16)}: score=${c.score}, kernel=${c.kernelEntries}, user=${c.userEntries}`);
         }
 
         return pgdCandidates;

@@ -377,7 +377,12 @@
       <div class="modal-content kernel-discovery-modal">
         <div class="modal-header">
           <h2>🔍 Kernel Memory Discovery Report</h2>
-          <button class="modal-close" @click="closeKernelDiscovery">✕</button>
+          <div class="modal-header-buttons">
+            <button v-if="!kernelDiscoveryRunning" @click="startDiscovery" class="modal-refresh">
+              🔄 Refresh
+            </button>
+            <button class="modal-close" @click="closeKernelDiscovery">✕</button>
+          </div>
         </div>
 
         <div v-if="kernelDiscoveryRunning" class="discovery-progress">
@@ -386,11 +391,20 @@
         </div>
 
         <div v-else-if="kernelDiscoveryResults" class="discovery-results">
+          <!-- Show cached indicator if not running -->
+          <div v-if="kernelDiscoveryStatus.includes('cached')" class="cached-notice">
+            📌 {{ kernelDiscoveryStatus }} - Click Refresh to re-run discovery
+          </div>
+
           <!-- Summary Statistics -->
           <div class="stats-grid">
             <div class="stat-card">
               <div class="stat-value">{{ kernelDiscoveryResults.processes?.length || 0 }}</div>
               <div class="stat-label">Processes Found</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">{{ totalProcessPTEs }}</div>
+              <div class="stat-label">Process PTEs</div>
             </div>
             <div class="stat-card">
               <div class="stat-value">{{ kernelDiscoveryResults.kernelPTEs?.length || 0 }}</div>
@@ -419,9 +433,10 @@
                   <tr v-for="proc in sortedProcesses" :key="proc.pid">
                     <td>{{ proc.pid }}</td>
                     <td>{{ proc.name || proc.comm || 'unknown' }}</td>
-                    <td>{{ proc.ptes?.length || proc.pteCount || 0 }}</td>
+                    <td>{{ kernelDiscoveryResults.ptesByPid?.get(proc.pid)?.length || 0 }}</td>
                     <td>
                       <button class="small-button" @click="viewProcessPTEs(proc)">View PTEs</button>
+                      <button class="small-button" @click="viewProcessMaps(proc)" style="margin-left: 4px">View Maps</button>
                     </td>
                   </tr>
                 </tbody>
@@ -440,6 +455,70 @@
         <div v-else class="no-results">
           <p>No discovery results yet</p>
           <button @click="startDiscovery" class="primary-button">🔍 Run Discovery</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PTE Viewer Modal -->
+    <div v-if="pteViewerModal" class="modal-overlay" @click.self="closePTEViewer">
+      <div class="modal-content pte-viewer-modal">
+        <div class="modal-header">
+          <h2>📊 Page Table Entries - {{ pteViewerProcess?.name || pteViewerProcess?.comm }} (PID {{ pteViewerProcess?.pid }})</h2>
+          <button class="modal-close" @click="closePTEViewer">✕</button>
+        </div>
+
+        <div class="pte-summary">
+          <p>Total PTEs: {{ kernelDiscoveryResults?.ptesByPid?.get(pteViewerProcess?.pid)?.length || 0 }} |
+             Consolidated Ranges: {{ pteViewerRanges.length }} |
+             Total Memory: {{ formatBytes((kernelDiscoveryResults?.ptesByPid?.get(pteViewerProcess?.pid)?.length || 0) * 4096) }}</p>
+        </div>
+
+        <div class="pte-ranges-container">
+          <table class="pte-ranges-table">
+            <thead>
+              <tr>
+                <th>Virtual Address Range</th>
+                <th>Physical Address Range</th>
+                <th>Size</th>
+                <th>Pages</th>
+                <th>Permissions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(range, idx) in pteViewerRanges" :key="idx">
+                <td class="mono">{{ formatHex(range.startVA) }} - {{ formatHex(range.endVA) }}</td>
+                <td class="mono">{{ formatHex(range.startPA) }} - {{ formatHex(range.endPA) }}</td>
+                <td>{{ formatBytes(range.pages * 4096) }}</td>
+                <td>{{ range.pages }}</td>
+                <td>
+                  <span class="perm-badge">{{ range.readable ? 'R' : '-' }}{{ range.writable ? 'W' : '-' }}{{ range.executable ? 'X' : '-' }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Memory Maps Viewer Modal -->
+    <div v-if="mapsViewerModal" class="modal-overlay" @click.self="closeMapsViewer">
+      <div class="modal-content maps-viewer-modal">
+        <div class="modal-header">
+          <h2>🗺️ Memory Maps - {{ mapsViewerProcess?.name || mapsViewerProcess?.comm }} (PID {{ mapsViewerProcess?.pid }})</h2>
+          <button class="modal-close" @click="closeMapsViewer">✕</button>
+        </div>
+
+        <div class="maps-summary">
+          <p>Reconstructed from {{ mapsViewerPTECount }} PTEs | {{ mapsViewerRanges.length }} memory regions</p>
+        </div>
+
+        <div class="maps-container">
+          <pre class="maps-output">{{ mapsViewerText }}</pre>
+        </div>
+
+        <div class="maps-actions">
+          <button @click="copyMapsToClipboard">📋 Copy to Clipboard</button>
+          <button @click="saveMapsAsFile">💾 Save as File</button>
         </div>
       </div>
     </div>
@@ -577,6 +656,18 @@ const pageCollection = ref<PageCollection | null>(null)
 const processSortKey = ref<'pid' | 'name' | 'ptes'>('pid')
 const processSortReverse = ref(false)
 
+// PTE Viewer state
+const pteViewerModal = ref(false)
+const pteViewerProcess = ref<any>(null)
+const pteViewerRanges = ref<any[]>([])
+
+// Memory maps viewer state
+const mapsViewerModal = ref(false)
+const mapsViewerProcess = ref<any>(null)
+const mapsViewerRanges = ref<any[]>([])
+const mapsViewerText = ref('')
+const mapsViewerPTECount = ref(0)
+
 // Display settings
 const displayWidth = ref(1024)
 // Height will be computed based on canvas container
@@ -686,6 +777,18 @@ const invertedSliderPosition = computed(() => {
   return maxSliderPosition.value - sliderPosition.value
 })
 
+// Total process PTEs
+const totalProcessPTEs = computed(() => {
+  if (!kernelDiscoveryResults.value?.ptesByPid) return 0
+  let total = 0
+  for (const [pid, ptes] of kernelDiscoveryResults.value.ptesByPid) {
+    if (pid !== 0) { // Exclude kernel (PID 0)
+      total += ptes.length
+    }
+  }
+  return total
+})
+
 // Sorted processes for display
 const sortedProcesses = computed(() => {
   if (!kernelDiscoveryResults.value?.processes) return []
@@ -699,12 +802,12 @@ const sortedProcesses = computed(() => {
         bVal = b.pid
         break
       case 'name':
-        aVal = a.comm || ''
-        bVal = b.comm || ''
+        aVal = a.name || a.comm || ''
+        bVal = b.name || b.comm || ''
         break
       case 'ptes':
-        aVal = a.pteCount || 0
-        bVal = b.pteCount || 0
+        aVal = kernelDiscoveryResults.value?.ptesByPid?.get(a.pid)?.length || 0
+        bVal = kernelDiscoveryResults.value?.ptesByPid?.get(b.pid)?.length || 0
         break
       default:
         return 0
@@ -1277,9 +1380,9 @@ function handleMemoryHover(offset: number, event?: MouseEvent) {
     tooltipCloseTimer.value = null
   }
 
-  // Show tooltip if we have page data
+  // Only show tooltip if Shift key is held and we have page data
   const hasData = pageCollection.value || kernelPageDB.hasData();
-  if (hasData && event) {
+  if (hasData && event && event.shiftKey) {
     // If tooltip is already visible, update position immediately
     if (tooltipVisible.value) {
       tooltipPosition.value = { x: event.clientX, y: event.clientY }
@@ -1836,9 +1939,21 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
-// Helper: Format hex address
-function formatHex(value: number): string {
-  return '0x' + value.toString(16).toUpperCase().padStart(8, '0')
+// Helper: Format hex address (handles BigInt and number types)
+function formatHex(value: number | bigint): string {
+  let hex: string
+  if (typeof value === 'bigint') {
+    // BigInt can handle full 64-bit addresses properly
+    hex = value.toString(16).toUpperCase()
+  } else {
+    // For numbers, ensure non-negative display
+    if (value < 0) {
+      value = value + 0x100000000
+    }
+    hex = value.toString(16).toUpperCase()
+  }
+  // Use 12 hex digits for 48-bit addresses (common on ARM64)
+  return '0x' + hex.padStart(12, '0')
 }
 
 // Canvas drag scrolling
@@ -1988,9 +2103,16 @@ async function runKernelDiscovery() {
     return
   }
 
-  // Just open the modal and run discovery immediately
+  // Open the modal
   kernelDiscoveryModal.value = true
-  await startDiscovery()
+
+  // Only run discovery if we don't have cached results
+  if (!kernelDiscoveryResults.value || kernelDiscoveryResults.value.processes.length === 0) {
+    await startDiscovery()
+  } else {
+    // We have cached results - just show them
+    kernelDiscoveryStatus.value = `Showing cached results (${kernelDiscoveryResults.value.processes.length} processes)`
+  }
 }
 
 async function startDiscovery() {
@@ -2071,6 +2193,8 @@ async function startDiscovery() {
           processes: results.processes || [],
           kernelPTEs: results.kernelPtes || [],
           swapperPgDir: results.swapperPgDir || 0,
+          ptesByPid: results.ptesByPid || new Map(),
+          sectionsByPid: results.sectionsByPid || new Map(),
           statistics: {
             totalChunksProcessed: chunks.length,
             totalProcesses: results.processes?.length || 0,
@@ -2154,6 +2278,8 @@ async function startDiscovery() {
           processes: results.processes || [],
           kernelPTEs: results.kernelPtes || [],
           swapperPgDir: results.swapperPgDir || 0,
+          ptesByPid: results.ptesByPid || new Map(),
+          sectionsByPid: results.sectionsByPid || new Map(),
           statistics: {
             totalChunksProcessed: chunks.length,
             totalProcesses: results.processes?.length || 0,
@@ -2203,7 +2329,10 @@ async function startDiscovery() {
       const dbStats = kernelPageDB.getStatistics();
 
       kernelDiscoveryStatus.value = 'Analysis complete!'
-      kernelDiscoveryResults.value = results
+      kernelDiscoveryResults.value = {
+        ...results,
+        sectionsByPid: results.sectionsByPid || new Map()
+      }
       console.log('Kernel discovery complete:', results)
       console.log('Kernel page database populated:', dbStats)
 
@@ -2235,8 +2364,289 @@ function sortProcesses(key: 'pid' | 'name' | 'ptes') {
 
 function viewProcessPTEs(proc: any) {
   console.log('View PTEs for process:', proc)
-  // Could expand this to show detailed PTE view
-  alert(`Process ${proc.pid} (${proc.comm}) has ${proc.pteCount || 0} PTEs`)
+
+  const ptes = kernelDiscoveryResults.value?.ptesByPid?.get(proc.pid) || []
+  if (ptes.length === 0) {
+    alert(`No PTEs found for process ${proc.pid}`)
+    return
+  }
+
+  // First deduplicate PTEs by VA (keep the first occurrence)
+  const dedupMap = new Map()
+  for (const pte of ptes) {
+    // Use BigInt for comparison to handle large addresses
+    const va = typeof pte.va === 'bigint' ? pte.va : BigInt(pte.va)
+    const vaStr = va.toString()  // Use string as map key for BigInts
+    if (!dedupMap.has(vaStr)) {
+      dedupMap.set(vaStr, pte)
+    }
+  }
+
+  // Sort deduplicated PTEs by virtual address
+  const sortedPTEs = Array.from(dedupMap.values()).sort((a, b) => {
+    const vaA = typeof a.va === 'bigint' ? a.va : BigInt(a.va)
+    const vaB = typeof b.va === 'bigint' ? b.va : BigInt(b.va)
+    return vaA < vaB ? -1 : vaA > vaB ? 1 : 0
+  })
+
+  if (ptes.length !== sortedPTEs.length) {
+    console.log(`Deduplicated ${ptes.length} PTEs to ${sortedPTEs.length} unique VAs`)
+  }
+
+  // Consolidate contiguous ranges
+  const ranges: any[] = []
+  let currentRange: any = null
+
+  for (const pte of sortedPTEs) {
+    const va = typeof pte.va === 'bigint' ? pte.va : BigInt(pte.va)
+    const pa = pte.pa
+
+    if (!currentRange) {
+      // Start first range
+      currentRange = {
+        startVA: va,
+        endVA: va + 0x1000n,
+        startPA: pa,
+        endPA: pa + 0x1000,
+        pages: 1,
+        flags: pte.flags,
+        readable: pte.r,
+        writable: pte.w,
+        executable: pte.x
+      }
+    } else if (
+      va === currentRange.endVA &&
+      pa === currentRange.endPA &&
+      pte.flags === currentRange.flags
+    ) {
+      // Extend current range
+      currentRange.endVA = va + 0x1000n
+      currentRange.endPA = pa + 0x1000
+      currentRange.pages++
+    } else {
+      // Save current range and start new one
+      ranges.push(currentRange)
+      currentRange = {
+        startVA: va,
+        endVA: va + 0x1000n,
+        startPA: pa,
+        endPA: pa + 0x1000,
+        pages: 1,
+        flags: pte.flags,
+        readable: pte.r,
+        writable: pte.w,
+        executable: pte.x
+      }
+    }
+  }
+
+  // Don't forget last range
+  if (currentRange) {
+    ranges.push(currentRange)
+  }
+
+  // Store for modal display
+  pteViewerProcess.value = proc
+  pteViewerRanges.value = ranges
+  pteViewerModal.value = true
+
+  console.log(`Consolidated ${ptes.length} PTEs into ${ranges.length} contiguous ranges`)
+}
+
+function closePTEViewer() {
+  pteViewerModal.value = false
+  pteViewerProcess.value = null
+  pteViewerRanges.value = []
+}
+
+// Display PTEs as /proc/PID/maps style output
+function viewProcessMaps(proc: any) {
+  console.log('View memory maps for process:', proc)
+
+  // Try to use sections data (has filenames) if available, otherwise fall back to PTEs
+  const sections = kernelDiscoveryResults.value?.sectionsByPid?.get(proc.pid) || []
+  const ptes = kernelDiscoveryResults.value?.ptesByPid?.get(proc.pid) || []
+
+  console.log(`View Maps: PID ${proc.pid} has ${sections.length} sections, ${ptes.length} PTEs`)
+
+
+  if (sections.length > 0) {
+    // Use sections data which includes filenames from VMAs
+    displayMapsFromSections(proc, sections)
+    return
+  }
+
+  if (ptes.length === 0) {
+    alert(`No memory mapping data found for process ${proc.pid}`)
+    return
+  }
+
+  // First deduplicate PTEs by VA
+  const dedupMap = new Map()
+  for (const pte of ptes) {
+    const va = typeof pte.va === 'bigint' ? pte.va : BigInt(pte.va)
+    const vaStr = va.toString()
+    if (!dedupMap.has(vaStr)) {
+      dedupMap.set(vaStr, pte)
+    }
+  }
+
+  // Sort by virtual address
+  const sortedPTEs = Array.from(dedupMap.values()).sort((a, b) => {
+    const vaA = typeof a.va === 'bigint' ? a.va : BigInt(a.va)
+    const vaB = typeof b.va === 'bigint' ? b.va : BigInt(b.va)
+    return vaA < vaB ? -1 : vaA > vaB ? 1 : 0
+  })
+
+  // Consolidate contiguous ranges and format as maps
+  const mapLines: string[] = []
+  let currentRange: any = null
+
+  for (const pte of sortedPTEs) {
+    const va = typeof pte.va === 'bigint' ? pte.va : BigInt(pte.va)
+    const pa = pte.pa
+    const perms = `${pte.r ? 'r' : '-'}${pte.w ? 'w' : '-'}${pte.x ? 'x' : '-'}p`
+
+    if (!currentRange) {
+      currentRange = {
+        startVA: va,
+        endVA: va + 0x1000n,
+        startPA: pa,
+        perms: perms
+      }
+    } else if (
+      va === currentRange.endVA &&
+      perms === currentRange.perms &&
+      pa === currentRange.startPA + Number(currentRange.endVA - currentRange.startVA)
+    ) {
+      // Extend current range
+      currentRange.endVA = va + 0x1000n
+    } else {
+      // Output current range and start new one
+      const startStr = currentRange.startVA.toString(16).padStart(12, '0')
+      const endStr = currentRange.endVA.toString(16).padStart(12, '0')
+      const sizeKB = Number((currentRange.endVA - currentRange.startVA) / 1024n)
+      mapLines.push(`${startStr}-${endStr} ${currentRange.perms} [${sizeKB} KB]`)
+
+      currentRange = {
+        startVA: va,
+        endVA: va + 0x1000n,
+        startPA: pa,
+        perms: perms
+      }
+    }
+  }
+
+  // Output final range
+  if (currentRange) {
+    const startStr = currentRange.startVA.toString(16).padStart(12, '0')
+    const endStr = currentRange.endVA.toString(16).padStart(12, '0')
+    const sizeKB = Number((currentRange.endVA - currentRange.startVA) / 1024n)
+    mapLines.push(`${startStr}-${endStr} ${currentRange.perms} [${sizeKB} KB]`)
+  }
+
+  // Display in modal
+  mapsViewerProcess.value = proc
+  mapsViewerRanges.value = mapLines.length
+  mapsViewerText.value = mapLines.join('\n')
+  mapsViewerPTECount.value = sortedPTEs.length
+  mapsViewerModal.value = true
+
+  console.log(`Generated ${mapLines.length} memory map entries for ${proc.comm} (PID ${proc.pid})`)
+}
+
+// Display maps from VMA sections (includes filenames)
+function displayMapsFromSections(proc: any, sections: any[]) {
+  const mapLines: string[] = []
+
+  console.log(`displayMapsFromSections: ${sections.length} sections for PID ${proc.pid}`)
+
+  // Check how many have filenames
+  const withFilenames = sections.filter(s => s.filename)
+  console.log(`  Sections with filenames: ${withFilenames.length}`)
+  if (withFilenames.length > 0) {
+    console.log(`  First filename: "${withFilenames[0].filename}"`)
+  }
+
+  // Sort sections by start address
+  const sorted = [...sections].sort((a, b) => a.startVa - b.startVa)
+
+  for (const section of sorted) {
+    const startStr = section.startVa.toString(16).padStart(12, '0')
+    const endStr = section.endVa.toString(16).padStart(12, '0')
+    const sizeKB = Math.floor(section.size / 1024)
+
+    // Convert flags to rwxp format
+    const flags = section.flags || 0
+    const perms = [
+      flags & 0x1 ? 'r' : '-',  // VM_READ
+      flags & 0x2 ? 'w' : '-',  // VM_WRITE
+      flags & 0x4 ? 'x' : '-',  // VM_EXEC
+      flags & 0x8 ? 's' : 'p'   // VM_SHARED vs private
+    ].join('')
+
+    // Format offset as hex
+    const offset = (section.fileOffset || 0).toString(16).padStart(8, '0')
+
+    // Build the map line like /proc/PID/maps
+    // Format: start-end perms offset pathname
+    let line = `${startStr}-${endStr} ${perms} ${offset}`
+
+    // Pad to consistent width for alignment
+    line = line.padEnd(41, ' ')
+
+    // Add filename if available
+    if (section.filename) {
+      line += section.filename
+    } else if (section.type === 'heap') {
+      line += '[heap]'
+    } else if (section.type === 'stack') {
+      line += '[stack]'
+    } else if (section.type === 'code' && !section.filename) {
+      line += '[vdso]'  // Likely vdso if executable but no file
+    }
+
+    mapLines.push(line)
+  }
+
+  // Display in modal
+  const finalText = mapLines.join('\n')
+  console.log('Sample map lines with filenames:')
+  console.log(finalText.split('\n').slice(0, 3).join('\n'))
+
+  mapsViewerProcess.value = proc
+  mapsViewerRanges.value = sorted.length
+  mapsViewerText.value = finalText
+  mapsViewerPTECount.value = 0  // Not from PTEs
+  mapsViewerModal.value = true
+
+  console.log(`Generated ${mapLines.length} memory map entries from VMAs for ${proc.comm} (PID ${proc.pid})`)
+}
+
+function closeMapsViewer() {
+  mapsViewerModal.value = false
+  mapsViewerProcess.value = null
+  mapsViewerRanges.value = []
+  mapsViewerText.value = ''
+}
+
+function copyMapsToClipboard() {
+  navigator.clipboard.writeText(mapsViewerText.value).then(() => {
+    console.log('Memory maps copied to clipboard')
+    alert('Memory maps copied to clipboard!')
+  })
+}
+
+function saveMapsAsFile() {
+  const proc = mapsViewerProcess.value
+  const filename = `maps_pid${proc.pid}_${proc.name || proc.comm || 'unknown'}.txt`
+  const blob = new Blob([mapsViewerText.value], { type: 'text/plain' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 function exportJSON() {
@@ -2358,6 +2768,13 @@ ${(kernelDiscoveryResults.value.processes || []).slice(0, 10).map((p: any) =>
 const PixelFormatExport = PixelFormat
 
 // Keyboard shortcuts
+function handleKeyUp(event: KeyboardEvent) {
+  // Hide tooltip when Shift is released
+  if (event.key === 'Shift' && tooltipVisible.value) {
+    closeTooltip()
+  }
+}
+
 function handleKeyboard(event: KeyboardEvent) {
   if (!isFileOpen.value) return
 
@@ -2448,6 +2865,7 @@ onMounted(async () => {
 
   // Add event listeners
   window.addEventListener('keydown', handleKeyboard)
+  window.addEventListener('keyup', handleKeyUp)
   window.addEventListener('mousemove', handleCanvasDrag)
   window.addEventListener('mouseup', stopCanvasDrag)
 
@@ -2496,6 +2914,7 @@ onMounted(async () => {
 // Cleanup
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyboard)
+  window.removeEventListener('keyup', handleKeyUp)
   window.removeEventListener('mousemove', handleCanvasDrag)
   window.removeEventListener('mouseup', stopCanvasDrag)
   window.removeEventListener('resize', updateFFTIndicatorPosition)
@@ -3007,6 +3426,35 @@ button:disabled {
   color: white;
 }
 
+.modal-header-buttons {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.modal-refresh {
+  background: #28a745;
+  color: white;
+  border: none;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.modal-refresh:hover {
+  background: #218838;
+}
+
+.cached-notice {
+  background: #ffeaa7;
+  color: #2d3436;
+  padding: 10px 15px;
+  margin: 0 20px 15px 20px;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
 .modal-header h2 {
   margin: 0;
   font-size: 20px;
@@ -3175,5 +3623,115 @@ button:disabled {
 
 .primary-button:hover {
   background: #1177bb;
+}
+
+/* PTE Viewer Modal Styles */
+.pte-viewer-modal {
+  max-width: 1200px;
+  width: 90%;
+}
+
+.pte-summary {
+  padding: 15px;
+  background: #3c3c3c;
+  border-radius: 5px;
+  margin-bottom: 20px;
+  color: #ccc;
+  font-size: 14px;
+}
+
+.pte-ranges-container {
+  max-height: 500px;
+  overflow-y: auto;
+  background: #3c3c3c;
+  border-radius: 5px;
+  padding: 10px;
+}
+
+.pte-ranges-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.pte-ranges-table thead {
+  background: #2a2a2a;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.pte-ranges-table th,
+.pte-ranges-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid #555;
+  color: #ddd;
+}
+
+.pte-ranges-table tbody tr:hover {
+  background: #4a4a4a;
+}
+
+.perm-badge {
+  font-family: monospace;
+  background: #2a2a2a;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: #4CAF50;
+  font-weight: bold;
+}
+
+/* Memory Maps Viewer Modal Styles */
+.maps-viewer-modal {
+  max-width: 900px;
+  width: 80%;
+}
+
+.maps-summary {
+  padding: 10px 15px;
+  background: #3c3c3c;
+  border-radius: 5px;
+  margin-bottom: 15px;
+  color: #ccc;
+  font-size: 14px;
+}
+
+.maps-container {
+  background: #2a2a2a;
+  border-radius: 5px;
+  padding: 15px;
+  max-height: 500px;
+  overflow-y: auto;
+  margin-bottom: 15px;
+}
+
+.maps-output {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #e0e0e0;
+  margin: 0;
+  white-space: pre;
+}
+
+.maps-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.maps-actions button {
+  padding: 8px 16px;
+  background: #4a90e2;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.maps-actions button:hover {
+  background: #3a80d2;
 }
 </style>
