@@ -2327,8 +2327,6 @@ export class PagedKernelDiscovery {
                     : 0xffff000000000000n + (BigInt(pgdIdx - 256) << 39n);
                 ptes.push({ va, pa, flags: pgdEntry, level: 1, pageSize: 1073741824 });
             }
-        }
-
             }
         }
 
