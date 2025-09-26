@@ -15,7 +15,8 @@ const KNOWN_PROCESSES = [
     'init', 'systemd', 'kthreadd', 'rcu_gp', 'migration',
     'ksoftirqd', 'kworker', 'kcompactd', 'khugepaged',
     'kswapd', 'kauditd', 'sshd', 'systemd-journal',
-    'systemd-resolved', 'systemd-networkd', 'bash'
+    'systemd-resolved', 'systemd-networkd', 'bash',
+    'vlc', 'firefox', 'chrome', 'code', 'vim', 'emacs'
 ];
 
 export class PagedKernelDiscovery {
@@ -218,10 +219,13 @@ export class PagedKernelDiscovery {
         const isKnown = KNOWN_PROCESSES.some(known => name.includes(known));
         const isKernel = mmStripped === 0n;
 
-        // Log successful process discovery (commented out to reduce noise)
-        // if (name && pid > 0) {
-        //     console.log(`Found process: PID ${pid}, name="${name}", mm=0x${mmStripped.toString(16)}, kernel=${isKernel}`);
-        // }
+        // Log successful process discovery
+        if (pid === 1545 || (name && name.includes('dbus'))) {
+            console.log(`Found process: PID ${pid}, name="${name || 'NULL'}", mm=0x${mmStripped.toString(16)}, kernel=${isKernel}`);
+            if (pid === 1545 && name !== 'dbus-daemon') {
+                console.log(`  WARNING: PID 1545 found but name is "${name}" not "dbus-daemon"`);
+            }
+        }
 
         // Basic requirements
         if (!name || pid < 1 || pid > 32768) {
@@ -234,13 +238,13 @@ export class PagedKernelDiscovery {
         }
 
         // Reject very short names unless they're known
-        if (name.length < 4 && !KNOWN_PROCESSES.includes(name)) {
-            return null;  // Minimum 4 characters for unknown names
+        if (name.length < 3 && !KNOWN_PROCESSES.includes(name)) {
+            return null;  // Minimum 3 characters for unknown names
         }
 
         // Name should match expected pattern - EXTREMELY strict
-        // Must start with letter or /, contain only alphanumeric/-/_/[/]/:/./
-        if (!/^[a-zA-Z\/][a-zA-Z0-9\-_\/\[\]:\.]*$/.test(name)) {
+        // Must start with letter or /, contain only alphanumeric/-/_/[/]/:/./$
+        if (!/^[a-zA-Z\/][a-zA-Z0-9\-_\/\[\]:\.\$]*$/.test(name)) {
             return null;
         }
 
@@ -1131,35 +1135,13 @@ export class PagedKernelDiscovery {
         // - User addresses (0x0000...) use TTBR0
         // - Kernel addresses (0xffff...) use TTBR1
 
-        let pgdIndex: number;
-        if ((virtualAddr >> 48n) === 0xffffn) {
-            // Kernel address using TTBR1 (swapper_pg_dir)
-            // SPECIAL CASE: 0xffff0000xxxxxxxx range uses PGD[0]!
-            // This is a clever optimization where the same page tables serve dual purpose
-
-            if ((virtualAddr >> 32n) === 0xffff0000n) {
-                // vmalloc/modules range (0xffff0000xxxxxxxx) uses PGD[0]
-                pgdIndex = 0;
-            } else {
-                // Other kernel ranges use normal calculation
-                // 0xffff8000... uses PGD[256], 0xffffff... uses higher indices
-                pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);
-            }
-        } else {
-            // User space address
-            pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);  // bits 47-39
-        }
-
-        // For 0xffff0000xxxxxxxx addresses, we need to use the lower 32 bits for indexing
-        let effectiveAddr = virtualAddr;
-        if ((virtualAddr >> 32n) === 0xffff0000n) {
-            effectiveAddr = virtualAddr & 0xFFFFFFFFn;  // Use lower 32 bits only
-        }
-
-        const pudIndex = Number((effectiveAddr >> 30n) & 0x1FFn);  // bits 38-30 (or 30-22 for masked)
-        const pmdIndex = Number((effectiveAddr >> 21n) & 0x1FFn);  // bits 29-21
-        const pteIndex = Number((effectiveAddr >> 12n) & 0x1FFn);  // bits 20-12
-        const pageOffset = Number(effectiveAddr & 0xFFFn);        // bits 11-0
+        // Standard 4-level page table walk for ARM64
+        // All addresses use their natural indices - no special cases
+        const pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);  // bits 47-39
+        const pudIndex = Number((virtualAddr >> 30n) & 0x1FFn);  // bits 38-30
+        const pmdIndex = Number((virtualAddr >> 21n) & 0x1FFn);  // bits 29-21
+        const pteIndex = Number((virtualAddr >> 12n) & 0x1FFn);  // bits 20-12
+        const pageOffset = Number(virtualAddr & 0xFFFn);         // bits 11-0
 
         // Read PGD entry
         const pgdOffset = pgdBase - KernelConstants.GUEST_RAM_START + (pgdIndex * 8);
@@ -1331,28 +1313,11 @@ export class PagedKernelDiscovery {
     private debugTranslateVA(va: number | bigint, pgdBase: number): void {
         const virtualAddr = typeof va === 'number' ? BigInt(va) : va;
 
-        // Extract indices - same logic as fixed translateVA
-        let pgdIndex: number;
-        if ((virtualAddr >> 48n) === 0xffffn) {
-            // SPECIAL CASE: 0xffff0000xxxxxxxx range uses PGD[0]!
-            if ((virtualAddr >> 32n) === 0xffff0000n) {
-                pgdIndex = 0;
-            } else {
-                pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);
-            }
-        } else {
-            pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);
-        }
-
-        // For 0xffff0000xxxxxxxx addresses, use lower 32 bits for indexing
-        let effectiveAddr = virtualAddr;
-        if ((virtualAddr >> 32n) === 0xffff0000n) {
-            effectiveAddr = virtualAddr & 0xFFFFFFFFn;
-        }
-
-        const pudIndex = Number((effectiveAddr >> 30n) & 0x1FFn);
-        const pmdIndex = Number((effectiveAddr >> 21n) & 0x1FFn);
-        const pteIndex = Number((effectiveAddr >> 12n) & 0x1FFn);
+        // Extract indices - standard 4-level page table walk
+        const pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);  // bits 47-39
+        const pudIndex = Number((virtualAddr >> 30n) & 0x1FFn);  // bits 38-30
+        const pmdIndex = Number((virtualAddr >> 21n) & 0x1FFn);  // bits 29-21
+        const pteIndex = Number((virtualAddr >> 12n) & 0x1FFn);  // bits 20-12
 
         console.log(`      Indices: PGD[${pgdIndex}] PUD[${pudIndex}] PMD[${pmdIndex}] PTE[${pteIndex}]`);
 
@@ -1705,10 +1670,17 @@ export class PagedKernelDiscovery {
                     const vmaOffset = translated - KernelConstants.GUEST_RAM_START;
                     const vmStart = this.memory.readU64(vmaOffset);
                     const vmEnd = this.memory.readU64(vmaOffset + 8);
+                    // Correct offsets from BTF/pahole:
+                    const vmFlags = this.memory.readU64(vmaOffset + 0x20); // vm_flags at offset 0x20 (32 decimal)
+                    const vmPgoff = this.memory.readU64(vmaOffset + 0x78); // vm_pgoff at offset 0x78 (120 decimal)
+                    const vmFile = this.memory.readU64(vmaOffset + 0x80);  // vm_file at offset 0x80 (128 decimal)
 
                     if (depth <= 2 || sections.length < 5) {
                         console.log(`${'  '.repeat(depth)}    Checking potential VMA at VA 0x${slotPtr.toString(16)} (PA 0x${translated.toString(16)})`);
                         console.log(`${'  '.repeat(depth)}      vm_start=0x${vmStart?.toString(16) || '?'}, vm_end=0x${vmEnd?.toString(16) || '?'}`);
+                        if (vmFile && vmFile !== 0n) {
+                            console.log(`${'  '.repeat(depth)}      vm_file=0x${vmFile.toString(16)} (has backing file)`);
+                        }
 
                         // If these values look wrong, dump more fields to understand the struct
                         if (!vmStart || !vmEnd || vmStart === 0x1n || vmEnd === 0n || vmStart >= vmEnd) {
@@ -1730,21 +1702,126 @@ export class PagedKernelDiscovery {
                         vmEnd >= 0x10000n && vmEnd < 0x1000000000000n &&
                         (vmEnd - vmStart) >= 0x1000n) {  // At least one page
 
-                        const vmFlags = this.memory.readU64(vmaOffset + 32);
+                        // Try to extract filename if vm_file exists
+                        let filename: string | undefined;
+                        if (vmFile && vmFile !== 0n && (vmFile & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
 
-                        if (sections.length < 10) {
-                            console.log(`${'  '.repeat(depth)}  ✓ Found valid VMA at depth ${depth}: 0x${vmStart.toString(16)}-0x${vmEnd.toString(16)} (flags=0x${vmFlags?.toString(16) || '0'})`);
+                            // vm_file points to a struct file
+                            const fileTranslated = this.translateVA(vmFile, this.swapperPgDir);
+                            if (fileTranslated) {
+                                const fileOffset = fileTranslated - KernelConstants.GUEST_RAM_START;
+
+                                // Only log for debugging specific issues
+                                const debugFileStruct = false;
+                                if (debugFileStruct && depth <= 2) {
+                                    console.log(`${'  '.repeat(depth)}        File struct at PA 0x${fileTranslated.toString(16)}`);
+                                }
+
+                                // Correct offsets from BTF:
+                                // struct file: f_path at offset 0x40 (64 decimal)
+                                // struct path contains: mnt at +0, dentry at +8
+                                // So dentry is at file offset 0x48
+                                const dentry = this.memory.readU64(fileOffset + 0x48);
+
+                                if (dentry && (dentry & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
+                                    const dentryTranslated = this.translateVA(dentry, this.swapperPgDir);
+                                    if (dentryTranslated) {
+                                        const dentryOffset = dentryTranslated - KernelConstants.GUEST_RAM_START;
+
+                                        // dentry has d_name (qstr) at offset 0x20 (32 decimal)
+                                        // qstr.name pointer is at offset 0x8 within qstr
+                                        const dNamePtr = this.memory.readU64(dentryOffset + 0x20 + 0x8);
+
+                                        if (dNamePtr) {
+
+                                            if ((dNamePtr & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
+                                                const nameTranslated = this.translateVA(dNamePtr, this.swapperPgDir);
+                                                if (nameTranslated) {
+                                                    const nameOffset = nameTranslated - KernelConstants.GUEST_RAM_START;
+                                                    // Try to read up to 256 bytes for the filename
+                                                    const nameBytes = this.memory.readBytes(nameOffset, 256);
+                                                    if (nameBytes) {
+                                                        // Find null terminator
+                                                        let nameLen = nameBytes.findIndex(b => b === 0);
+                                                        if (nameLen === -1) nameLen = 256;
+                                                        if (nameLen > 0) {
+                                                            filename = new TextDecoder().decode(nameBytes.slice(0, nameLen));
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                // Sometimes the name pointer might be embedded directly (short names)
+                                                // Check if it looks like ASCII characters
+                                                const bytes = [];
+                                                for (let i = 0; i < 8; i++) {
+                                                    const byte = Number((dNamePtr >> BigInt(i * 8)) & 0xFFn);
+                                                    if (byte === 0) break;
+                                                    if (byte >= 32 && byte <= 126) {
+                                                        bytes.push(byte);
+                                                    } else {
+                                                        break;
+                                                    }
+                                                }
+                                                if (bytes.length > 0) {
+                                                    filename = String.fromCharCode(...bytes);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
 
-                        sections.push({
+                        if (sections.length < 10) {
+                            let desc = `✓ Found valid VMA at depth ${depth}: 0x${vmStart.toString(16)}-0x${vmEnd.toString(16)} (flags=0x${vmFlags?.toString(16) || '0'})`;
+                            if (filename) {
+                                desc += ` [${filename}]`;
+                            } else if (vmFile && vmFile !== 0n) {
+                                desc += ` [file@0x${vmFile.toString(16)}]`;
+                            }
+                            console.log(`${'  '.repeat(depth)}  ${desc}`);
+                        }
+
+                        // Determine type based on flags and filename
+                        let type: 'code' | 'data' | 'heap' | 'stack' | 'library' | 'kernel' = 'data';
+                        const flagBits = Number(vmFlags || 0);
+                        const isExec = (flagBits & 0x4) !== 0;  // VM_EXEC
+                        const isWrite = (flagBits & 0x2) !== 0; // VM_WRITE
+
+                        if (filename) {
+                            if (filename.includes('.so') || filename.includes('.dll')) {
+                                type = 'library';
+                            } else if (isExec) {
+                                type = 'code';
+                            }
+                        } else if (!vmFile || vmFile === 0n) {
+                            // Anonymous mapping - could be heap or stack
+                            // Stack typically has high addresses and is RW
+                            if (vmStart > 0x700000000000n) {
+                                type = 'stack';
+                            } else if (isWrite && !isExec) {
+                                type = 'heap';
+                            }
+                        }
+
+                        const section = {
                             startVa: Number(vmStart),
                             endVa: Number(vmEnd),
                             startPa: 0,
                             size: Number(vmEnd - vmStart),
                             pages: Math.ceil(Number(vmEnd - vmStart) / 4096),
                             flags: Number(vmFlags || 0),
-                            type: 'data' as 'code' | 'data' | 'heap' | 'stack' | 'library' | 'kernel'
-                        });
+                            type: type,
+                            filename: filename,
+                            fileOffset: vmFile ? Number(vmPgoff || 0) : undefined
+                        };
+
+                        // Debug: Log only sections with filenames
+                        if (filename && sections.length < 5) {
+                            console.log(`VMA with filename: "${filename}" at 0x${vmStart.toString(16)}`);
+                        }
+
+                        sections.push(section);
                     } else if (depth <= 2) {
                         // In leaf nodes, invalid values are just garbage, don't follow them
                         console.log(`${'  '.repeat(depth)}      Invalid VMA values (vm_start=0x${vmStart?.toString(16)||'?'}, vm_end=0x${vmEnd?.toString(16)||'?'}) - not following as child`);
@@ -1807,11 +1884,28 @@ export class PagedKernelDiscovery {
             return sections;
         }
 
+        // Debug VLC specifically
+        const isVLC = process.name.toLowerCase().includes('vlc');
+        if (isVLC) {
+            console.log(`\n=== walkVMAs for VLC PID ${process.pid} ===`);
+            console.log(`  mm_struct VA: 0x${process.mmStruct.toString(16)}`);
+            console.log(`  swapper_pg_dir: 0x${this.swapperPgDir.toString(16)}`);
+        }
+
         // Translate mm_struct VA to PA using kernel PGD
         const mmPa = this.translateVA(process.mmStruct, this.swapperPgDir);
         if (!mmPa) {
+            if (isVLC) {
+                console.log(`  ✗ Failed to translate mm_struct VA to PA`);
+                console.log(`  Attempting debug translation...`);
+                this.debugTranslateVA(process.mmStruct, this.swapperPgDir);
+            }
             // Silently fail - not all processes have accessible mm_structs
             return sections;
+        }
+
+        if (isVLC) {
+            console.log(`  ✓ Translated mm_struct to PA: 0x${mmPa.toString(16)}`);
         }
 
         // Modern kernels use maple tree, not linked list
@@ -1826,12 +1920,12 @@ export class PagedKernelDiscovery {
         // First, verify this looks like a valid mm_struct
         const pgd = this.memory.readU64(mmStructOffset + 0x68);  // mm_struct->pgd at 0x68
 
-        // mm_users is an atomic_t which might be at different offsets
-        // Let's check a few possible locations
+        // mm_users is an atomic_t at offset 0x74 (verified via pahole)
+        // Also check the old incorrect offsets for debugging
         const mmUsers38 = this.memory.readU32(mmStructOffset + 0x38);
-        const mmUsers3c = this.memory.readU32(mmStructOffset + 0x3c);
-        const mmUsers40 = this.memory.readU32(mmStructOffset + 0x40);
-        const mmUsers = mmUsers38;  // Use 0x38 for now
+        const mmUsers74 = this.memory.readU32(mmStructOffset + 0x74);  // Correct offset!
+        const mmCount = this.memory.readU32(mmStructOffset + 0x0);     // mm_count at 0x0
+        const mmUsers = mmUsers74;  // Use the correct offset 0x74
 
         const mapleRoot = this.memory.readU64(mmStructOffset + 0x48); // maple tree root at 0x48
 
@@ -1846,9 +1940,9 @@ export class PagedKernelDiscovery {
             console.log(`    mm_struct PA: 0x${mmPa.toString(16)}`);
             console.log(`    maple root @ offset 0x48 = 0x${mapleRoot?.toString(16) || '?'}`);
             console.log(`    pgd @ offset 0x68 = 0x${pgd?.toString(16) || '?'}`);
-            console.log(`    mm_users @ offset 0x38 = ${mmUsers38 || 0}`);
-            console.log(`    mm_users @ offset 0x3c = ${mmUsers3c || 0}`);
-            console.log(`    mm_users @ offset 0x40 = ${mmUsers40 || 0}`);
+            console.log(`    mm_count @ offset 0x00 = ${mmCount || 0}`);
+            console.log(`    mm_users @ offset 0x74 = ${mmUsers74 || 0} (CORRECT)`);
+            console.log(`    mm_users @ offset 0x38 = ${mmUsers38 || 0} (wrong offset)`);
 
             // Dump first few fields to understand structure (only for processes with active mm_users)
             if (mmUsers > 0) {
@@ -1860,11 +1954,14 @@ export class PagedKernelDiscovery {
                     }
                 }
             } else {
-                console.log(`    ⚠️  mm_users = 0, process may be exiting or freed`);
-                // Don't return for Firefox - let's try walking its maple tree anyway
-                if (process.pid !== 6969) {
-                    return sections; // Skip processes with no users
+                console.log(`    ⚠️  mm_users = ${mmUsers}, mm_count = ${mmCount}`);
+                if (mmUsers === 0 && mmCount > 0) {
+                    console.log(`    Process exiting but mm still valid (mm_count > 0)`);
+                } else if (mmUsers === 0 && mmCount === 0) {
+                    console.log(`    Process completely freed - maple tree may be corrupted`);
                 }
+                // Continue anyway to see what we find
+                console.log(`    Continuing maple tree walk...`);
             }
         }
 
@@ -1883,6 +1980,7 @@ export class PagedKernelDiscovery {
         if (!maRootPtr || maRootPtr === 0n) {
             return sections; // Empty tree
         }
+
 
         const debug = process.pid < 100;
         if (debug) {
@@ -2142,7 +2240,14 @@ export class PagedKernelDiscovery {
         const debug = process.pid < 100;
         let validEntries = 0;
 
-        // Walk user space portion of PGD (indices 0-511 for full user space range)
+        // Walk all PGD entries - with ASLR, user space can use any index
+        // Let's try walking all entries but log what we find
+        // to understand the actual memory layout
+        const debugProcess = process.name === 'vlc' || process.pid === 9526;
+        if (debugProcess) {
+            console.log(`\nDEBUG: Walking page tables for VLC (PID ${process.pid})`);
+        }
+
         for (let pgdIdx = 0; pgdIdx < 512; pgdIdx++) {
             // process.pgd is stored as physical address (with GUEST_RAM_START added)
             // We need to convert back to file offset
@@ -2165,6 +2270,15 @@ export class PagedKernelDiscovery {
 
         if (debug && validEntries === 0) {
             console.log(`    No valid PGD entries found in user space`);
+        }
+
+        if (debugProcess) {
+            console.log(`    Total PTEs found: ${ptes.length}`);
+            if (ptes.length > 0) {
+                // Show sample VAs to understand the range
+                const sampleVAs = ptes.slice(0, 5).map(p => `0x${p.va.toString(16)}`);
+                console.log(`    Sample VAs: ${sampleVAs.join(', ')}`);
+            }
         }
 
         return ptes;
@@ -2250,13 +2364,20 @@ export class PagedKernelDiscovery {
 
             const entryType = Number(pudEntry & 3n);
             if (entryType === 1) {
-                // 1GB huge page
-                const va = (pgdIdx << 39) | (pudIdx << 30);
+                // 1GB huge page - use BigInt for proper 64-bit arithmetic
+                const va = (BigInt(pgdIdx) << 39n) | (BigInt(pudIdx) << 30n);
+
+                // Skip kernel VAs (those with bits 63-48 all set)
+                if ((va >> 48n) === 0xFFFFn) {
+                    continue;
+                }
+
                 const pudFlags = Number(pudEntry & 0xFFFn);
                 // Extract PA from bits [47:30] for 1GB pages - mask off upper flag bits
                 const pa = Number(pudEntry & 0x0000FFFFC0000000n);
+
                 ptes.push({
-                    va,
+                    va,  // Keep as BigInt
                     pa,
                     flags: pudFlags,
                     r: (pudFlags & 1) !== 0,
@@ -2291,13 +2412,20 @@ export class PagedKernelDiscovery {
 
             const entryType = Number(pmdEntry & 3n);
             if (entryType === 1) {
-                // 2MB huge page
-                const va = (pgdIdx << 39) | (pudIdx << 30) | (pmdIdx << 21);
+                // 2MB huge page - use BigInt for proper 64-bit arithmetic
+                const va = (BigInt(pgdIdx) << 39n) | (BigInt(pudIdx) << 30n) | (BigInt(pmdIdx) << 21n);
+
+                // Skip kernel VAs (those with bits 63-48 all set)
+                if ((va >> 48n) === 0xFFFFn) {
+                    continue;
+                }
+
                 const pmdFlags = Number(pmdEntry & 0xFFFn);
                 // Extract PA from bits [47:21] for 2MB pages - mask off upper flag bits
                 const pa = Number(pmdEntry & 0x0000FFFFFFE00000n);
+
                 ptes.push({
-                    va,
+                    va,  // Keep as BigInt
                     pa,
                     flags: pmdFlags,
                     r: (pmdFlags & 1) !== 0,
@@ -2330,13 +2458,28 @@ export class PagedKernelDiscovery {
                 continue;
             }
 
-            // Regular 4KB page
-            const va = (pgdIdx << 39) | (pudIdx << 30) | (pmdIdx << 21) | (pteIdx << 12);
+            // Regular 4KB page - use BigInt for proper 64-bit arithmetic
+            const va = (BigInt(pgdIdx) << 39n) | (BigInt(pudIdx) << 30n) | (BigInt(pmdIdx) << 21n) | (BigInt(pteIdx) << 12n);
+
+            // Debug suspicious VAs
+            if (va > 0x0000FFFFFFFFFFFFn && va < 0xFFFF000000000000n) {
+                console.log(`WARNING: Suspicious VA calculated: 0x${va.toString(16)}`);
+                console.log(`  pgdIdx=${pgdIdx}, pudIdx=${pudIdx}, pmdIdx=${pmdIdx}, pteIdx=${pteIdx}`);
+                console.log(`  Components: pgd<<39=0x${(BigInt(pgdIdx) << 39n).toString(16)}, pud<<30=0x${(BigInt(pudIdx) << 30n).toString(16)}, pmd<<21=0x${(BigInt(pmdIdx) << 21n).toString(16)}, pte<<12=0x${(pteIdx << 12).toString(16)}`);
+            }
+
+            // With modern ARM64 + ASLR, user processes can use high addresses
+            // Only skip actual kernel space addresses (0xFFFF...)
+            if ((va >> 48n) === 0xFFFFn) {
+                continue;  // This is a kernel VA (bits 63-48 all set)
+            }
+
             const pteFlags = Number(pteEntry & 0xFFFn);
             // Extract PA from bits [47:12] - mask off upper flag bits
             const pa = Number(pteEntry & 0x0000FFFFFFFFF000n);
+
             ptes.push({
-                va,
+                va,  // Keep as BigInt to preserve full 48-bit address
                 pa,
                 flags: pteFlags,
                 r: (pteFlags & 1) !== 0,
@@ -2750,11 +2893,11 @@ export class PagedKernelDiscovery {
             // PGD covers bits 47:39 (9 bits = 512 entries)
             // vmalloc at 0xffff0000... is in the kernel space (high canonical addresses)
 
-            console.log('Understanding ARM64 address space:');
-            console.log('  0x0000000000000000 - 0x0000ffffffffffff : User space (PGD 0-255)');
-            console.log('  0xffff000000000000 - 0xffff7fffffffffff : vmalloc/modules (actually maps to PGD 0!)');
-            console.log('  0xffff800000000000 - 0xffff807fffffffff : Linear mapping (PGD 256)');
-            console.log('  0xffffff8000000000 - 0xffffffffffffffff : Kernel text/fixmap (PGD 511)');
+            console.log('Understanding ARM64 address space with ASLR:');
+            console.log('  0x0000000000000000 - 0x0000ffffffffffff : 48-bit user space');
+            console.log('    With ASLR: User processes use HIGH addresses (e.g., 0xc3..., 0xe7..., 0xf1...)');
+            console.log('    This maps to PGD indices throughout 0-511 (e.g., 371, 390, 482)');
+            console.log('  0xffff000000000000 - 0xffffffffffffffff : Kernel space (bits 63-48 all set)');
 
             console.log('\nThe trick: vmalloc VA 0xffff000000000000 uses TTBR1 but maps to PGD[0]!');
             console.log('This is because TTBR1 (kernel) sees the upper 256 entries as 0-255');
