@@ -5,6 +5,7 @@
 
 import { PagedMemory } from './paged-memory';
 import { PagedKernelDiscovery } from './kernel-discovery-paged';
+import { KernelMem, OFFSETS as KMEM_OFFSETS } from './kernel-mem';
 
 // Kernel struct offsets - from pahole/BTF
 interface KernelOffsets {
@@ -106,12 +107,19 @@ export class PageCacheDiscovery {
     private superBlocksAddr: number = 0;
     private kernelPgd: number = 0;
     private kernelDiscovery: PagedKernelDiscovery | null = null;
+    private kmem: KernelMem;
 
     constructor(memory: PagedMemory, kernelPgd?: number, offsets?: KernelOffsets, kernelDiscovery?: PagedKernelDiscovery) {
         this.memory = memory;
         this.kernelPgd = kernelPgd || 0;
         this.offsets = offsets || DEFAULT_OFFSETS;
         this.kernelDiscovery = kernelDiscovery || null;
+
+        // Create KernelMem helper
+        this.kmem = new KernelMem(memory);
+        if (kernelPgd) {
+            this.kmem.setKernelPgd(kernelPgd);
+        }
     }
 
     /**
@@ -123,8 +131,8 @@ export class PageCacheDiscovery {
         const superBlocksVA = BigInt('0xffff8000838e3360'); // Known from kallsyms
         console.log(`Trying super_blocks at VA 0x${superBlocksVA.toString(16)}`);
 
-        console.log(`Using kernel discovery: ${!!this.kernelDiscovery}, kernel PGD: 0x${this.kernelPgd.toString(16)}`);
-        const pa = this.kernelDiscovery ? this.kernelDiscovery.translateVA(superBlocksVA, this.kernelPgd) : null;
+        console.log(`Using kernel PGD: 0x${this.kernelPgd.toString(16)}`);
+        const pa = this.kmem.translateVA(superBlocksVA);
         if (pa) {
             console.log(`Translated to PA 0x${pa.toString(16)}`);
             // Verify it looks like a list_head
@@ -251,19 +259,11 @@ export class PageCacheDiscovery {
     }
 
     /**
-     * Translate kernel VA to PA using kernelDiscovery
+     * Helper wrapper for VA translation that uses KernelMem
      */
     private translateKernelVA(va: number | bigint): number | null {
-        // Always use BigInt to preserve precision
         const vaBig = typeof va === 'bigint' ? va : BigInt(va);
-
-        // We must have kernel discovery and PGD for translation
-        if (!this.kernelDiscovery || !this.kernelPgd) {
-            console.log(`Cannot translate VA 0x${vaBig.toString(16)} - no kernel discovery instance`);
-            return null;
-        }
-
-        return this.kernelDiscovery.translateVA(vaBig, this.kernelPgd);
+        return this.kmem.translateVA(vaBig);
     }
 
 
@@ -352,27 +352,6 @@ export class PageCacheDiscovery {
         }
 
         return entries;
-    }
-
-    /**
-     * Read a string from kernel memory
-     */
-    private readString(addr: number, maxLen: number = 32): string {
-        const pa = this.translateKernelVA(addr);
-        if (!pa) return '';
-        
-        const data = this.memory.readBytes(pa - 0x40000000, maxLen);
-        if (!data) return '';
-        
-        let str = '';
-        for (let i = 0; i < data.length; i++) {
-            if (data[i] === 0) break;
-            if (data[i] >= 32 && data[i] < 127) {
-                str += String.fromCharCode(data[i]);
-            }
-        }
-        
-        return str;
     }
 
     /**
@@ -750,203 +729,73 @@ export class PageCacheDiscovery {
         const initTaskVA = BigInt('0xffff8000838e2880'); // Known init_task address
         console.log(`Starting from init_task at VA 0x${initTaskVA.toString(16)}`);
 
-        // Walk the task list
+        // Walk the task list using kmem helper
+        const tasksOffset = this.offsets['task_struct.tasks'];
+        const taskAddrs = this.kmem.walkList(initTaskVA + BigInt(tasksOffset), tasksOffset, 200);
+
+        console.log(`Found ${taskAddrs.length} tasks`);
+
         const tasks: Array<{addr: bigint, pid: number, name: string}> = [];
-        let current = initTaskVA;
-        const maxTasks = 200;
-        let taskCount = 0;
 
-        // Read first task to get the list head
-        const tasksOffset = BigInt(this.offsets['task_struct.tasks']);
-        const firstTaskPA = this.translateKernelVA(current + tasksOffset);
+        for (const taskAddr of taskAddrs) {
+            // Read PID using kmem helper
+            const pid = this.kmem.readU32(taskAddr + BigInt(this.offsets['task_struct.pid']));
+            if (!pid || pid <= 0) continue;
 
-        if (!firstTaskPA) {
-            console.error('Failed to translate init_task address');
-            return openFiles;
-        }
+            // Read comm (process name) using kmem helper
+            const name = this.kmem.readString(taskAddr + BigInt(this.offsets['task_struct.comm']), 16);
+            if (!name || name.startsWith('[')) continue;
 
-        const firstData = this.memory.readBytes(firstTaskPA - 0x40000000, 16);
-        if (!firstData) {
-            console.error('Failed to read init_task');
-            return openFiles;
-        }
+            // Process user tasks
+            tasks.push({addr: taskAddr, pid, name});
 
-        const dataView = new DataView(firstData.buffer, firstData.byteOffset, firstData.byteLength);
-        let nextPtr = dataView.getBigUint64(0, true);
-        const first = nextPtr;
+            // Get files_struct pointer using kmem helper
+            const filesPtr = this.kmem.readU64(taskAddr + BigInt(this.offsets['task_struct.files']));
+            if (filesPtr && filesPtr > BigInt('0xffff000000000000')) {
+                // Read fdtable pointer
+                const fdtPtr = this.kmem.readU64(filesPtr + BigInt(this.offsets['files_struct.fdt']));
+                if (fdtPtr && fdtPtr > BigInt('0xffff000000000000')) {
+                    // Read max_fds and fd array pointer
+                    const maxFds = this.kmem.readU32(fdtPtr + BigInt(this.offsets['fdtable.max_fds']));
+                    const fdArrayPtr = this.kmem.readU64(fdtPtr + BigInt(this.offsets['fdtable.fd']));
 
-        while (nextPtr && taskCount < maxTasks) {
-            // Container_of: subtract task list offset to get task_struct address
-            const taskAddr = nextPtr - tasksOffset;
+                    if (maxFds && fdArrayPtr) {
+                        // Check first few file descriptors
+                        const checkFds = Math.min(maxFds, 20);
+                        let foundFiles = 0;
 
-            // Read PID
-            const pidPA = this.translateKernelVA(taskAddr + BigInt(this.offsets['task_struct.pid']));
-            if (!pidPA) {
-                console.log(`Failed to translate PID address for task at 0x${taskAddr.toString(16)}`);
-                break;
-            }
+                        for (let fd = 0; fd < checkFds; fd++) {
+                            const filePtr = this.kmem.readU64(fdArrayPtr + BigInt(fd * 8));
+                            if (filePtr && filePtr > BigInt('0xffff000000000000')) {
+                                // Read inode pointer from file structure
+                                const inodePtr = this.kmem.readU64(filePtr + BigInt(this.offsets['file.f_inode']));
+                                if (inodePtr && inodePtr > BigInt('0xffff000000000000')) {
+                                    foundFiles++;
 
-            const pidData = this.memory.readBytes(pidPA - 0x40000000, 4);
-            if (!pidData) {
-                console.log(`Failed to read PID for task at 0x${taskAddr.toString(16)}`);
-                break;
-            }
+                                    if (!openFiles.has(inodePtr)) {
+                                        // Read inode details
+                                        const ino = this.kmem.readU64(inodePtr + BigInt(this.offsets['inode.i_ino'])) || BigInt(0);
+                                        const size = this.kmem.readU64(inodePtr + BigInt(this.offsets['inode.i_size'])) || BigInt(0);
 
-            const pid = new DataView(pidData.buffer, pidData.byteOffset, pidData.byteLength).getUint32(0, true);
-
-            // Read comm (process name)
-            const commPA = this.translateKernelVA(taskAddr + BigInt(this.offsets['task_struct.comm']));
-            let name = '';
-            if (commPA) {
-                const commData = this.memory.readBytes(commPA - 0x40000000, 16);
-                if (commData) {
-                    for (let i = 0; i < commData.length && commData[i] !== 0; i++) {
-                        if (commData[i] >= 32 && commData[i] < 127) {
-                            name += String.fromCharCode(commData[i]);
-                        }
-                    }
-                }
-            }
-
-            // Only process user tasks (skip kernel threads)
-            if (pid > 0 && name && !name.startsWith('[')) {
-                tasks.push({addr: taskAddr, pid, name});
-
-                // Get files_struct pointer
-                const filesPA = this.translateKernelVA(taskAddr + BigInt(this.offsets['task_struct.files']));
-                if (!filesPA) {
-                    taskCount++;
-                    // Get next task
-                    const nextPA = this.translateKernelVA(nextPtr);
-                    if (!nextPA) break;
-                    const nextData = this.memory.readBytes(nextPA - 0x40000000, 8);
-                    if (!nextData) break;
-                    nextPtr = new DataView(nextData.buffer, nextData.byteOffset, nextData.byteLength).getBigUint64(0, true);
-                    if (nextPtr === first) break;
-                    continue;
-                }
-
-                const filesData = this.memory.readBytes(filesPA - 0x40000000, 8);
-                if (!filesData) {
-                    taskCount++;
-                    // Get next task
-                    const nextPA = this.translateKernelVA(nextPtr);
-                    if (!nextPA) break;
-                    const nextData = this.memory.readBytes(nextPA - 0x40000000, 8);
-                    if (!nextData) break;
-                    nextPtr = new DataView(nextData.buffer, nextData.byteOffset, nextData.byteLength).getBigUint64(0, true);
-                    if (nextPtr === first) break;
-                    continue;
-                }
-
-                const filesPtr = new DataView(filesData.buffer, filesData.byteOffset, filesData.byteLength).getBigUint64(0, true);
-                if (filesPtr && filesPtr > BigInt('0xffff000000000000')) {
-                    // Read fdtable pointer
-                    const fdtPA = this.translateKernelVA(filesPtr + BigInt(this.offsets['files_struct.fdt']));
-                    if (fdtPA) {
-                        const fdtData = this.memory.readBytes(fdtPA - 0x40000000, 8);
-                        if (fdtData) {
-                            const fdtPtr = new DataView(fdtData.buffer, fdtData.byteOffset, fdtData.byteLength).getBigUint64(0, true);
-
-                            if (fdtPtr && fdtPtr > BigInt('0xffff000000000000')) {
-                                // Read max_fds and fd array pointer
-                                const maxFdsPA = this.translateKernelVA(fdtPtr + BigInt(this.offsets['fdtable.max_fds']));
-                                const fdArrayPA = this.translateKernelVA(fdtPtr + BigInt(this.offsets['fdtable.fd']));
-
-                                if (maxFdsPA && fdArrayPA) {
-                                    const maxFdsData = this.memory.readBytes(maxFdsPA - 0x40000000, 4);
-                                    const fdArrayData = this.memory.readBytes(fdArrayPA - 0x40000000, 8);
-
-                                    if (maxFdsData && fdArrayData) {
-                                        const maxFds = new DataView(maxFdsData.buffer, maxFdsData.byteOffset, maxFdsData.byteLength).getUint32(0, true);
-                                        const fdArrayPtr = new DataView(fdArrayData.buffer, fdArrayData.byteOffset, fdArrayData.byteLength).getBigUint64(0, true);
-
-                                        // Check first few file descriptors
-                                        const checkFds = Math.min(maxFds, 20);
-                                        let foundFiles = 0;
-
-                                        for (let fd = 0; fd < checkFds; fd++) {
-                                            const filePA = this.translateKernelVA(fdArrayPtr + BigInt(fd * 8));
-                                            if (!filePA) continue;
-
-                                            const fileData = this.memory.readBytes(filePA - 0x40000000, 8);
-                                            if (!fileData) continue;
-
-                                            const filePtr = new DataView(fileData.buffer, fileData.byteOffset, fileData.byteLength).getBigUint64(0, true);
-                                            if (filePtr && filePtr > BigInt('0xffff000000000000')) {
-                                                // Read inode pointer from file structure
-                                                const inodePA = this.translateKernelVA(filePtr + BigInt(this.offsets['file.f_inode']));
-                                                if (!inodePA) continue;
-
-                                                const inodeData = this.memory.readBytes(inodePA - 0x40000000, 8);
-                                                if (!inodeData) continue;
-
-                                                const inodePtr = new DataView(inodeData.buffer, inodeData.byteOffset, inodeData.byteLength).getBigUint64(0, true);
-                                                if (inodePtr && inodePtr > BigInt('0xffff000000000000')) {
-                                                    foundFiles++;
-
-                                                    if (!openFiles.has(inodePtr)) {
-                                                        // Read inode details
-                                                        const inoPA = this.translateKernelVA(inodePtr + BigInt(this.offsets['inode.i_ino']));
-                                                        const sizePA = this.translateKernelVA(inodePtr + BigInt(this.offsets['inode.i_size']));
-
-                                                        let ino = BigInt(0);
-                                                        let size = BigInt(0);
-
-                                                        if (inoPA) {
-                                                            const inoData = this.memory.readBytes(inoPA - 0x40000000, 8);
-                                                            if (inoData) {
-                                                                ino = new DataView(inoData.buffer, inoData.byteOffset, inoData.byteLength).getBigUint64(0, true);
-                                                            }
-                                                        }
-
-                                                        if (sizePA) {
-                                                            const sizeData = this.memory.readBytes(sizePA - 0x40000000, 8);
-                                                            if (sizeData) {
-                                                                size = new DataView(sizeData.buffer, sizeData.byteOffset, sizeData.byteLength).getBigUint64(0, true);
-                                                            }
-                                                        }
-
-                                                        openFiles.set(inodePtr, {
-                                                            inodeAddr: inodePtr,
-                                                            ino: ino,
-                                                            size: size,
-                                                            processes: [{pid, name, fd}]
-                                                        });
-                                                    } else {
-                                                        // Add this process to existing inode entry
-                                                        openFiles.get(inodePtr).processes.push({pid, name, fd});
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        if (foundFiles > 0) {
-                                            console.log(`Process ${name} (PID ${pid}): found ${foundFiles} open files`);
-                                        }
+                                        openFiles.set(inodePtr, {
+                                            inodeAddr: inodePtr,
+                                            ino: ino,
+                                            size: size,
+                                            processes: [{pid, name, fd}]
+                                        });
+                                    } else {
+                                        // Add this process to existing inode entry
+                                        openFiles.get(inodePtr).processes.push({pid, name, fd});
                                     }
                                 }
                             }
                         }
+
+                        if (foundFiles > 0) {
+                            console.log(`Process ${name} (PID ${pid}): found ${foundFiles} open files`);
+                        }
                     }
                 }
-            }
-
-            taskCount++;
-
-            // Get next task
-            const nextPA = this.translateKernelVA(nextPtr);
-            if (!nextPA) break;
-
-            const nextData = this.memory.readBytes(nextPA - 0x40000000, 8);
-            if (!nextData) break;
-
-            nextPtr = new DataView(nextData.buffer, nextData.byteOffset, nextData.byteLength).getBigUint64(0, true);
-
-            // Check if we've looped back
-            if (nextPtr === first) {
-                console.log('Reached end of task list');
-                break;
             }
         }
 
