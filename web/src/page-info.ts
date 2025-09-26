@@ -339,7 +339,7 @@ export class PageCollection {
 
             const count = stats.byType.get(page.contentType) || 0;
             stats.byType.set(page.contentType, count + 1);
-        }
+        });
 
         stats.avgMappingsPerPage = stats.totalMappings / stats.totalPages;
 
