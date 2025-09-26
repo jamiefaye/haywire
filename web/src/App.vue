@@ -115,6 +115,9 @@
         <button @click="runKernelDiscovery" :disabled="!isFileOpen || kernelDiscoveryRunning">
           {{ kernelDiscoveryRunning ? '⏳ Discovering...' : '🔍 Kernel Discovery' }}
         </button>
+        <button @click="showOpenFilesTest = true" :disabled="!isFileOpen">
+          📁 Test Open Files
+        </button>
       </div>
       <div v-if="qmpAvailable" class="control-group status">
         <span v-if="qmpConnected" class="status-indicator connected">
@@ -523,6 +526,19 @@
       </div>
     </div>
   </div>
+
+  <!-- Open Files Test Modal -->
+  <div v-if="showOpenFilesTest" class="modal-overlay" @click.self="showOpenFilesTest = false">
+    <div class="modal-content" style="width: 90%; max-width: 1200px; height: 80%;">
+      <div class="modal-header">
+        <h2>📁 Open Files Discovery Test</h2>
+        <button class="modal-close" @click="showOpenFilesTest = false">✕</button>
+      </div>
+      <div class="modal-body" style="overflow-y: auto;">
+        <OpenFilesTest :memory="pagedMemory" />
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -534,6 +550,7 @@ import MemoryOverviewPane from './components/MemoryOverviewPane.vue'
 import AutoCorrelator from './components/AutoCorrelator.vue'
 import MemoryFileManager from './components/MemoryFileManager.vue'
 import KernelPageTooltip from './components/KernelPageTooltip.vue'
+import OpenFilesTest from './components/OpenFilesTest.vue'
 import { useFileSystemAPI } from './composables/useFileSystemAPI'
 import { useQmpBridge } from './composables/useQmpBridge'
 import { PixelFormat } from './composables/useWasmRenderer'
@@ -651,6 +668,10 @@ let autoRepeatTimeout: number | null = null
 const kernelDiscoveryModal = ref(false)
 const kernelDiscoveryRunning = ref(false)
 const kernelDiscoveryStatus = ref('Initializing...')
+
+// Open Files Test state
+const showOpenFilesTest = ref(false)
+const pagedMemory = ref<any>(null)  // Store PagedMemory instance for reuse
 const kernelDiscoveryResults = ref<any>(null)
 const pageCollection = ref<PageCollection | null>(null)
 const processSortKey = ref<'pid' | 'name' | 'ptes'>('pid')
@@ -2183,6 +2204,7 @@ async function startDiscovery() {
         });
 
         console.log(`PagedMemory loaded: ${memory.getMemoryUsage()}`);
+        pagedMemory.value = memory;  // Store for reuse
         kernelDiscoveryStatus.value = `Analyzing memory (${(totalSize / (1024*1024)).toFixed(0)}MB)...`;
 
         // Run discovery using PagedKernelDiscovery
@@ -2268,6 +2290,7 @@ async function startDiscovery() {
         });
 
         console.log(`PagedMemory loaded: ${memory.getMemoryUsage()}`);
+        pagedMemory.value = memory;  // Store for reuse
         kernelDiscoveryStatus.value = `Analyzing memory (${(totalSize / (1024*1024)).toFixed(0)}MB)...`;
 
         // Run discovery using PagedKernelDiscovery

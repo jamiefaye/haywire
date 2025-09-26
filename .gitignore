@@ -60,7 +60,7 @@ __pycache__/
 
 # Video/Image files
 *.mp4
-*.ts
+# *.ts  # Commented out - this was blocking TypeScript files!
 *.png
 *.jpg
 
@@ -79,3 +79,5 @@ qemu-mods/qemu-system-aarch64-unsigned
 
 # Temporary test attempts
 test_attempts/imgui.ini
+linux-source/
+linux-headers/
