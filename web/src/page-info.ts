@@ -72,6 +72,17 @@ export class PageCollection {
     private pidPages = new Map<number, Set<number>>(); // PID → Set of PAs
     private sections = new Map<number, MemorySection[]>(); // PID → Memory sections from VMA walk
 
+    // Pre-calculated stats to avoid expensive iteration
+    private stats = {
+        totalPages: 0,
+        totalMappings: 0,
+        uniqueProcesses: new Set<number>(),
+        sharedPages: 0,
+        kernelPages: 0,
+        byType: new Map<PageContentType, number>(),
+        avgMappingsPerPage: 0
+    };
+
     /**
      * Add a page mapping from PTE walk
      */
@@ -103,6 +114,10 @@ export class PageCollection {
         const perms = this.decodePermissions(flags);
         const sectionType = this.findSectionType(pid, va) || this.guessSectionType(va, flags);
 
+        // Check if this is the first mapping for this page
+        const isNewPage = page.mappings.length === 0;
+        const wasShared = page.mappings.length > 1;
+
         page.mappings.push({
             pid,
             processName,
@@ -110,6 +125,18 @@ export class PageCollection {
             perms,
             sectionType
         });
+
+        // Update incremental stats
+        if (isNewPage) {
+            this.stats.totalPages++;
+        }
+        this.stats.totalMappings++;
+        this.stats.uniqueProcesses.add(pid);
+
+        // Update shared pages count
+        if (!wasShared && page.mappings.length > 1) {
+            this.stats.sharedPages++;
+        }
 
         // Update indices
         this.vaToPA.set(`${pid}:${va}`, pa);
@@ -120,7 +147,20 @@ export class PageCollection {
 
         // Update content type based on permissions
         if (!page.contentType || page.contentType === 'unknown') {
+            const oldType = page.contentType;
             page.contentType = this.guessContentType(va, flags);
+            // Update content type stats
+            if (isNewPage) {
+                const count = this.stats.byType.get(page.contentType) || 0;
+                this.stats.byType.set(page.contentType, count + 1);
+            } else if (oldType !== page.contentType) {
+                const oldCount = this.stats.byType.get(oldType) || 0;
+                if (oldCount > 0) {
+                    this.stats.byType.set(oldType, oldCount - 1);
+                }
+                const newCount = this.stats.byType.get(page.contentType) || 0;
+                this.stats.byType.set(page.contentType, newCount + 1);
+            }
         }
     }
 
@@ -155,10 +195,23 @@ export class PageCollection {
     markKernelPage(pa: number, structType?: string): void {
         const page = this.pages.get(pa);
         if (page) {
-            page.isKernel = true;
+            if (!page.isKernel) {
+                page.isKernel = true;
+                this.stats.kernelPages++;
+            }
             if (structType) {
                 page.kernelStruct = structType;
-                page.contentType = 'kernel_struct';
+                // Update content type stats
+                const oldType = page.contentType;
+                if (oldType !== 'kernel_struct') {
+                    const oldCount = this.stats.byType.get(oldType) || 0;
+                    if (oldCount > 0) {
+                        this.stats.byType.set(oldType, oldCount - 1);
+                    }
+                    page.contentType = 'kernel_struct';
+                    const newCount = this.stats.byType.get('kernel_struct') || 0;
+                    this.stats.byType.set('kernel_struct', newCount + 1);
+                }
             }
         }
     }
@@ -210,29 +263,26 @@ export class PageCollection {
     }
 
     /**
-     * Get statistics about the collection
+     * Get statistics about the collection (uses pre-calculated stats)
      */
     getStatistics(): any {
-        const totalPages = this.pages.size;
-        const totalMappings = Array.from(this.pages.values()).reduce((sum, p) => sum + p.mappings.length, 0);
-        const sharedPages = Array.from(this.pages.values()).filter(p => p.mappings.length > 1).length;
-        const uniquePids = new Set<number>();
-        this.pages.forEach(p => p.mappings.forEach(m => uniquePids.add(m.pid)));
-
-        // Find PA range
+        // Find PA range (only thing we still need to calculate)
         let minPA = Number.MAX_SAFE_INTEGER;
         let maxPA = 0;
-        this.pages.forEach((page, pa) => {
-            if (pa < minPA) minPA = pa;
-            if (pa > maxPA) maxPA = pa;
-        });
+        if (this.pages.size > 0) {
+            // Only iterate if we have pages
+            for (const pa of this.pages.keys()) {
+                if (pa < minPA) minPA = pa;
+                if (pa > maxPA) maxPA = pa;
+            }
+        }
 
         return {
-            totalPages,
-            totalMappings,
-            sharedPages,
-            uniqueProcesses: uniquePids.size,
-            paRange: { min: minPA, max: maxPA }
+            totalPages: this.stats.totalPages,
+            totalMappings: this.stats.totalMappings,
+            sharedPages: this.stats.sharedPages,
+            uniqueProcesses: this.stats.uniqueProcesses.size,
+            paRange: this.pages.size > 0 ? { min: minPA, max: maxPA } : { min: 0, max: 0 }
         };
     }
 
@@ -317,35 +367,22 @@ export class PageCollection {
     }
 
     /**
-     * Get statistics
+     * Get statistics - now returns pre-calculated stats
      */
     getStats(): PageCollectionStats {
-        const stats = {
-            totalPages: this.pages.size,
-            totalMappings: 0,
-            uniqueProcesses: new Set<number>(),
-            sharedPages: 0,
-            kernelPages: 0,
-            byType: new Map<PageContentType, number>(),
-            avgMappingsPerPage: 0
-        };
-
-        this.pages.forEach(page => {
-            stats.totalMappings += page.mappings.length;
-            page.mappings.forEach(m => stats.uniqueProcesses.add(m.pid));
-
-            if (page.mappings.length > 1) stats.sharedPages++;
-            if (page.isKernel) stats.kernelPages++;
-
-            const count = stats.byType.get(page.contentType) || 0;
-            stats.byType.set(page.contentType, count + 1);
-        });
-
-        stats.avgMappingsPerPage = stats.totalMappings / stats.totalPages;
+        // Update average before returning
+        if (this.stats.totalPages > 0) {
+            this.stats.avgMappingsPerPage = this.stats.totalMappings / this.stats.totalPages;
+        }
 
         return {
-            ...stats,
-            uniqueProcesses: stats.uniqueProcesses.size
+            totalPages: this.stats.totalPages,
+            totalMappings: this.stats.totalMappings,
+            uniqueProcesses: this.stats.uniqueProcesses.size,
+            sharedPages: this.stats.sharedPages,
+            kernelPages: this.stats.kernelPages,
+            byType: new Map(this.stats.byType),
+            avgMappingsPerPage: this.stats.avgMappingsPerPage
         };
     }
 
