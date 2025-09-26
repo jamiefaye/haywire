@@ -8,6 +8,15 @@
  * - Virtual and physical addresses
  */
 
+// Import MemorySection type for VMA data
+interface MemorySection {
+    start: number;
+    end: number;
+    permissions: string;
+    type: string;
+    filename?: string;
+}
+
 export interface PageInfo {
     // Core addressing
     pa: number;           // Physical address (unique key)
@@ -61,6 +70,7 @@ export class PageCollection {
     private pages = new Map<number, PageInfo>();  // PA → PageInfo
     private vaToPA = new Map<string, number>();   // "pid:va" → PA
     private pidPages = new Map<number, Set<number>>(); // PID → Set of PAs
+    private sections = new Map<number, MemorySection[]>(); // PID → Memory sections from VMA walk
 
     /**
      * Add a page mapping from PTE walk
@@ -89,14 +99,16 @@ export class PageCollection {
             this.pages.set(pa, page);
         }
 
-        // Add mapping
+        // Add mapping - use actual section type from VMA walk if available
         const perms = this.decodePermissions(flags);
+        const sectionType = this.findSectionType(pid, va) || this.guessSectionType(va, flags);
+
         page.mappings.push({
             pid,
             processName,
             va,
             perms,
-            sectionType: this.guessSectionType(va, flags)
+            sectionType
         });
 
         // Update indices
@@ -190,15 +202,11 @@ export class PageCollection {
      * Add section info from VMA walk
      */
     addSectionInfo(pid: number, processName: string, section: any): void {
-        // Sections provide VA ranges but not PA mappings
-        // We'll correlate these with PTEs later
-        // For now, just track that this process has this VA range
-
-        // This helps us understand the memory layout even if we don't have
-        // all the PTEs for the region
-
-        // We could store sections separately or enhance PageMapping
-        // For now, this is a placeholder for future enhancement
+        // Store sections for later correlation with PTEs
+        if (!this.sections.has(pid)) {
+            this.sections.set(pid, []);
+        }
+        this.sections.get(pid)!.push(section);
     }
 
     /**
@@ -322,7 +330,7 @@ export class PageCollection {
             avgMappingsPerPage: 0
         };
 
-        for (const page of this.pages.values()) {
+        this.pages.forEach(page => {
             stats.totalMappings += page.mappings.length;
             page.mappings.forEach(m => stats.uniqueProcesses.add(m.pid));
 
@@ -351,11 +359,31 @@ export class PageCollection {
         return perms;
     }
 
+    /**
+     * Find section type from VMA data
+     */
+    private findSectionType(pid: number, va: number): string | null {
+        const sections = this.sections.get(pid);
+        if (!sections) return null;
+
+        // Find the section containing this VA
+        for (const section of sections) {
+            if (va >= section.start && va < section.end) {
+                return section.type;
+            }
+        }
+        return null;
+    }
+
     private guessSectionType(va: number, flags: number): string {
-        if (va >= 0x7fff00000000) return 'stack';
-        if (va >= 0x7f0000000000) return 'lib';
-        if (va >= 0x400000 && va < 0x500000) return 'code';
-        if (va >= 0x600000 && va < 0x700000) return 'data';
+        // Only use as fallback when no VMA data available
+        // Remove hardcoded x86-64 assumptions
+        const exec = !(flags & 0x10);
+        const write = !(flags & 0x80);
+
+        if (exec && !write) return 'code';
+        if (!exec && !write) return 'rodata';
+        if (!exec && write) return 'data';
         return 'anon';
     }
 
@@ -365,11 +393,7 @@ export class PageCollection {
 
         if (exec && !write) return 'code';
         if (!exec && !write) return 'rodata';
-        if (!exec && write) {
-            if (va >= 0x7fff00000000) return 'stack';
-            if (va >= 0x600000 && va < 0x700000) return 'data';
-            return 'heap';
-        }
+        if (!exec && write) return 'data';
         return 'unknown';
     }
 }
