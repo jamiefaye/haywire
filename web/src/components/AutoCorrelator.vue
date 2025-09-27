@@ -14,7 +14,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { wasmModule } from '@/composables/wasmSingleton'
 
 const props = defineProps<{
@@ -86,7 +86,6 @@ function computeCorrelation() {
     correlationData.value = new Float32Array(2048) // Placeholder
 
     // Find peaks
-    const threshold = 0.3
     const peaksPtr = wasmModule.value._allocateMemory(40) // 10 peaks * 4 bytes
     // wasmModule.value._getCorrelationPeaks(dataPtr, dataSize, peaksPtr, 10, threshold) // Function not available
 

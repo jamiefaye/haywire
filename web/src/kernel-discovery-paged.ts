@@ -10,7 +10,7 @@ import { PageCacheDiscovery } from './page-cache-discovery';
 import { KernelMem } from './kernel-mem';
 import { VirtualAddress, VA } from './types/virtual-address';
 import { PhysicalAddress, PA } from './types/physical-address';
-import { PageTableEntry } from './types/page-table';
+// import { PageTableEntry } from './types/page-table'; // Unused
 
 // Export the types we use
 export type { ProcessInfo, PTE, MemorySection, DiscoveryStats, DiscoveryOutput, PageInfo };

@@ -313,7 +313,7 @@
       v-for="viewer in miniViewers"
       :key="viewer.id"
       :id="viewer.id"
-      :memory-data="viewer.memoryData || memoryData"
+      :memory-data="viewer.memoryData || memoryData || undefined"
       :offset="0"
       :initial-width="viewer.width"
       :initial-height="viewer.height"
@@ -595,7 +595,6 @@ const {
 const memoryData = ref<Uint8Array | null>(null)
 const isLoadingFile = ref(false)
 const memoryCanvasRef = ref<InstanceType<typeof MemoryCanvas>>()
-const lastScanTime = ref<number>(0)
 
 // Check if running in Electron
 const isElectron = ref(window.electronAPI && window.electronAPI.isElectron)
@@ -752,7 +751,7 @@ const bytesPerPixel = computed(() => {
   return getBytesPerPixel(selectedFormat.value)
 })
 
-const formatName = computed(() => {
+const formatDisplayName = computed(() => {
   const formats = {
     [PixelFormat.GRAYSCALE]: 'GRAY8',
     [PixelFormat.RGB565]: 'RGB565',
@@ -1450,11 +1449,11 @@ function handleMemoryHover(offset: number, event?: MouseEvent) {
     let hasPageData = false;
     if (pageCollection.value) {
       const pageInfo = pageCollection.value.getPageInfo(physicalAddress);
-      hasPageData = pageInfo && pageInfo.mappings.length > 0;
+      hasPageData = !!(pageInfo && pageInfo.mappings.length > 0);
     }
     if (!hasPageData) {
       const pageInfo = kernelPageDB.getPageInfo(physicalAddress);
-      hasPageData = pageInfo && pageInfo.references.length > 0;
+      hasPageData = !!(pageInfo && pageInfo.references.length > 0);
     }
 
     if (hasPageData) {
@@ -1482,7 +1481,6 @@ function updateTooltipContent(physicalAddress: number, event: MouseEvent) {
       }
 
       // Generate tooltip text
-      const tooltipText = pageCollection.value.getPageTooltip(physicalAddress);
 
       // Convert to old format temporarily
       tooltipPageInfo.value = {
@@ -2345,7 +2343,7 @@ async function startDiscovery() {
       console.log('Using current view, size:', fullMemory.length)
 
       // Run basic discovery on limited data
-      const discovery = new KernelDiscovery(fullMemory.buffer)
+      const discovery = new KernelDiscovery(fullMemory.buffer as ArrayBuffer)
       kernelDiscoveryStatus.value = 'Finding processes...'
       await new Promise(resolve => setTimeout(resolve, 100))
       const results = await discovery.discover()
@@ -2552,7 +2550,7 @@ function viewProcessMaps(proc: any) {
       // Output current range and start new one
       const startStr = currentRange.startVA.toString(16).padStart(12, '0')
       const endStr = currentRange.endVA.toString(16).padStart(12, '0')
-      const sizeBigint = currentRange.endVA - currentRange.startVA
+      const sizeBigint = BigInt(currentRange.endVA) - BigInt(currentRange.startVA)
       const sizeKB = Number(sizeBigint / BigInt(1024))
       mapLines.push(`${startStr}-${endStr} ${currentRange.perms} [${sizeKB} KB]`)
 
@@ -2569,8 +2567,8 @@ function viewProcessMaps(proc: any) {
   if (currentRange) {
     const startStr = currentRange.startVA.toString(16).padStart(12, '0')
     const endStr = currentRange.endVA.toString(16).padStart(12, '0')
-    const sizeBigint2 = currentRange.endVA - currentRange.startVA
-  const sizeKB = Number(sizeBigint2 / BigInt(1024))
+    const sizeBigint2 = BigInt(currentRange.endVA) - BigInt(currentRange.startVA)
+    const sizeKB = Number(sizeBigint2 / BigInt(1024))
     mapLines.push(`${startStr}-${endStr} ${currentRange.perms} [${sizeKB} KB]`)
   }
 
@@ -2603,7 +2601,6 @@ function displayMapsFromSections(proc: any, sections: any[]) {
   for (const section of sorted) {
     const startStr = section.startVa.toString(16).padStart(12, '0')
     const endStr = section.endVa.toString(16).padStart(12, '0')
-    const sizeKB = Math.floor(section.size / 1024)
 
     // Convert flags to rwxp format
     const flags = section.flags || 0
@@ -2794,7 +2791,6 @@ ${(kernelDiscoveryResults.value.processes || []).slice(0, 10).map((p: any) =>
 }
 
 // Export for template
-const PixelFormatExport = PixelFormat
 
 // Keyboard shortcuts
 function handleKeyUp(event: KeyboardEvent) {
@@ -2956,7 +2952,7 @@ onUnmounted(() => {
   }
 })
 // Electron file handlers
-async function handleElectronFileOpened({ path, size }) {
+async function handleElectronFileOpened({ size }) {
   fileSize.value = size
   fileName.value = path.split('/').pop() || 'memory.bin'
   isFileOpen.value = true
@@ -2977,10 +2973,10 @@ async function handleElectronFileOpened({ path, size }) {
 let lastDataRefreshTime = null
 let dataRefreshCount = 0
 
-async function handleElectronFileRefreshed({ path, size }) {
+async function handleElectronFileRefreshed({ size }) {
   const now = Date.now()
   if (lastDataRefreshTime) {
-    const delta = now - lastDataRefreshTime
+    // const delta = now - lastDataRefreshTime
     dataRefreshCount++
   }
   lastDataRefreshTime = now

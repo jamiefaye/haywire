@@ -158,7 +158,7 @@
       <div class="report-section">
         <h3>Kernel Page Tables</h3>
         <div class="kernel-info">
-          <p><strong>swapper_pg_dir:</strong> <span class="mono">0x{{ (discoveryOutput?.swapperPgDir || 0).toString(16).toUpperCase() }}</span></p>
+          <p><strong>swapper_pg_dir:</strong> <span class="mono">0x{{ (discoveryOutput.value?.swapperPgDir || 0).toString(16).toUpperCase() }}</span></p>
           <p><strong>Kernel PTEs:</strong> {{ stats.kernelPTEs }}</p>
 
           <div class="kernel-sample">
@@ -255,7 +255,7 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, computed, onMounted } from 'vue';
+import { ref, computed, watch, nextTick, defineComponent } from 'vue';
 import { KernelDiscovery, formatDiscoveryOutput } from '../kernel-discovery';
 import type { ProcessInfo, DiscoveryOutput } from '../kernel-discovery';
 
@@ -337,7 +337,7 @@ export default defineComponent({
         .sort((a, b) => b[1].size - a[1].size)
         .slice(0, 10);
 
-      const result = {};
+      const result: Record<string, number[]> = {};
       for (const [page, pids] of sorted) {
         result[`0x${page.toString(16)}`] = Array.from(pids);
       }

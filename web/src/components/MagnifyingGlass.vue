@@ -133,9 +133,9 @@ function close() {
 }
 
 function draw() {
-  const ctx = canvas.value?.getContext('2d', { imageSmoothingEnabled: false })
+  const ctx = canvas.value?.getContext('2d', { imageSmoothingEnabled: false }) as CanvasRenderingContext2D | null
   // Always get a fresh context in case the canvas has been redrawn
-  const sourceCtx = props.sourceCanvas?.getContext('2d', { imageSmoothingEnabled: false })
+  const sourceCtx = props.sourceCanvas?.getContext('2d', { imageSmoothingEnabled: false }) as CanvasRenderingContext2D | null
   if (!ctx || !sourceCtx || !props.sourceCanvas) return
 
   // Clear canvas
