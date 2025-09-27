@@ -146,6 +146,9 @@ export default defineComponent({
       return `${typeStr} ${perms}`;
     };
 
+    // Cache discovery results between runs
+    let cachedDiscovery: any = null;
+
     const runDiscovery = async () => {
       clearResults();
       running.value = true;
@@ -153,19 +156,48 @@ export default defineComponent({
       try {
         logMsg('Starting open files discovery...');
 
-        // Create kernel memory helper
-        const kmem = new KernelMem(props.memory);
+        // Check if memory is available - create PagedMemory if needed
+        let memory = props.memory;
+        if (!memory) {
+          // Try to create PagedMemory from the open file using the composable
+          const { useFileSystemAPI } = await import('../composables/useFileSystemAPI');
+          const { fileHandle, isFileOpen } = useFileSystemAPI();
 
-        // Use already-discovered data if available
-        let discoveryResult = props.discoveryOutput;
+          if (!isFileOpen.value || !fileHandle.value) {
+            error.value = 'No memory file loaded. Please open a memory file first.';
+            logMsg('ERROR: No memory file loaded');
+            return;
+          }
+
+          logMsg('Creating PagedMemory from open file...');
+          const { PagedMemory } = await import('../paged-memory');
+          memory = new PagedMemory(fileHandle.value);
+          await memory.initialize();
+          logMsg(`PagedMemory created: ${memory.getTotalSize() / (1024*1024)}MB`);
+
+          // Store for next run to avoid recreating
+          (window as any).__cachedPagedMemory = memory;
+        } else if ((window as any).__cachedPagedMemory && !memory) {
+          // Use cached PagedMemory if available
+          memory = (window as any).__cachedPagedMemory;
+          logMsg('Using cached PagedMemory instance');
+        }
+
+        // Create kernel memory helper
+        const kmem = new KernelMem(memory);
+
+        // Use already-discovered data if available (from props or cache)
+        let discoveryResult = props.discoveryOutput || cachedDiscovery;
 
         if (!discoveryResult || !discoveryResult.swapperPgDir) {
           // Only run discovery if we don't have it already
           logMsg('No existing discovery data, finding kernel PGD...');
-          const kernelDiscovery = new PagedKernelDiscovery(props.memory);
-          discoveryResult = await kernelDiscovery.discover(props.memory.getTotalSize());
+          const kernelDiscovery = new PagedKernelDiscovery(memory);
+          discoveryResult = await kernelDiscovery.discover(memory.getTotalSize());
+          // Cache for next run
+          cachedDiscovery = discoveryResult;
         } else {
-          logMsg('Using existing discovery data');
+          logMsg('Using cached discovery data (skip kernel discovery)');
         }
 
         if (discoveryResult && discoveryResult.swapperPgDir) {
