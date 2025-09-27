@@ -8,6 +8,9 @@ import { KernelConstants, ProcessInfo, PTE, MemorySection, DiscoveryStats, Disco
 import { PageCollection, PageInfo } from './page-info';
 import { PageCacheDiscovery } from './page-cache-discovery';
 import { KernelMem } from './kernel-mem';
+import { VirtualAddress, VA } from './types/virtual-address';
+import { PhysicalAddress, PA } from './types/physical-address';
+import { PageTableEntry } from './types/page-table';
 
 // Export the types we use
 export type { ProcessInfo, PTE, MemorySection, DiscoveryStats, DiscoveryOutput, PageInfo };
@@ -30,9 +33,10 @@ export class PagedKernelDiscovery {
     // Data structures
     private processes = new Map<number, ProcessInfo>();
     private kernelPtes: PTE[] = [];
-    private pageToPids = new Map<number, Set<number>>();
-    private zeroPages = new Set<number>();
-    private swapperPgDir: number = 0;
+    private pageToPids = new Map<string, Set<number>>();  // Using string key for PA comparison
+    private zeroPages = new Set<string>();  // Using string for PA
+    private swapperPgDir: PhysicalAddress = PA(0);
+    private kernelPgdPA: PhysicalAddress | null = null;
 
     // Statistics
     private stats: DiscoveryStats = {
@@ -61,8 +65,8 @@ export class PagedKernelDiscovery {
     /**
      * Debug helper: dump PUD table contents
      */
-    private dumpPudTable(pudTablePA: number, pgdIndex: number): void {
-        const pudOffset = pudTablePA - KernelConstants.GUEST_RAM_START;
+    private dumpPudTable(pudTablePA: PhysicalAddress, pgdIndex: number): void {
+        const pudOffset = Number(pudTablePA) - Number(KernelConstants.GUEST_RAM_START);
         if (pudOffset < 0 || pudOffset >= this.totalSize) {
 //             console.log(`      PUD table PA 0x${pudTablePA.toString(16)} is outside memory range`);
             return;
@@ -165,7 +169,7 @@ export class PagedKernelDiscovery {
         // Get mm_struct pointer
         const mmRaw = this.memory.readU64(offset + KernelConstants.MM_OFFSET) || 0n;
         // Strip pointer authentication code if present
-        const mmStripped = stripPAC(mmRaw);
+        const mmStripped = stripPAC(VA(mmRaw));
 
         // Debug processes to see what's happening with mm field
         // Disable debug output while focusing on PGDs
@@ -221,7 +225,7 @@ export class PagedKernelDiscovery {
 
         // Bonus validation: check if it's a known process name
         const isKnown = KNOWN_PROCESSES.some(known => name.includes(known));
-        const isKernel = mmStripped === 0n;
+        const isKernel = mmStripped === VA(0);
 
         // Log successful process discovery
         if (pid === 1545 || (name && name.includes('dbus'))) {
@@ -283,7 +287,7 @@ export class PagedKernelDiscovery {
         if (hasValidList) validityScore += 2;
         if (kernelPtrCount >= 5) validityScore += 2;
         if (kernelPtrCount >= 10) validityScore += 1;
-        if (mmStripped === 0n || mmStripped >= 0xffff000000000000n) validityScore += 1;
+        if (mmStripped === VA(0) || VirtualAddress.isKernel(mmStripped)) validityScore += 1;
 
         // Require higher score for acceptance
         if (validityScore < 3) {
@@ -291,30 +295,33 @@ export class PagedKernelDiscovery {
         }
 
         // mm_struct validation - should be 0 (kernel thread) or kernel VA (user process)
-        if (mmStripped !== 0n) {
+        if (mmStripped !== VA(0)) {
             // For user processes, mm_struct should be a kernel VA (0xffff...)
-            if (mmStripped < 0xffff000000000000n) {
+            if (!VirtualAddress.isKernel(mmStripped)) {
                 // Not a kernel VA and not zero - invalid
                 return null;
             }
         }
 
         // Get PGD if mm_struct is valid
-        let pgdPtr = 0;
-        if (mmStripped && mmStripped >= BigInt(KernelConstants.GUEST_RAM_START) && mmStripped < BigInt(KernelConstants.GUEST_RAM_END)) {
-            const mmOffset = Number(mmStripped - BigInt(KernelConstants.GUEST_RAM_START));
-            pgdPtr = Number(this.memory.readU64(mmOffset + KernelConstants.PGD_OFFSET_IN_MM) || 0n);
+        let pgdPtr = PA(0);
+        if (mmStripped && mmStripped >= Number(KernelConstants.GUEST_RAM_START) && mmStripped < Number(KernelConstants.GUEST_RAM_END)) {
+            const mmOffset = Number(mmStripped) - Number(KernelConstants.GUEST_RAM_START);
+            const pgdRaw = this.memory.readU64(mmOffset + KernelConstants.PGD_OFFSET_IN_MM);
+            if (pgdRaw) {
+                pgdPtr = PA(pgdRaw);
+            }
         }
 
         return {
             pid,
             name,
-            taskStruct: KernelConstants.GUEST_RAM_START + offset,
-            mmStruct: mmStripped,  // Use bigint to preserve kernel address
+            taskStruct: PA(Number(KernelConstants.GUEST_RAM_START) + offset),
+            mmStruct: VA(mmStripped),  // Virtual address for mm_struct
             pgd: pgdPtr,
             isKernelThread: isKernel,
-            tasksNext,
-            tasksPrev,
+            tasksNext: PA(tasksNext),
+            tasksPrev: PA(tasksPrev),
             ptes: [],
             sections: [],
         };
@@ -498,7 +505,7 @@ export class PagedKernelDiscovery {
     private findProcesses(totalSize: number): void {
         // Use the library version
         if (this.kernelPgdPA) {
-            this.kmem.setKernelPgd(this.kernelPgdPA);
+            this.kmem.setKernelPgd(Number(this.kernelPgdPA));
         }
 
         this.processes = this.kmem.findProcesses();
@@ -514,16 +521,16 @@ export class PagedKernelDiscovery {
     /**
      * Find all swapper_pg_dir candidates
      */
-    private findSwapperPgDirCandidates(): Array<{addr: number, score: number, kernelEntries: number, userEntries: number}> {
+    private findSwapperPgDirCandidates(): Array<{addr: PhysicalAddress, score: number, kernelEntries: number, userEntries: number}> {
 //         console.log('Finding swapper_pg_dir candidates...');
-        const candidates: Array<{addr: number, score: number, kernelEntries: number, userEntries: number}> = [];
+        const candidates: Array<{addr: PhysicalAddress, score: number, kernelEntries: number, userEntries: number}> = [];
 
         // Common locations for swapper_pg_dir (relative to GUEST_RAM_START)
         const potentialLocations = [
-            0x082c00000 - KernelConstants.GUEST_RAM_START,  // Previously found location
-            0x041000000 - KernelConstants.GUEST_RAM_START,  // Recent finding
-            0x042c00000 - KernelConstants.GUEST_RAM_START,  // Alternative
-            0x463d4000 - KernelConstants.GUEST_RAM_START,   // Latest finding
+            0x082c00000 - Number(KernelConstants.GUEST_RAM_START),  // Previously found location
+            0x041000000 - Number(KernelConstants.GUEST_RAM_START),  // Recent finding
+            0x042c00000 - Number(KernelConstants.GUEST_RAM_START),  // Alternative
+            0x463d4000 - Number(KernelConstants.GUEST_RAM_START),   // Latest finding
         ];
 
         // First check known locations
@@ -573,7 +580,7 @@ export class PagedKernelDiscovery {
     /**
      * Evaluate if an offset could be a PGD by chasing pointers
      */
-    private evaluatePgdCandidate(offset: number): {addr: number, score: number, kernelEntries: number, userEntries: number} | null {
+    private evaluatePgdCandidate(offset: number): {addr: PhysicalAddress, score: number, kernelEntries: number, userEntries: number} | null {
         let kernelEntries = 0;
         let userEntries = 0;
         let validChains = 0;  // Count of successfully chased pointer chains
@@ -645,7 +652,7 @@ export class PagedKernelDiscovery {
             }
 
             // Read the PUD table and check if it looks valid
-            const pudOffset = pudAddr - KernelConstants.GUEST_RAM_START;
+            const pudOffset = pudAddr - Number(KernelConstants.GUEST_RAM_START);
             const pudData = this.memory.readBytes(pudOffset, 64); // Read first 8 entries
             if (!pudData) continue;
 
@@ -704,7 +711,7 @@ export class PagedKernelDiscovery {
         }
 
         return {
-            addr: offset + KernelConstants.GUEST_RAM_START,
+            addr: PA(offset + Number(KernelConstants.GUEST_RAM_START)),
             score,
             kernelEntries: totalKernelEntries,
             userEntries: totalUserEntries
@@ -745,8 +752,8 @@ export class PagedKernelDiscovery {
         const maxCandidates = 10; // Limit candidates to avoid memory buildup
 
         for (const [regionStart, regionEnd] of scanRegions) {
-            const start = Math.max(0, regionStart - KernelConstants.GUEST_RAM_START);
-            const end = Math.min(this.totalSize, regionEnd - KernelConstants.GUEST_RAM_START);
+            const start = Math.max(0, regionStart - Number(KernelConstants.GUEST_RAM_START));
+            const end = Math.min(this.totalSize, regionEnd - Number(KernelConstants.GUEST_RAM_START));
             if (start >= end) continue;
 
 //             console.log(`  Scanning region 0x${regionStart.toString(16)}-0x${regionEnd.toString(16)}...`);
@@ -776,7 +783,7 @@ export class PagedKernelDiscovery {
 
                     // Only analyze sparse pages (2-20 entries)
                     if (nonZeroEntries >= 2 && nonZeroEntries <= 20) {
-                        const physAddr = offset + KernelConstants.GUEST_RAM_START;
+                        const physAddr = offset + Number(KernelConstants.GUEST_RAM_START);
                         const candidate = this.analyzeSwapperCandidate(offset, physAddr);
                         if (candidate && candidate.score >= 3) {
                             candidates.push(candidate);
@@ -863,7 +870,7 @@ export class PagedKernelDiscovery {
 
         // Check PUD count if PGD[0] is a TABLE
         if (pgd0Entry.type === 'TABLE') {
-            const pudOffset = pgd0Entry.pa - KernelConstants.GUEST_RAM_START;
+            const pudOffset = pgd0Entry.pa - Number(KernelConstants.GUEST_RAM_START);
             if (pudOffset >= 0 && pudOffset + KernelConstants.PAGE_SIZE <= this.totalSize) {
                 let pudCount = 0;
                 let consecutivePuds = true;
@@ -936,12 +943,12 @@ export class PagedKernelDiscovery {
     /**
      * Find best swapper_pg_dir from candidates
      */
-    private findSwapperPgDir(): number {
+    private findSwapperPgDir(): PhysicalAddress {
         const candidates = this.findSwapperPgDirCandidates();
 
         if (candidates.length === 0) {
 //             console.log('No swapper_pg_dir candidates found');
-            return 0;
+            return PA(0);
         }
 
         // Sort by score
@@ -961,8 +968,8 @@ export class PagedKernelDiscovery {
         }
 
         // First, specifically test our known good candidate
-        const knownGood = 0x463d4000;
-//         console.log(`Testing known candidate: 0x${knownGood.toString(16)}`);
+        const knownGood = PA(0x463d4000);
+//         console.log(`Testing known candidate: ${PhysicalAddress.toHex(knownGood)}`);
         if (this.validateSwapperPgDir(knownGood)) {
 //             console.log(`  ✓ VALIDATED - Known candidate works!`);
             return knownGood;
@@ -971,10 +978,10 @@ export class PagedKernelDiscovery {
         }
 
         // Test top candidates with actual VA translation
-        let validatedCandidate: number = 0;
+        let validatedCandidate = PA(0);
         for (let i = 0; i < Math.min(10, candidates.length); i++) {
             const c = candidates[i];
-//             console.log(`Testing candidate #${i+1}: 0x${c.addr.toString(16)} (score: ${c.score})`);
+//             console.log(`Testing candidate #${i+1}: ${PhysicalAddress.toHex(c.addr)} (score: ${c.score}`);
 
             if (this.validateSwapperPgDir(c.addr)) {
 //                 console.log(`  ✓ VALIDATED - This appears to be the correct swapper_pg_dir!`);
@@ -985,12 +992,12 @@ export class PagedKernelDiscovery {
             }
         }
 
-        if (!validatedCandidate) {
+        if (validatedCandidate === PA(0)) {
 //             console.log('Warning: No candidates passed validation, using highest score');
             validatedCandidate = candidates[0].addr;
         }
 
-//         console.log(`Selected swapper_pg_dir: 0x${validatedCandidate.toString(16)}`);
+//         console.log(`Selected swapper_pg_dir: ${PhysicalAddress.toHex(validatedCandidate)}`);
         return validatedCandidate;
     }
 
@@ -1014,7 +1021,7 @@ export class PagedKernelDiscovery {
                 pageCount++;
                 if (this.checkPteTable(offset)) {
                     pteTableCount++;
-                    const absoluteAddr = offset + KernelConstants.GUEST_RAM_START;
+                    const absoluteAddr = offset + Number(KernelConstants.GUEST_RAM_START);
 
                     // Add a representative PTE entry for this table
                     this.kernelPtes.push({
@@ -1083,10 +1090,10 @@ export class PagedKernelDiscovery {
      * Helper to translate VA with a specific PGD
      * Temporarily sets the PGD, does the translation, then restores
      */
-    private translateWithPgd(va: bigint | number, pgdBase: number): number | null {
+    private translateWithPgd(va: bigint | number, pgdBase: number | PhysicalAddress): number | null {
         const virtualAddr = typeof va === 'number' ? BigInt(va) : va;
         const oldPgd = this.kmem.getKernelPgd();
-        this.kmem.setKernelPgd(pgdBase);
+        this.kmem.setKernelPgd(typeof pgdBase === 'number' ? pgdBase : Number(pgdBase));
         const result = this.kmem.translateVA(virtualAddr);
         this.kmem.setKernelPgd(oldPgd);
         return result;
@@ -1096,7 +1103,7 @@ export class PagedKernelDiscovery {
     /**
      * Validate a swapper_pg_dir candidate by testing the full chain
      */
-    private validateSwapperPgDir(pgdAddr: number): boolean {
+    private validateSwapperPgDir(pgdAddr: PhysicalAddress): boolean {
         let successCount = 0;
         let failCount = 0;
         let debugFirst = true;
@@ -1105,7 +1112,7 @@ export class PagedKernelDiscovery {
         for (const process of this.processes.values()) {
             if (process.mmStruct && process.mmStruct > 0xffff000000000000) {
                 // Step 1: Use candidate PGD to translate mm_struct VA→PA
-                const mmPa = this.translateWithPgd(BigInt(process.mmStruct), pgdAddr);
+                const mmPa = this.translateWithPgd(BigInt(process.mmStruct), Number(pgdAddr));
 
                 if (debugFirst) {
 //                     console.log(`    Testing ${process.name}:`);
@@ -1114,20 +1121,20 @@ export class PagedKernelDiscovery {
 //                         console.log(`      → mm_struct PA: 0x${mmPa.toString(16)}`);
                     } else {
 //                         console.log(`      → Translation failed`);
-                        this.debugTranslateVA(BigInt(process.mmStruct), pgdAddr);
+                        this.debugTranslateVA(BigInt(process.mmStruct), Number(pgdAddr));
                         debugFirst = false;
                         failCount++;
                         continue;
                     }
                 }
 
-                if (!mmPa || mmPa < KernelConstants.GUEST_RAM_START || mmPa >= KernelConstants.GUEST_RAM_END) {
+                if (!mmPa || mmPa < Number(KernelConstants.GUEST_RAM_START) || mmPa >= Number(KernelConstants.GUEST_RAM_END)) {
                     failCount++;
                     continue;
                 }
 
                 // Step 2: Read PGD pointer from mm_struct
-                const mmOffset = mmPa - KernelConstants.GUEST_RAM_START;
+                const mmOffset = mmPa - Number(KernelConstants.GUEST_RAM_START);
                 const processPgdPtr = this.memory.readU64(mmOffset + KernelConstants.PGD_OFFSET_IN_MM);
                 if (!processPgdPtr) {
                     failCount++;
@@ -1140,7 +1147,7 @@ export class PagedKernelDiscovery {
                 }
 
                 // Step 3: Validate the process PGD looks reasonable
-                if (processPgd < KernelConstants.GUEST_RAM_START || processPgd >= KernelConstants.GUEST_RAM_END) {
+                if (processPgd < Number(KernelConstants.GUEST_RAM_START) || processPgd >= Number(KernelConstants.GUEST_RAM_END)) {
                     if (debugFirst) {
 //                         console.log(`      → Invalid PGD address`);
                     }
@@ -1196,7 +1203,7 @@ export class PagedKernelDiscovery {
 //         console.log(`      Indices: PGD[${pgdIndex}] PUD[${pudIndex}] PMD[${pmdIndex}] PTE[${pteIndex}]`);
 
         // Read PGD entry
-        const pgdOffset = pgdBase - KernelConstants.GUEST_RAM_START + (pgdIndex * 8);
+        const pgdOffset = pgdBase - Number(KernelConstants.GUEST_RAM_START) + (pgdIndex * 8);
         const pgdEntry = this.memory.readU64(pgdOffset);
 //         console.log(`      PGD entry at 0x${(pgdBase + pgdIndex * 8).toString(16)}: ${pgdEntry ? '0x' + pgdEntry.toString(16) : 'null'}`);
 
@@ -1210,7 +1217,7 @@ export class PagedKernelDiscovery {
 //         console.log(`      → PGD entry is valid table descriptor`);
 
         const pudBase = Number(pgdEntry & 0x0000FFFFFFFFF000n);  // Extract bits [47:12] with BigInt
-        const pudOffset = pudBase - KernelConstants.GUEST_RAM_START + (pudIndex * 8);
+        const pudOffset = pudBase - Number(KernelConstants.GUEST_RAM_START) + (pudIndex * 8);
         const pudEntry = this.memory.readU64(pudOffset);
 //         console.log(`      PUD entry at 0x${(pudBase + pudIndex * 8).toString(16)}: ${pudEntry ? '0x' + pudEntry.toString(16) : 'null'}`);
 
@@ -1224,7 +1231,7 @@ export class PagedKernelDiscovery {
 
         // Continue to PMD level
         const pmdBase = Number(pudEntry & 0x0000FFFFFFFFF000n);  // Extract bits [47:12] with BigInt
-        const pmdOffset = pmdBase - KernelConstants.GUEST_RAM_START + (pmdIndex * 8);
+        const pmdOffset = pmdBase - Number(KernelConstants.GUEST_RAM_START) + (pmdIndex * 8);
         const pmdEntry = this.memory.readU64(pmdOffset);
 //         console.log(`      PMD entry at 0x${(pmdBase + pmdIndex * 8).toString(16)}: ${pmdEntry ? '0x' + pmdEntry.toString(16) : 'null'}`);
 
@@ -1237,7 +1244,7 @@ export class PagedKernelDiscovery {
 
         // Continue to PTE level
         const pteBase = Number(pmdEntry & 0x0000FFFFFFFFF000n);  // Extract bits [47:12] with BigInt
-        const pteOffset = pteBase - KernelConstants.GUEST_RAM_START + (pteIndex * 8);
+        const pteOffset = pteBase - Number(KernelConstants.GUEST_RAM_START) + (pteIndex * 8);
         const pteEntry = this.memory.readU64(pteOffset);
 //         console.log(`      PTE entry at 0x${(pteBase + pteIndex * 8).toString(16)}: ${pteEntry ? '0x' + pteEntry.toString(16) : 'null'}`);
 
@@ -1334,7 +1341,7 @@ export class PagedKernelDiscovery {
             return; // Invalid physical address
         }
 
-        const nodeOffset = actualNodePa - KernelConstants.GUEST_RAM_START;
+        const nodeOffset = actualNodePa - Number(KernelConstants.GUEST_RAM_START);
 
         // CRITICAL DISTINCTION: Internal nodes vs Leaf nodes
         // Internal nodes (arange_64, range_64) have slots pointing to child nodes
@@ -1456,7 +1463,7 @@ export class PagedKernelDiscovery {
                         // Try to extract VMA from the value (odd slot)
                         const translated = this.translateWithPgd(nextSlot, this.swapperPgDir);
                         if (translated) {
-                            const vmaOffset = translated - KernelConstants.GUEST_RAM_START;
+                            const vmaOffset = translated - Number(KernelConstants.GUEST_RAM_START);
 
                             // Debug: Check what's at the supposed VMA location
                             if (depth <= 2) {
@@ -1479,12 +1486,12 @@ export class PagedKernelDiscovery {
 //                                 console.log(`${'  '.repeat(depth)}    ✓ FOUND VALID VMA: 0x${vmStart.toString(16)}-0x${vmEnd.toString(16)} (${((vmEnd - vmStart) / 1024n / 1024n)}MB, flags=0x${vmFlags?.toString(16) || '0'})`);
 
                                 sections.push({
-                                    startVa: Number(vmStart),
-                                    endVa: Number(vmEnd),
-                                    startPa: 0,
+                                    startVa: VA(vmStart),
+                                    endVa: VA(vmEnd),
+                                    startPa: PA(0),
                                     size: Number(vmEnd - vmStart),
                                     pages: Math.ceil(Number(vmEnd - vmStart) / 4096),
-                                    flags: Number(vmFlags || 0),
+                                    flags: BigInt(vmFlags || 0),
                                     type: 'data' as 'code' | 'data' | 'heap' | 'stack' | 'library' | 'kernel'
                                 });
 
@@ -1541,7 +1548,7 @@ export class PagedKernelDiscovery {
                         continue;
                     }
 
-                    const vmaOffset = translated - KernelConstants.GUEST_RAM_START;
+                    const vmaOffset = translated - Number(KernelConstants.GUEST_RAM_START);
                     const vmStart = this.memory.readU64(vmaOffset);
                     const vmEnd = this.memory.readU64(vmaOffset + 8);
                     // Correct offsets from BTF/pahole:
@@ -1583,7 +1590,7 @@ export class PagedKernelDiscovery {
                             // vm_file points to a struct file
                             const fileTranslated = this.translateWithPgd(vmFile, this.swapperPgDir);
                             if (fileTranslated) {
-                                const fileOffset = fileTranslated - KernelConstants.GUEST_RAM_START;
+                                const fileOffset = fileTranslated - Number(KernelConstants.GUEST_RAM_START);
 
                                 // Only log for debugging specific issues
                                 const debugFileStruct = false;
@@ -1600,7 +1607,7 @@ export class PagedKernelDiscovery {
                                 if (dentry && (dentry & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
                                     const dentryTranslated = this.translateWithPgd(dentry, this.swapperPgDir);
                                     if (dentryTranslated) {
-                                        const dentryOffset = dentryTranslated - KernelConstants.GUEST_RAM_START;
+                                        const dentryOffset = dentryTranslated - Number(KernelConstants.GUEST_RAM_START);
 
                                         // dentry has d_name (qstr) at offset 0x20 (32 decimal)
                                         // qstr.name pointer is at offset 0x8 within qstr
@@ -1611,7 +1618,7 @@ export class PagedKernelDiscovery {
                                             if ((dNamePtr & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
                                                 const nameTranslated = this.translateWithPgd(dNamePtr, this.swapperPgDir);
                                                 if (nameTranslated) {
-                                                    const nameOffset = nameTranslated - KernelConstants.GUEST_RAM_START;
+                                                    const nameOffset = nameTranslated - Number(KernelConstants.GUEST_RAM_START);
                                                     // Try to read up to 256 bytes for the filename
                                                     const nameBytes = this.memory.readBytes(nameOffset, 256);
                                                     if (nameBytes) {
@@ -1708,7 +1715,7 @@ export class PagedKernelDiscovery {
                     if (slotPtr >= BigInt(KernelConstants.GUEST_RAM_START) && slotPtr < BigInt(KernelConstants.GUEST_RAM_END)) {
 //                         console.log(`${'  '.repeat(depth)}      -> Could be PA in guest RAM`);
                         // Try reading it as if it's a direct physical address
-                        const directOffset = Number(slotPtr) - KernelConstants.GUEST_RAM_START;
+                        const directOffset = Number(slotPtr) - Number(KernelConstants.GUEST_RAM_START);
                         const testVmStart = this.memory.readU64(directOffset);
                         const testVmEnd = this.memory.readU64(directOffset + 8);
                         if (testVmStart && testVmEnd) {
@@ -1772,7 +1779,7 @@ export class PagedKernelDiscovery {
         // 0x48: mm_mt.ma_root (with encoded type in low bits)
         // 0x68: pgd (actual page global directory pointer)
         const MAPLE_TREE_OFFSET = 0x40;  // maple tree starts at 0x40
-        const mmStructOffset = mmPa - KernelConstants.GUEST_RAM_START;
+        const mmStructOffset = mmPa - Number(KernelConstants.GUEST_RAM_START);
 
         // First, verify this looks like a valid mm_struct
         const pgd = this.memory.readU64(mmStructOffset + 0x68);  // mm_struct->pgd at 0x68
@@ -1878,7 +1885,7 @@ export class PagedKernelDiscovery {
             if ((maRootPtr & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
                 const translated = this.translateWithPgd(maRootPtr, this.swapperPgDir);
                 if (translated) {
-                    const vmaOffset = translated - KernelConstants.GUEST_RAM_START;
+                    const vmaOffset = translated - Number(KernelConstants.GUEST_RAM_START);
                     const vmStart = this.memory.readU64(vmaOffset);
                     const vmEnd = this.memory.readU64(vmaOffset + 8);
 
@@ -1919,7 +1926,7 @@ export class PagedKernelDiscovery {
     /* OLD LINKED LIST APPROACH (pre-6.1 kernels) - keeping for reference
     private walkVMAsOldLinkedList(process: ProcessInfo, mmPa: number): MemorySection[] {
         const sections: MemorySection[] = [];
-        const vmaVa = this.memory.readU64(mmPa - KernelConstants.GUEST_RAM_START + KernelConstants.MM_MMAP);
+        const vmaVa = this.memory.readU64(mmPa - Number(KernelConstants.GUEST_RAM_START) + KernelConstants.MM_MMAP);
         if (!vmaVa || vmaVa === 0n) {
             return sections;
         }
@@ -1957,7 +1964,7 @@ export class PagedKernelDiscovery {
                 break;
             }
 
-            const vmaOffset = vmaPa - KernelConstants.GUEST_RAM_START;
+            const vmaOffset = vmaPa - Number(KernelConstants.GUEST_RAM_START);
 
             // Read VMA fields
             const vmStart = this.memory.readU64(vmaOffset + KernelConstants.VMA_VM_START);
@@ -2108,8 +2115,8 @@ export class PagedKernelDiscovery {
         for (let pgdIdx = 0; pgdIdx < 512; pgdIdx++) {
             // process.pgd is stored as physical address (with GUEST_RAM_START added)
             // We need to convert back to file offset
-            const pgdPhysAddr = process.pgd + (pgdIdx * 8);
-            const pgdOffset = pgdPhysAddr - KernelConstants.GUEST_RAM_START;
+            const pgdPhysAddr = PhysicalAddress.add(process.pgd, pgdIdx * 8);
+            const pgdOffset = Number(pgdPhysAddr) - Number(KernelConstants.GUEST_RAM_START);
             const pgdEntry = this.memory.readU64(pgdOffset);
 
             if (!pgdEntry || Number(pgdEntry & 3n) === 0) {
@@ -2155,8 +2162,8 @@ export class PagedKernelDiscovery {
         for (let pgdIdx = 256; pgdIdx < 512; pgdIdx++) {
             // process.pgd is stored as physical address (with GUEST_RAM_START added)
             // We need to convert back to file offset
-            const pgdPhysAddr = process.pgd + (pgdIdx * 8);
-            const pgdOffset = pgdPhysAddr - KernelConstants.GUEST_RAM_START;
+            const pgdPhysAddr = PhysicalAddress.add(process.pgd, pgdIdx * 8);
+            const pgdOffset = Number(pgdPhysAddr) - Number(KernelConstants.GUEST_RAM_START);
             const pgdEntry = this.memory.readU64(pgdOffset);
 
             if (!pgdEntry) {
@@ -2212,7 +2219,7 @@ export class PagedKernelDiscovery {
             // Calculate file offset - high PAs need GUEST_RAM_START subtracted
             const pudPhysAddr = pudBase + (pudIdx * 8);
             const pudOffset = pudPhysAddr >= KernelConstants.GUEST_RAM_START
-                ? pudPhysAddr - KernelConstants.GUEST_RAM_START
+                ? pudPhysAddr - Number(KernelConstants.GUEST_RAM_START)
                 : pudPhysAddr;
             const pudEntry = this.memory.readU64(pudOffset);
 
@@ -2260,7 +2267,7 @@ export class PagedKernelDiscovery {
             // Calculate file offset - high PAs need GUEST_RAM_START subtracted
             const pmdPhysAddr = pmdBase + (pmdIdx * 8);
             const pmdOffset = pmdPhysAddr >= KernelConstants.GUEST_RAM_START
-                ? pmdPhysAddr - KernelConstants.GUEST_RAM_START
+                ? pmdPhysAddr - Number(KernelConstants.GUEST_RAM_START)
                 : pmdPhysAddr;
             const pmdEntry = this.memory.readU64(pmdOffset);
 
@@ -2308,7 +2315,7 @@ export class PagedKernelDiscovery {
             // Calculate file offset - high PAs need GUEST_RAM_START subtracted
             const ptePhysAddr = pteBase + (pteIdx * 8);
             const pteOffset = ptePhysAddr >= KernelConstants.GUEST_RAM_START
-                ? ptePhysAddr - KernelConstants.GUEST_RAM_START
+                ? ptePhysAddr - Number(KernelConstants.GUEST_RAM_START)
                 : ptePhysAddr;
             const pteEntry = this.memory.readU64(pteOffset);
 
@@ -2358,22 +2365,22 @@ export class PagedKernelDiscovery {
         this.totalSize = totalSize;
 
         // Try to get kernel PGD from QMP ground truth first
-        let kernelPgd = 0;
+        let kernelPgd = PA(0);
         try {
             // Check if we're in Electron and can use QMP via IPC
             if (typeof window !== 'undefined' && (window as any).electronAPI?.queryKernelInfo) {
                 const result = await (window as any).electronAPI.queryKernelInfo();
                 if (result.success && result.kernelPgd) {
-                    kernelPgd = result.kernelPgd;
-                    console.log(`******** QMP: Got ground truth SWAPPER_PG_DIR = 0x${kernelPgd.toString(16).toUpperCase()} ********`);
+                    kernelPgd = PA(result.kernelPgd);
+                    console.log(`******** QMP: Got ground truth SWAPPER_PG_DIR = ${PhysicalAddress.toHex(kernelPgd).toUpperCase()} ********`);
                 }
             } else if (typeof window === 'undefined') {
                 // Node.js environment - can use direct connection
                 const { queryKernelPGDViaQMP } = await import('./utils/qmp-client');
                 const qmpResult = await queryKernelPGDViaQMP();
                 if (qmpResult) {
-                    kernelPgd = qmpResult;
-                    console.log(`******** QMP: Got ground truth SWAPPER_PG_DIR = 0x${kernelPgd.toString(16).toUpperCase()} ********`);
+                    kernelPgd = PA(qmpResult);
+                    console.log(`******** QMP: Got ground truth SWAPPER_PG_DIR = ${PhysicalAddress.toHex(kernelPgd).toUpperCase()} ********`);
                 }
             }
         } catch (err: any) {
@@ -2381,13 +2388,13 @@ export class PagedKernelDiscovery {
         }
 
         // If no QMP result, fall back to discovery
-        if (!kernelPgd) {
+        if (kernelPgd === PA(0)) {
             kernelPgd = this.findSwapperPgDir();
-            console.log(`Heuristic: Found kernel PGD = 0x${kernelPgd.toString(16)}`);
+            console.log(`Heuristic: Found kernel PGD = ${PhysicalAddress.toHex(kernelPgd)}`);
         }
 
         this.swapperPgDir = kernelPgd;
-        this.kmem.setKernelPgd(kernelPgd);
+        this.kmem.setKernelPgd(Number(kernelPgd));
 
         // TEST: Page cache discovery early
         console.log('\n=== EARLY PAGE CACHE DISCOVERY TEST ===');
@@ -2547,7 +2554,7 @@ export class PagedKernelDiscovery {
         let candidateCount = 0;
 
         for (let pa = pgdScanStart; pa < pgdScanEnd; pa += pgdStride) {
-            const offset = pa - KernelConstants.GUEST_RAM_START;
+            const offset = pa - Number(KernelConstants.GUEST_RAM_START);
             if (offset < 0 || offset >= totalSize) continue;
 
             const candidate = this.evaluatePgdCandidate(offset);
@@ -2585,7 +2592,7 @@ export class PagedKernelDiscovery {
 //                 console.log(`\nCandidate #${i+1} at 0x${pgd.addr.toString(16)}:`);
 
                 // Read kernel space entries (indices 256-511 for kernel VAs starting with 0xffff)
-                const kernelEntriesOffset = pgd.addr - KernelConstants.GUEST_RAM_START + (256 * 8);
+                const kernelEntriesOffset = pgd.addr - Number(KernelConstants.GUEST_RAM_START) + (256 * 8);
                 const kernelData = this.memory.readBytes(kernelEntriesOffset, 8 * 8); // Read 8 kernel entries
 
                 if (kernelData) {
@@ -2610,7 +2617,7 @@ export class PagedKernelDiscovery {
             }
 
             // NEW VALIDATION: Count valid entries instead of translating mm_struct VAs
-            const candidateOffset = candidate.addr - KernelConstants.GUEST_RAM_START;
+            const candidateOffset = candidate.addr - Number(KernelConstants.GUEST_RAM_START);
             const entryCount = this.testPgdWithEntryCountValidation(candidateOffset);
 
             candidateResults.push({
@@ -2634,7 +2641,7 @@ export class PagedKernelDiscovery {
 //                 console.log(`    - User entries: ${entryCount.userEntries}`);
 
                 // Also verify with translation if possible
-                const canTranslate = this.verifyKernelPgdByTranslation(candidate.addr - KernelConstants.GUEST_RAM_START);
+                const canTranslate = this.verifyKernelPgdByTranslation(candidate.addr - Number(KernelConstants.GUEST_RAM_START));
                 if (canTranslate) {
 //                     console.log(`    - ✓ Translation verification PASSED`);
                     realKernelPGD = candidate.addr;
@@ -2755,7 +2762,7 @@ export class PagedKernelDiscovery {
 //             console.log('This is because TTBR1 (kernel) sees the upper 256 entries as 0-255');
 
             // Read the kernel PGD to see what's mapped
-            const pgdOffset = kernelPGDForTranslation - KernelConstants.GUEST_RAM_START;
+            const pgdOffset = Number(kernelPGDForTranslation) - Number(KernelConstants.GUEST_RAM_START);
             const pgdData = this.memory.readBytes(pgdOffset, 512 * 8);
 
             if (pgdData) {
@@ -2848,7 +2855,7 @@ export class PagedKernelDiscovery {
 //                         console.log(`    ✗ Cannot read mm_struct - PA 0x${mmPA.toString(16)} is outside memory file range`);
 //                         console.log(`    This confirms vmalloc allocations are in kernel-reserved memory!`);
                     } else {
-                        const mmOffset = mmPA - KernelConstants.GUEST_RAM_START;
+                        const mmOffset = mmPA - Number(KernelConstants.GUEST_RAM_START);
                         const pgdInMm = this.memory.readU64(mmOffset + KernelConstants.PGD_OFFSET_IN_MM);
 
                         if (pgdInMm) {
@@ -2969,7 +2976,7 @@ export class PagedKernelDiscovery {
                         } else if (mmPa >= KernelConstants.GUEST_RAM_END) {
 //                             console.log(`    WARNING: PA 0x${mmPa.toString(16)} is above GUEST_RAM_END (0x${KernelConstants.GUEST_RAM_END.toString(16)})`);
                         } else {
-//                             console.log(`    File offset: 0x${(mmPa - KernelConstants.GUEST_RAM_START).toString(16)}`);
+//                             console.log(`    File offset: 0x${(mmPa - Number(KernelConstants.GUEST_RAM_START)).toString(16)}`);
                         }
 
                         // Only try to read if the PA is in valid range OR if it's below GUEST_RAM_START
@@ -2978,7 +2985,7 @@ export class PagedKernelDiscovery {
 
                         if (mmPa >= KernelConstants.GUEST_RAM_START && mmPa < KernelConstants.GUEST_RAM_END) {
                             // Normal case - subtract GUEST_RAM_START
-                            effectiveOffset = mmPa - KernelConstants.GUEST_RAM_START;
+                            effectiveOffset = mmPa - Number(KernelConstants.GUEST_RAM_START);
                             mmBytes = this.memory.readBytes(effectiveOffset, 512);
                         } else if (mmPa < KernelConstants.GUEST_RAM_START && mmPa >= 0) {
                             // Try using PA directly as file offset for low memory
@@ -3261,13 +3268,13 @@ export class PagedKernelDiscovery {
         console.timeEnd('Paged Kernel Discovery');
 
         // Compare with previously set kernel PGD (from QMP or heuristic)
-        if (this.swapperPgDir && realKernelPGD && this.swapperPgDir !== realKernelPGD) {
+        if (this.swapperPgDir !== PA(0) && realKernelPGD && Number(this.swapperPgDir) !== realKernelPGD) {
             // If they differ, the one we set earlier (especially from QMP) takes precedence
 //             console.log(`\n⚠ VALIDATION MISMATCH:`);
-//             console.log(`  Initial discovery: 0x${this.swapperPgDir.toString(16)}`);
+//             console.log(`  Initial discovery: ${PhysicalAddress.toHex(this.swapperPgDir)}`);
 //             console.log(`  Later validation: 0x${realKernelPGD.toString(16)}`);
 //             console.log(`  Keeping initial value`);
-        } else if (this.swapperPgDir && realKernelPGD && this.swapperPgDir === realKernelPGD) {
+        } else if (this.swapperPgDir !== PA(0) && realKernelPGD && Number(this.swapperPgDir) === realKernelPGD) {
 //             console.log('\n✓✓✓ VALIDATION SUCCESS: Kernel PGD confirmed!');
         }
 
@@ -3292,8 +3299,8 @@ export class PagedKernelDiscovery {
 //         console.log(`  - Known system processes: ${knownProcesses.length}`);
         // Removed VLC special case
 
-        if (this.swapperPgDir) {
-//             console.log(`\n✓ Kernel PGD (swapper_pg_dir): 0x${this.swapperPgDir.toString(16)}`);
+        if (this.swapperPgDir !== PA(0)) {
+//             console.log(`\n✓ Kernel PGD (swapper_pg_dir): ${PhysicalAddress.toHex(this.swapperPgDir)}`);
         } else {
 //             console.log(`\n✗ No valid kernel PGD found`);
         }
@@ -3356,7 +3363,7 @@ export class PagedKernelDiscovery {
             if ((entry & 3n) === 3n) {
                 // Follow this table and see if it's valid (mostly zeros)
                 const tablePA = Number(entry & 0x0000FFFFFFFFF000n);
-                const tableOffset = tablePA - KernelConstants.GUEST_RAM_START;
+                const tableOffset = tablePA - Number(KernelConstants.GUEST_RAM_START);
 
                 if (tableOffset > 0 && tableOffset < this.totalSize) {
                     const tableData = this.memory.readBytes(tableOffset, 512);
@@ -3469,7 +3476,7 @@ export class PagedKernelDiscovery {
 
         // Analyze ALL valid PGD entries (0-511) to find linear mapping
         for (let pgdIndex = 0; pgdIndex < 512; pgdIndex++) {
-            const pgdOffset = this.swapperPgDir - KernelConstants.GUEST_RAM_START + (pgdIndex * 8);
+            const pgdOffset = this.swapperPgDir - Number(KernelConstants.GUEST_RAM_START) + (pgdIndex * 8);
             const pgdEntry = this.memory.readU64(pgdOffset);
 
             if (!pgdEntry || (pgdEntry & 3n) !== 3n) continue;
@@ -3638,7 +3645,7 @@ export class PagedKernelDiscovery {
                 continue;
             }
 
-            const offset = currentAddr - KernelConstants.GUEST_RAM_START;
+            const offset = currentAddr - Number(KernelConstants.GUEST_RAM_START);
             let validEntries = 0;
             let garbageEntries = 0;
             processedTables++;

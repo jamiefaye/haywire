@@ -294,8 +294,8 @@ export default defineComponent({
     const sortField = ref('pid');
     const sortAscending = ref(true);
     const selectedProcess = ref<ProcessInfo | null>(null);
-    const selectedProcessPTEs = ref([]);
-    const selectedProcessSections = ref([]);
+    const selectedProcessPTEs = ref<Array<{ va: string; pa: string; rwx: string }>>([]);
+    const selectedProcessSections = ref<Array<{ type: string; range: string; size: string; pages: number }>>([]);
 
     // Computed
     const memoryFileName = computed(() => props.fileName || 'memory.dump');

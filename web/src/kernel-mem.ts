@@ -8,6 +8,8 @@ import { PagedMemory } from './paged-memory';
 // Import the types and constants we need
 import type { ProcessInfo, PTE, MemorySection } from './kernel-discovery';
 import { KernelConstants, stripPAC } from './kernel-discovery';
+import { VirtualAddress, VA } from './types/virtual-address';
+import { PhysicalAddress, PA } from './types/physical-address';
 
 // Re-export types for use in other modules
 export type { ProcessInfo, PTE, MemorySection };
@@ -338,7 +340,7 @@ export class KernelMem {
         // Get mm_struct pointer
         const mmRaw = this.memory.readU64(offset + KernelConstants.MM_OFFSET) || 0n;
         // Strip pointer authentication code if present
-        const mmStripped = stripPAC(mmRaw);
+        const mmStripped = stripPAC(VA(mmRaw));
 
         // Debug processes to see what's happening with mm field
         // Disable debug output while focusing on PGDs
@@ -486,18 +488,18 @@ export class KernelMem {
 
         // Read files pointer (can be null for kernel threads)
         const filesRaw = this.memory.readU64(offset + 0x990) || 0n;  // task.files offset
-        const filesPtr = stripPAC(filesRaw);
+        const filesPtr = stripPAC(VA(filesRaw));
 
         return {
             pid: pid,
             name: name,
-            taskStruct: KernelConstants.GUEST_RAM_START + offset,
+            taskStruct: PA(Number(KernelConstants.GUEST_RAM_START) + offset),
             isKernelThread: isKernel,
-            tasksNext: tasksNext,
-            tasksPrev: tasksPrev,
+            tasksNext: PA(tasksNext),
+            tasksPrev: PA(tasksPrev),
             mmStruct: mmStripped,
-            pgd: pgdPtr || undefined,
-            files: filesPtr || undefined,
+            pgd: pgdPtr ? PA(pgdPtr) : PA(0),
+            files: filesPtr !== VA(0) ? filesPtr : undefined,
             ptes: [],
             sections: []
         };

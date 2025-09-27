@@ -512,7 +512,7 @@
         </div>
 
         <div class="maps-summary">
-          <p>Reconstructed from {{ mapsViewerPTECount }} PTEs | {{ mapsViewerRanges.length }} memory regions</p>
+          <p>Reconstructed from {{ mapsViewerPTECount }} PTEs | {{ mapsViewerRanges }} memory regions</p>
         </div>
 
         <div class="maps-container">
@@ -687,7 +687,7 @@ const pteViewerRanges = ref<any[]>([])
 // Memory maps viewer state
 const mapsViewerModal = ref(false)
 const mapsViewerProcess = ref<any>(null)
-const mapsViewerRanges = ref<any[]>([])
+const mapsViewerRanges = ref<number>(0)
 const mapsViewerText = ref('')
 const mapsViewerPTECount = ref(0)
 
@@ -2345,7 +2345,7 @@ async function startDiscovery() {
       console.log('Using current view, size:', fullMemory.length)
 
       // Run basic discovery on limited data
-      const discovery = new KernelDiscovery(fullMemory)
+      const discovery = new KernelDiscovery(fullMemory.buffer)
       kernelDiscoveryStatus.value = 'Finding processes...'
       await new Promise(resolve => setTimeout(resolve, 100))
       const results = await discovery.discover()
@@ -2552,7 +2552,8 @@ function viewProcessMaps(proc: any) {
       // Output current range and start new one
       const startStr = currentRange.startVA.toString(16).padStart(12, '0')
       const endStr = currentRange.endVA.toString(16).padStart(12, '0')
-      const sizeKB = Number((currentRange.endVA - currentRange.startVA) / 1024n)
+      const sizeBigint = currentRange.endVA - currentRange.startVA
+      const sizeKB = Number(sizeBigint / BigInt(1024))
       mapLines.push(`${startStr}-${endStr} ${currentRange.perms} [${sizeKB} KB]`)
 
       currentRange = {
@@ -2568,7 +2569,8 @@ function viewProcessMaps(proc: any) {
   if (currentRange) {
     const startStr = currentRange.startVA.toString(16).padStart(12, '0')
     const endStr = currentRange.endVA.toString(16).padStart(12, '0')
-    const sizeKB = Number((currentRange.endVA - currentRange.startVA) / 1024n)
+    const sizeBigint2 = currentRange.endVA - currentRange.startVA
+  const sizeKB = Number(sizeBigint2 / BigInt(1024))
     mapLines.push(`${startStr}-${endStr} ${currentRange.perms} [${sizeKB} KB]`)
   }
 
@@ -2653,7 +2655,7 @@ function displayMapsFromSections(proc: any, sections: any[]) {
 function closeMapsViewer() {
   mapsViewerModal.value = false
   mapsViewerProcess.value = null
-  mapsViewerRanges.value = []
+  mapsViewerRanges.value = 0
   mapsViewerText.value = ''
 }
 

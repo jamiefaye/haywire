@@ -22,7 +22,7 @@
       <div class="summary">
         <p>Found {{ results.processCount }} processes</p>
         <p>Found {{ results.uniqueFiles }} unique open files</p>
-        <p>Total file size: {{ formatSize(results.totalSize) }}</p>
+        <p>Total file size: {{ formatSize(Number(results.totalSize)) }}</p>
       </div>
 
       <div v-if="results.files.length > 0" class="files-list">
