@@ -156,31 +156,20 @@ export default defineComponent({
       try {
         logMsg('Starting open files discovery...');
 
-        // Check if memory is available - create PagedMemory if needed
+        // Check if memory is available
         let memory = props.memory;
-        if (!memory) {
-          // Try to create PagedMemory from the open file using the composable
-          const { useFileSystemAPI } = await import('../composables/useFileSystemAPI');
-          const { fileHandle, isFileOpen } = useFileSystemAPI();
 
-          if (!isFileOpen.value || !fileHandle.value) {
-            error.value = 'No memory file loaded. Please open a memory file first.';
-            logMsg('ERROR: No memory file loaded');
-            return;
-          }
-
-          logMsg('Creating PagedMemory from open file...');
-          const { PagedMemory } = await import('../paged-memory');
-          memory = new PagedMemory(fileHandle.value);
-          await memory.initialize();
-          logMsg(`PagedMemory created: ${memory.getTotalSize() / (1024*1024)}MB`);
-
-          // Store for next run to avoid recreating
-          (window as any).__cachedPagedMemory = memory;
-        } else if ((window as any).__cachedPagedMemory && !memory) {
-          // Use cached PagedMemory if available
+        // Try to use cached PagedMemory first
+        if (!memory && (window as any).__cachedPagedMemory) {
           memory = (window as any).__cachedPagedMemory;
           logMsg('Using cached PagedMemory instance');
+        }
+
+        if (!memory) {
+          error.value = 'Please run Kernel Discovery first to load the memory file properly.';
+          logMsg('ERROR: No PagedMemory available - please run Kernel Discovery first');
+          logMsg('The Open Files test requires PagedMemory which is created during Kernel Discovery');
+          return;
         }
 
         // Create kernel memory helper

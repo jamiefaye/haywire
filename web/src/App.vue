@@ -2167,6 +2167,7 @@ async function startDiscovery() {
 
         console.log(`PagedMemory loaded: ${memory.getMemoryUsage()}`);
         pagedMemory.value = memory;  // Store for reuse
+        (window as any).__cachedPagedMemory = memory;  // Also cache globally for Open Files test
         kernelDiscoveryStatus.value = `Analyzing memory (${(totalSize / (1024*1024)).toFixed(0)}MB)...`;
 
         // Run discovery using PagedKernelDiscovery
@@ -2254,6 +2255,7 @@ async function startDiscovery() {
 
         console.log(`PagedMemory loaded: ${memory.getMemoryUsage()}`);
         pagedMemory.value = memory;  // Store for reuse
+        (window as any).__cachedPagedMemory = memory;  // Also cache globally for Open Files test
         kernelDiscoveryStatus.value = `Analyzing memory (${(totalSize / (1024*1024)).toFixed(0)}MB)...`;
 
         // Run discovery using PagedKernelDiscovery
