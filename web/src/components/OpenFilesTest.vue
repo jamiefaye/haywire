@@ -330,11 +330,27 @@ export default defineComponent({
 </script>
 
 <style scoped>
+/* Force ALL text to be black - override any inherited styles */
+.open-files-test,
+.open-files-test *,
+.open-files-test p,
+.open-files-test div,
+.open-files-test span,
+.open-files-test td,
+.open-files-test th,
+.open-files-test li,
+.open-files-test pre,
+.open-files-test h1,
+.open-files-test h2,
+.open-files-test h3,
+.open-files-test h4 {
+  color: #000 !important;  /* Force black text everywhere */
+}
+
 .open-files-test {
   padding: 20px;
   max-width: 1200px;
   margin: 0 auto;
-  color: #000;  /* Default black text for all content */
 }
 
 h2, h3, h4 {
@@ -367,11 +383,12 @@ h2, h3, h4 {
 }
 
 .summary {
-  background: #f5f5f5;
+  background: #ffffff;  /* White background for better contrast */
+  border: 1px solid #ccc;  /* Add border for definition */
   padding: 12px;
   margin: 20px 0;
   border-radius: 4px;
-  color: #000;  /* Black text for better contrast */
+  color: #000 !important;  /* Black text for better contrast */
 }
 
 .summary p {
@@ -406,9 +423,10 @@ h2, h3, h4 {
 .known-files {
   margin: 20px 0;
   padding: 12px;
-  background: #f5f5f5;
+  background: #ffffff;  /* White background for better contrast */
+  border: 1px solid #ccc;  /* Add border for definition */
   border-radius: 4px;
-  color: #000;  /* Black text for better contrast */
+  color: #000 !important;  /* Black text for better contrast */
 }
 
 .known-files ul {
@@ -424,9 +442,10 @@ h2, h3, h4 {
 .log {
   margin-top: 20px;
   padding: 12px;
-  background: #f5f5f5;
+  background: #ffffff;  /* White background for better contrast */
+  border: 1px solid #ccc;  /* Add border for definition */
   border-radius: 4px;
-  color: #000;  /* Black text for better contrast */
+  color: #000 !important;  /* Black text for better contrast */
 }
 
 .log pre {
