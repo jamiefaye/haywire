@@ -7,7 +7,7 @@ import { PagedMemory } from './paged-memory';
 
 // Import the types and constants we need
 import type { ProcessInfo, PTE, MemorySection } from './kernel-discovery';
-import { KernelConstants, stripPAC } from './kernel-discovery';
+import { KernelConstants, MemoryConfig, stripPAC } from './kernel-discovery';
 import { VirtualAddress, VA } from './types/virtual-address';
 import { PhysicalAddress, PA } from './types/physical-address';
 
@@ -481,8 +481,8 @@ export class KernelMem {
 
         // Try to get PGD if mm_struct looks valid
         let pgdPtr = 0;
-        if (mmStripped && mmStripped >= BigInt(KernelConstants.GUEST_RAM_START) && mmStripped < BigInt(KernelConstants.GUEST_RAM_END)) {
-            const mmOffset = Number(mmStripped - BigInt(KernelConstants.GUEST_RAM_START));
+        if (mmStripped && mmStripped >= BigInt(MemoryConfig.GUEST_RAM_START) && mmStripped < BigInt(MemoryConfig.GUEST_RAM_END)) {
+            const mmOffset = Number(mmStripped - BigInt(MemoryConfig.GUEST_RAM_START));
             pgdPtr = Number(this.memory.readU64(mmOffset + KernelConstants.PGD_OFFSET_IN_MM) || 0n);
         }
 
@@ -493,7 +493,7 @@ export class KernelMem {
         return {
             pid: pid,
             name: name,
-            taskStruct: PA(Number(KernelConstants.GUEST_RAM_START) + offset),
+            taskStruct: PA(Number(MemoryConfig.GUEST_RAM_START) + offset),
             isKernelThread: isKernel,
             tasksNext: PA(tasksNext),
             tasksPrev: PA(tasksPrev),

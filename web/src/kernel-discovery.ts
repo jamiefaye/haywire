@@ -91,15 +91,60 @@ export const KernelConstants = {
     PTE_VALID_MASK: 0x3,
     PTE_VALID_BITS: 0x3,
 
-    // Address ranges
-    GUEST_RAM_START: PA(0x40000000),
-    GUEST_RAM_END: PA(0x1C0000000),  // 7GB total (1GB start + 6GB size)
+    // Address ranges - these are defaults but can be updated
+    GUEST_RAM_START: PA(0x40000000),  // Default for ARM64, but should be detected
+    GUEST_RAM_END: PA(0x1C0000000),   // Default 7GB total (1GB start + 6GB size)
 
     // Physical address mask for ARM64 (bits [47:12])
     PA_MASK: 0x0000FFFFFFFFF000,
 
     KERNEL_VA_START: VA(0xffff000000000000n), // Kernel virtual address start
 } as const;
+
+// Mutable memory configuration that can be updated based on detection
+export const MemoryConfig = {
+    GUEST_RAM_START: PA(0x40000000),  // Will be detected/updated
+    GUEST_RAM_END: PA(0x1C0000000),   // Will be detected/updated
+    DETECTED: false                    // Flag to track if we've detected actual values
+};
+
+/**
+ * Detect the actual guest RAM start address
+ * This should be called early, ideally from QMP or by scanning for patterns
+ */
+export function detectGuestMemoryLayout(memoryBuffer: ArrayBuffer | null = null): void {
+    // Method 1: Check if we're in Electron and can use QMP
+    if (typeof window !== 'undefined' && (window as any).electronAPI) {
+        // TODO: Query via QMP for actual memory regions
+        console.log('TODO: Detect memory layout via QMP');
+    }
+
+    // Method 2: Scan for patterns to detect memory start
+    if (memoryBuffer) {
+        // ARM64 typically starts at either:
+        // - 0x40000000 (1GB) - most common
+        // - 0x80000000 (2GB) - some configs
+        // - 0x00000000 (0) - some embedded systems
+
+        // We could look for kernel image signatures or initial boot structures
+        // For now, keep the default but mark as detected
+        console.log('TODO: Detect memory layout from buffer patterns');
+    }
+
+    // Mark as detected even if we used defaults
+    MemoryConfig.DETECTED = true;
+    console.log(`Memory layout: RAM starts at 0x${Number(MemoryConfig.GUEST_RAM_START).toString(16)}`);
+}
+
+/**
+ * Update memory configuration (e.g., from QMP or user config)
+ */
+export function setGuestMemoryLayout(ramStart: PhysicalAddress, ramSize: number): void {
+    MemoryConfig.GUEST_RAM_START = ramStart;
+    MemoryConfig.GUEST_RAM_END = PA(BigInt(ramStart) + BigInt(ramSize));
+    MemoryConfig.DETECTED = true;
+    console.log(`Memory layout updated: 0x${Number(ramStart).toString(16)} - 0x${Number(MemoryConfig.GUEST_RAM_END).toString(16)}`);
+}
 
 // Known good process names to validate against
 const KNOWN_PROCESSES = [
@@ -280,7 +325,7 @@ export class KernelDiscovery {
         let pgdPtr = PA(0);
         if (mmPtr) {
             // Calculate offset directly from file start
-            const mmFileOffset = Number(mmPtr) - Number(KernelConstants.GUEST_RAM_START);
+            const mmFileOffset = Number(mmPtr) - Number(MemoryConfig.GUEST_RAM_START);
 
             // Only read if mm_struct is within our memory buffer
             if (mmFileOffset >= 0 && mmFileOffset + KernelConstants.PGD_OFFSET_IN_MM + 8 <= this.memory.byteLength) {
@@ -305,7 +350,7 @@ export class KernelDiscovery {
         return {
             pid,
             name,
-            taskStruct: PA(offset + this.baseOffset + Number(KernelConstants.GUEST_RAM_START)), // Absolute physical address
+            taskStruct: PA(offset + this.baseOffset + Number(MemoryConfig.GUEST_RAM_START)), // Absolute physical address
             mmStruct: mmPtr || VA(0),
             pgd: pgdPtr,
             isKernelThread: mmPtr === null,
@@ -365,7 +410,7 @@ export class KernelDiscovery {
         // They ARE in the memory-backend-file but might be beyond traditional "guest RAM"
 
         // Calculate offset from start of memory file
-        const fileOffset = Number(tableAddr) - Number(KernelConstants.GUEST_RAM_START);
+        const fileOffset = Number(tableAddr) - Number(MemoryConfig.GUEST_RAM_START);
 
         // Check if this is within our memory buffer
         if (fileOffset < 0 || fileOffset + KernelConstants.PAGE_SIZE > this.memory.byteLength) {
@@ -534,7 +579,7 @@ export class KernelDiscovery {
                 pageCount++;
                 if (this.checkPteTable(offset)) {
                     pteTableCount++;
-                    const absoluteAddr = this.baseOffset + offset + Number(KernelConstants.GUEST_RAM_START);
+                    const absoluteAddr = this.baseOffset + offset + Number(MemoryConfig.GUEST_RAM_START);
                     console.log(`    Found PTE table at offset 0x${(this.baseOffset + offset).toString(16)} (addr: 0x${absoluteAddr.toString(16)})`);
 
                     // Add a representative PTE entry for this table
@@ -566,7 +611,7 @@ export class KernelDiscovery {
 
         // Detect estimated RAM size from file
         const totalFileSize = this.memory.byteLength + this.baseOffset;
-        const estimatedRamSize = Math.ceil((totalFileSize - Number(KernelConstants.GUEST_RAM_START)) / (1024*1024*1024));
+        const estimatedRamSize = Math.ceil((totalFileSize - Number(MemoryConfig.GUEST_RAM_START)) / (1024*1024*1024));
         console.log(`  Estimated VM RAM size: ~${estimatedRamSize}GB`);
 
         // Scan regions - broader to catch different configurations
@@ -589,8 +634,8 @@ export class KernelDiscovery {
         const candidates: SwapperCandidate[] = [];
 
         for (const [regionStart, regionEnd] of scanRegions) {
-            const start = Math.max(0, regionStart - Number(KernelConstants.GUEST_RAM_START) - this.baseOffset);
-            const end = Math.min(this.memory.byteLength, regionEnd - Number(KernelConstants.GUEST_RAM_START) - this.baseOffset);
+            const start = Math.max(0, regionStart - Number(MemoryConfig.GUEST_RAM_START) - this.baseOffset);
+            const end = Math.min(this.memory.byteLength, regionEnd - Number(MemoryConfig.GUEST_RAM_START) - this.baseOffset);
             if (start >= end) continue;
 
             // Quick pre-scan for sparse pages
@@ -607,7 +652,7 @@ export class KernelDiscovery {
 
                 // Only analyze sparse pages (2-20 entries)
                 if (nonZeroEntries >= 2 && nonZeroEntries <= 20) {
-                    const physAddr = offset + this.baseOffset + Number(KernelConstants.GUEST_RAM_START);
+                    const physAddr = offset + this.baseOffset + Number(MemoryConfig.GUEST_RAM_START);
                     const candidate = this.analyzeSwapperCandidate(offset, physAddr);
                     if (candidate && candidate.score >= 3) {
                         candidates.push(candidate);
@@ -667,7 +712,7 @@ export class KernelDiscovery {
     private validateSwapperPgd(pgdOffset: number): boolean {
         // Legacy validation method - kept for compatibility
         // The new analyzeSwapperCandidate method includes validation with scoring
-        const physAddr = pgdOffset + this.baseOffset + Number(KernelConstants.GUEST_RAM_START);
+        const physAddr = pgdOffset + this.baseOffset + Number(MemoryConfig.GUEST_RAM_START);
         const analysis = this.analyzeSwapperCandidate(pgdOffset, physAddr);
         return analysis !== null && analysis.score >= 3;
     }
@@ -722,7 +767,7 @@ export class KernelDiscovery {
 
         // Check PUD count if PGD[0] is a TABLE
         if (pgd0Entry.type === 'TABLE') {
-            const pudOffset = pgd0Entry.pa - Number(KernelConstants.GUEST_RAM_START) - this.baseOffset;
+            const pudOffset = pgd0Entry.pa - Number(MemoryConfig.GUEST_RAM_START) - this.baseOffset;
             if (pudOffset >= 0 && pudOffset + KernelConstants.PAGE_SIZE <= this.memory.byteLength) {
                 let pudCount = 0;
                 let consecutivePuds = true;
@@ -863,7 +908,7 @@ export class KernelDiscovery {
         this.discoveredSwapperPgDir = PA(swapperPgd);
 
         // Check if the PGD is in our current memory chunk
-        const absoluteOffset = swapperPgd - Number(KernelConstants.GUEST_RAM_START);
+        const absoluteOffset = swapperPgd - Number(MemoryConfig.GUEST_RAM_START);
         const kernelPgdOffset = absoluteOffset - this.baseOffset;
 
         if (kernelPgdOffset < 0 || kernelPgdOffset + KernelConstants.PAGE_SIZE > this.memory.byteLength) {
@@ -990,9 +1035,9 @@ export class KernelDiscovery {
         for (const pageAddrKey of pageAddrs) {
             // Parse the hex string back to address
             const pageAddr = PA(pageAddrKey);
-            if (pageAddr < KernelConstants.GUEST_RAM_START) continue;
+            if (pageAddr < MemoryConfig.GUEST_RAM_START) continue;
 
-            const offset = Number(pageAddr - KernelConstants.GUEST_RAM_START);
+            const offset = Number(pageAddr - MemoryConfig.GUEST_RAM_START);
             if (this.isZeroPage(offset)) {
                 this.zeroPages.add(pageAddrKey);
                 sampleCount++;
