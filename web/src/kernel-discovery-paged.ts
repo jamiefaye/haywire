@@ -2793,7 +2793,7 @@ export class PagedKernelDiscovery {
             }
 
             // For each process with an mm_struct pointer
-            const userProcesses = Array.from(this.processes.values()).filter(p => p.mmStruct && Number(p.mmStruct) !== 0);
+            const userProcesses = Array.from(this.processes.values()).filter(p => p.mmStruct && p.mmStruct !== VA(0n));
 //             console.log(`Testing ${Math.min(20, userProcesses.length)} user processes...`);
 
             // First show a summary of all vmalloc addresses
@@ -2815,13 +2815,13 @@ export class PagedKernelDiscovery {
                 // Show the full VA and the cleaned VA after PAC stripping
 //                 console.log(`\nPID ${process.pid.toString().padStart(5)} (${process.name.padEnd(15)}): mm_struct VA = 0x${mmVA.toString(16)}`);
                 if (mmClean !== BigInt(mmVA)) {
-//                     console.log(`  PAC stripped: 0x${Number(mmClean).toString(16)}`);
+//                     console.log(`  PAC stripped: 0x${mmClean.toString(16)}`);
                 }
 
                 // Show which vmalloc range this falls into
-                const mmVANum = typeof mmVA === 'bigint' ? Number(mmVA) : mmVA;
-                if (mmVANum >= 0xffff000000000000 && mmVANum < 0xffff800000000000) {
-                    const offset = mmVANum - 0xffff000000000000;
+                const mmVABigInt = BigInt(mmVA);
+                if (mmVABigInt >= 0xffff000000000000n && mmVABigInt < 0xffff800000000000n) {
+                    const offset = mmVABigInt - 0xffff000000000000n;
 //                     console.log(`  vmalloc range: 0xffff0000... + 0x${offset.toString(16)}`);
                 }
 
@@ -2830,13 +2830,13 @@ export class PagedKernelDiscovery {
                 // Use kernel PGD to translate this mm_struct VA
                 // First try the debug version to see where it fails
                 if (process.pid === 1736) { // Just debug the first one
-//                     console.log('  DEBUG: Walking page table for VA 0x' + Number(mmClean).toString(16));
+//                     console.log('  DEBUG: Walking page table for VA 0x' + mmClean.toString(16));
 //                     console.log('  As BigInt: 0x' + mmClean.toString(16));
-                    this.debugTranslateVA(Number(mmClean), Number(kernelPGDForTranslation));
+                    this.debugTranslateVA(mmClean, Number(kernelPGDForTranslation));
                 }
 
-                // Pass as number since translateVA converts it anyway
-                const mmPA = this.translateWithPgd(Number(mmClean), Number(kernelPGDForTranslation));
+                // Pass as bigint to avoid precision loss
+                const mmPA = this.translateWithPgd(mmClean, Number(kernelPGDForTranslation));
 
                 // Debug: show what we got
                 if (process.pid === 1736) {
@@ -3100,7 +3100,7 @@ export class PagedKernelDiscovery {
                         pageCollection.addPTEMapping(
                             Number(process.pid),
                             process.name,
-                            Number(pte.va),
+                            pte.va,  // Keep as bigint to avoid precision loss
                             Number(pte.pa),
                             pte.flags
                         );
@@ -3168,7 +3168,7 @@ export class PagedKernelDiscovery {
                     pageCollection.addPTEMapping(
                         0, // PID 0 for kernel
                         'kernel',
-                        Number(pte.va),
+                        pte.va,  // Keep as bigint to avoid precision loss
                         Number(pte.pa),
                         pte.flags
                     );

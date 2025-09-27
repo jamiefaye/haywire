@@ -86,7 +86,7 @@ export class PageCollection {
     /**
      * Add a page mapping from PTE walk
      */
-    addPTEMapping(pid: number, processName: string, va: number, pa: number, flags: number | bigint, size: number = 4096): void {
+    addPTEMapping(pid: number, processName: string, va: number | bigint, pa: number, flags: number | bigint, size: number = 4096): void {
         // Filter out invalid physical addresses
         // ARM64 supports up to 52-bit physical addresses, but QEMU typically uses much less
         // Our memory file is 6GB (0x180000000), so filter out anything beyond reasonable range
@@ -118,10 +118,14 @@ export class PageCollection {
         const isNewPage = page.mappings.length === 0;
         const wasShared = page.mappings.length > 1;
 
+        // Convert VA to number for storage (safe for display purposes)
+        // For high kernel addresses, we truncate to 48 bits which is enough for display
+        const vaNum = typeof va === 'bigint' ? Number(va & 0xFFFFFFFFFFFFn) : va;
+
         page.mappings.push({
             pid,
             processName,
-            va,
+            va: vaNum,
             perms,
             sectionType
         });
@@ -138,8 +142,9 @@ export class PageCollection {
             this.stats.sharedPages++;
         }
 
-        // Update indices
-        this.vaToPA.set(`${pid}:${va}`, pa);
+        // Update indices - use page-aligned VA for key
+        const vaAligned = typeof va === 'bigint' ? va & ~0xFFFn : va & ~0xFFF;
+        this.vaToPA.set(`${pid}:${vaAligned}`, pa);
         if (!this.pidPages.has(pid)) {
             this.pidPages.set(pid, new Set());
         }
@@ -400,7 +405,7 @@ export class PageCollection {
     /**
      * Find section type from VMA data
      */
-    private findSectionType(pid: number, va: number): string | null {
+    private findSectionType(pid: number, va: number | bigint): string | null {
         const sections = this.sections.get(pid);
         if (!sections) return null;
 
@@ -413,7 +418,7 @@ export class PageCollection {
         return null;
     }
 
-    private guessSectionType(va: number, flags: number | bigint): string {
+    private guessSectionType(va: number | bigint, flags: number | bigint): string {
         // Only use as fallback when no VMA data available
         // Convert to BigInt for consistent operations
         const f = typeof flags === 'bigint' ? flags : BigInt(flags);
@@ -426,7 +431,7 @@ export class PageCollection {
         return 'anon';
     }
 
-    private guessContentType(va: number, flags: number | bigint): PageContentType {
+    private guessContentType(va: number | bigint, flags: number | bigint): PageContentType {
         const f = typeof flags === 'bigint' ? flags : BigInt(flags);
         const exec = !(f & 0x10n);
         const write = !(f & 0x80n);
