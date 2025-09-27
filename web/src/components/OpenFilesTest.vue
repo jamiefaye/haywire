@@ -94,6 +94,14 @@ export default defineComponent({
     memory: {
       type: Object as () => PagedMemory,
       required: true
+    },
+    kernelDiscovery: {
+      type: Object,
+      default: null
+    },
+    discoveryOutput: {
+      type: Object,
+      default: null
     }
   },
   setup(props) {
@@ -148,12 +156,17 @@ export default defineComponent({
         // Create kernel memory helper
         const kmem = new KernelMem(props.memory);
 
-        // Try to find kernel PGD
-        logMsg('Finding kernel PGD...');
-        const kernelDiscovery = new PagedKernelDiscovery(props.memory);
+        // Use already-discovered data if available
+        let discoveryResult = props.discoveryOutput;
 
-        // The discover method finds the kernel PGD internally
-        const discoveryResult = await kernelDiscovery.discover(props.memory.fileSize);
+        if (!discoveryResult || !discoveryResult.swapperPgDir) {
+          // Only run discovery if we don't have it already
+          logMsg('No existing discovery data, finding kernel PGD...');
+          const kernelDiscovery = new PagedKernelDiscovery(props.memory);
+          discoveryResult = await kernelDiscovery.discover(props.memory.getTotalSize());
+        } else {
+          logMsg('Using existing discovery data');
+        }
 
         if (discoveryResult && discoveryResult.swapperPgDir) {
           // swapperPgDir is the kernel PGD physical address
@@ -163,27 +176,53 @@ export default defineComponent({
           logMsg('Warning: Could not find kernel PGD, using default 0x82a12000');
         }
 
-        // Walk task list to find processes
-        logMsg('Walking task list...');
-        const processes = [];
-        const taskAddrs = kmem.walkList(INIT_TASK + BigInt(OFFSETS['task.tasks']), OFFSETS['task.tasks'], 500);
+        // Use existing processes or walk task list to find them
+        let processes = [];
 
-        logMsg(`Found ${taskAddrs.length} tasks`);
+        if (discoveryResult && discoveryResult.processes && discoveryResult.processes.length > 0) {
+          logMsg('Using existing processes from discovery...');
+          // Convert discovery processes to the format we need
+          processes = discoveryResult.processes
+            .filter(p => !p.isKernelThread && p.name && !p.name.startsWith('['))
+            .map(p => ({
+              addr: BigInt(p.taskStruct),
+              pid: p.pid,
+              name: p.name,
+              files: BigInt(0) // We'll read this fresh
+            }));
 
-        for (const taskAddr of taskAddrs) {
-          const pid = kmem.readU32(taskAddr + BigInt(OFFSETS['task.pid']));
-          if (!pid || pid <= 0) continue;
-
-          const name = kmem.readString(taskAddr + BigInt(OFFSETS['task.comm']));
-          if (!name || name.startsWith('[')) continue; // Skip kernel threads
-
-          const files = kmem.readU64(taskAddr + BigInt(OFFSETS['task.files']));
-          if (files && files > 0n) {
-            processes.push({ addr: taskAddr, pid, name, files });
+          // Read files pointer for each process
+          for (const proc of processes) {
+            const files = kmem.readU64(proc.addr + BigInt(OFFSETS['task.files']));
+            if (files && files > 0n) {
+              proc.files = files;
+            }
           }
-        }
 
-        logMsg(`Found ${processes.length} user processes with files`);
+          processes = processes.filter(p => p.files && p.files > 0n);
+          logMsg(`Found ${processes.length} user processes with files`);
+        } else {
+          // Fall back to walking task list
+          logMsg('Walking task list...');
+          const taskAddrs = kmem.walkList(INIT_TASK + BigInt(OFFSETS['task.tasks']), OFFSETS['task.tasks'], 500);
+
+          logMsg(`Found ${taskAddrs.length} tasks`);
+
+          for (const taskAddr of taskAddrs) {
+            const pid = kmem.readU32(taskAddr + BigInt(OFFSETS['task.pid']));
+            if (!pid || pid <= 0) continue;
+
+            const name = kmem.readString(taskAddr + BigInt(OFFSETS['task.comm']));
+            if (!name || name.startsWith('[')) continue; // Skip kernel threads
+
+            const files = kmem.readU64(taskAddr + BigInt(OFFSETS['task.files']));
+            if (files && files > 0n) {
+              processes.push({ addr: taskAddr, pid, name, files });
+            }
+          }
+
+          logMsg(`Found ${processes.length} user processes with files`);
+        }
 
         // Discover open files
         const openFiles = new Map<bigint, FileInfo>();
@@ -215,13 +254,22 @@ export default defineComponent({
               const size = kmem.readU64(inodePtr + BigInt(OFFSETS['inode.size'])) || 0n;
               const mode = kmem.readU32(inodePtr + BigInt(OFFSETS['inode.mode'])) || 0;
 
-              openFiles.set(inodePtr, {
-                inodeAddr: `0x${inodePtr.toString(16)}`,
-                ino: ino.toString(),
-                size: size,
-                mode: mode,
-                processes: [`${proc.name}[${proc.pid}]`]
-              });
+              // Debug logging for first few files
+              if (openFiles.size < 3) {
+                logMsg(`    fd=${fd}: filePtr=0x${filePtr.toString(16)}, inodePtr=0x${inodePtr.toString(16)}`);
+                logMsg(`      ino=${ino}, size=${size}, mode=0x${mode.toString(16)}`);
+              }
+
+              // Only add files that have valid data
+              if (ino > 0n || size > 0n || mode > 0) {
+                openFiles.set(inodePtr, {
+                  inodeAddr: `0x${inodePtr.toString(16)}`,
+                  ino: ino.toString(),
+                  size: size,
+                  mode: mode,
+                  processes: [`${proc.name}[${proc.pid}]`]
+                });
+              }
             } else {
               openFiles.get(inodePtr)!.processes.push(`${proc.name}[${proc.pid}]`);
             }

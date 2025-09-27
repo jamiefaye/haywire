@@ -344,6 +344,12 @@ ipcMain.handle('read-memory-chunk', async (event, offset, length) => {
   }
 
   try {
+    // Safety check: don't allocate more than 100MB at once
+    if (length > 100 * 1024 * 1024) {
+      console.error(`Requested chunk too large: ${length} bytes`)
+      return { success: false, error: `Chunk size too large: ${length} bytes (max 100MB)` }
+    }
+
     const buffer = Buffer.alloc(length)
     const bytesRead = fs.readSync(memoryFileFd, buffer, 0, length, offset)
 

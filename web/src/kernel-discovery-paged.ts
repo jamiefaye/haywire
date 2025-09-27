@@ -6,6 +6,8 @@
 import { PagedMemory } from './paged-memory';
 import { KernelConstants, ProcessInfo, PTE, MemorySection, DiscoveryStats, DiscoveryOutput, stripPAC } from './kernel-discovery';
 import { PageCollection, PageInfo } from './page-info';
+import { PageCacheDiscovery } from './page-cache-discovery';
+import { KernelMem } from './kernel-mem';
 
 // Export the types we use
 export type { ProcessInfo, PTE, MemorySection, DiscoveryStats, DiscoveryOutput, PageInfo };
@@ -21,6 +23,7 @@ const KNOWN_PROCESSES = [
 
 export class PagedKernelDiscovery {
     private memory: PagedMemory;
+    private kmem: KernelMem;
     private decoder = new TextDecoder('ascii');
     private totalSize: number = 0;
 
@@ -45,6 +48,7 @@ export class PagedKernelDiscovery {
 
     constructor(memory: PagedMemory) {
         this.memory = memory;
+        this.kmem = new KernelMem(memory);
     }
 
     /**
@@ -492,56 +496,19 @@ export class PagedKernelDiscovery {
      * Find all processes by scanning for task_structs
      */
     private findProcesses(totalSize: number): void {
-//         console.log('Finding processes...');
-        const knownFound: string[] = [];
-
-
-        for (let pageStart = 0; pageStart < totalSize; pageStart += KernelConstants.PAGE_SIZE) {
-            if (pageStart % (500 * 1024 * 1024) === 0) {  // Report every 500MB instead of 100MB
-//                 console.log(`  Scanning ${pageStart / (1024 * 1024)}MB... (${this.processes.size} processes)`);
-            }
-
-            // Try both SLAB offsets (for 32KB aligned regions) and page-straddle offsets
-            const offsetsToCheck = [
-                ...KernelConstants.SLAB_OFFSETS,
-                ...KernelConstants.PAGE_STRADDLE_OFFSETS
-            ];
-
-            for (const slabOffset of offsetsToCheck) {
-                const offset = pageStart + slabOffset;
-                if (offset + KernelConstants.TASK_STRUCT_SIZE > totalSize) {
-                    continue;
-                }
-
-                const process = this.checkTaskStruct(offset);
-                if (process && !this.processes.has(process.pid)) {
-                    this.processes.set(process.pid, process);
-
-                    // Track known processes
-                    if (KNOWN_PROCESSES.some(known => process.name.includes(known))) {
-                        knownFound.push(process.name);
-                    }
-                }
-            }
+        // Use the library version
+        if (this.kernelPgdPA) {
+            this.kmem.setKernelPgd(this.kernelPgdPA);
         }
+
+        this.processes = this.kmem.findProcesses();
 
         this.stats.totalProcesses = this.processes.size;
         this.stats.kernelThreads = Array.from(this.processes.values())
             .filter(p => p.isKernelThread).length;
         this.stats.userProcesses = this.stats.totalProcesses - this.stats.kernelThreads;
 
-//         console.log(`Found ${this.processes.size} processes (${this.stats.kernelThreads} kernel, ${this.stats.userProcesses} user)`);
-
-        // Debug: Show what mm_struct values we have
-//         console.log('\nDEBUG: Sample mm_struct values:');
-        let debugCount = 0;
-        for (const process of this.processes.values()) {
-            if (debugCount >= 5) break;
-//             console.log(`  PID ${process.pid} (${process.name}): mm_struct=0x${process.mmStruct.toString(16)} (kernel=${process.isKernelThread})`);
-            debugCount++;
-        }
         const withMm = Array.from(this.processes.values()).filter(p => p.mmStruct && p.mmStruct > 0xffff000000000000n);
-//         console.log(`  Processes with kernel mm_struct: ${withMm.length}/${this.processes.size}`);
     }
 
     /**
@@ -1113,111 +1080,18 @@ export class PagedKernelDiscovery {
     }
 
     /**
-     * Translate a virtual address to physical address using page tables
-     * @param va Virtual address to translate
-     * @param pgdBase Physical address of PGD to use
+     * Helper to translate VA with a specific PGD
+     * Temporarily sets the PGD, does the translation, then restores
      */
-    private translateVA(va: bigint | number, pgdBase: number): number | null {
+    private translateWithPgd(va: bigint | number, pgdBase: number): number | null {
         const virtualAddr = typeof va === 'number' ? BigInt(va) : va;
-
-        // Debug for specific VA
-        if (virtualAddr === 0xffff0000c557d000n) {
-//             console.log(`      [translateVA] Input VA: 0x${virtualAddr.toString(16)}`);
-        }
-
-        // ARM64 uses SEPARATE page tables:
-        // - TTBR0_EL1: User space (0x0000...)
-        // - TTBR1_EL1: Kernel space (0xffff...) - uses swapper_pg_dir
-        // The pgdBase parameter should be the appropriate PGD for the VA type
-
-        // Extract indices for 4-level page table walk
-        // ARM64 with TTBR0/TTBR1 split:
-        // - User addresses (0x0000...) use TTBR0
-        // - Kernel addresses (0xffff...) use TTBR1
-
-        // Standard 4-level page table walk for ARM64
-        // All addresses use their natural indices - no special cases
-        const pgdIndex = Number((virtualAddr >> 39n) & 0x1FFn);  // bits 47-39
-        const pudIndex = Number((virtualAddr >> 30n) & 0x1FFn);  // bits 38-30
-        const pmdIndex = Number((virtualAddr >> 21n) & 0x1FFn);  // bits 29-21
-        const pteIndex = Number((virtualAddr >> 12n) & 0x1FFn);  // bits 20-12
-        const pageOffset = Number(virtualAddr & 0xFFFn);         // bits 11-0
-
-        // Read PGD entry
-        const pgdOffset = pgdBase - KernelConstants.GUEST_RAM_START + (pgdIndex * 8);
-        const pgdEntry = this.memory.readU64(pgdOffset);
-
-        if (virtualAddr === 0xffff0000c557d000n) {
-//             console.log(`      [translateVA] PGD index: ${pgdIndex}, entry: ${pgdEntry ? '0x' + pgdEntry.toString(16) : 'null'}`);
-        }
-
-        if (!pgdEntry) return null;
-
-        const pgdType = Number(pgdEntry & 3n);  // Mask BEFORE converting to Number
-        if (pgdType === 0) return null; // Invalid
-        if (pgdType === 1) {
-            // PGD block descriptor (rare, but possible)
-            const pageBase = Number(pgdEntry & 0x0000FFFFFFFFF000n);
-            return pageBase + Number(virtualAddr & 0xFFFn);
-        }
-        // pgdType === 3: Table descriptor, continue to PUD
-
-        // Extract PUD table address from bits [47:12]
-        const pudBase = Number(pgdEntry & 0x0000FFFFFFFFF000n);  // Extract bits [47:12] with BigInt
-
-        // Read PUD entry
-        const pudOffset = pudBase - KernelConstants.GUEST_RAM_START + (pudIndex * 8);
-        const pudEntry = this.memory.readU64(pudOffset);
-        if (!pudEntry) return null;
-
-        const pudType = Number(pudEntry & 3n);  // Mask BEFORE converting to Number
-        if (pudType === 0) return null; // Invalid
-        if (pudType === 1) {
-            // 1GB block at PUD level - mask to 1GB boundary
-            const pageBase = Number(pudEntry & 0x0000FFFFC0000000n);  // Mask with BigInt
-            return pageBase + Number(virtualAddr & 0x3FFFFFFFn);
-        }
-        // pudType === 3: Table descriptor, continue to PMD
-
-        // Extract PMD table address from bits [47:12]
-        const pmdBase = Number(pudEntry & 0x0000FFFFFFFFF000n);  // Extract bits [47:12] with BigInt
-
-        // Read PMD entry
-        const pmdOffset = pmdBase - KernelConstants.GUEST_RAM_START + (pmdIndex * 8);
-        const pmdEntry = this.memory.readU64(pmdOffset);
-        if (!pmdEntry) return null;
-
-        const pmdType = Number(pmdEntry & 3n);  // Mask BEFORE converting to Number
-        if (pmdType === 0) return null; // Invalid
-        if (pmdType === 1) {
-            // 2MB block at PMD level - mask to 2MB boundary
-            const pageBase = Number(pmdEntry & 0x0000FFFFFFE00000n);  // Mask with BigInt
-            return pageBase + Number(virtualAddr & 0x1FFFFFn);
-        }
-        // pmdType === 3: Table descriptor, continue to PTE
-
-        // Extract PTE table address from bits [47:12]
-        const pteBase = Number(pmdEntry & 0x0000FFFFFFFFF000n);  // Extract bits [47:12] with BigInt
-
-        // Read PTE entry
-        const pteOffset = pteBase - KernelConstants.GUEST_RAM_START + (pteIndex * 8);
-        const pteEntry = this.memory.readU64(pteOffset);
-
-        // Debug for specific VA
-        if (virtualAddr === 0xffff0000c557d000n) {
-//             console.log(`      [translateVA] PTE entry: ${pteEntry ? '0x' + pteEntry.toString(16) : 'null'}`);
-//             console.log(`      [translateVA] PTE type: ${pteEntry ? Number(pteEntry & 3n) : 'N/A'}`);
-        }
-
-        if (!pteEntry || (Number(pteEntry & 3n)) !== 3) {
-            return null; // Invalid or not present
-        }
-
-        // Extract physical page address from bits [47:12] and add offset
-        // Use BigInt to preserve precision for large addresses
-        const pageBase = Number(pteEntry & 0x0000FFFFFFFFF000n);
-        return pageBase + pageOffset;
+        const oldPgd = this.kmem.getKernelPgd();
+        this.kmem.setKernelPgd(pgdBase);
+        const result = this.kmem.translateVA(virtualAddr);
+        this.kmem.setKernelPgd(oldPgd);
+        return result;
     }
+
 
     /**
      * Validate a swapper_pg_dir candidate by testing the full chain
@@ -1231,7 +1105,7 @@ export class PagedKernelDiscovery {
         for (const process of this.processes.values()) {
             if (process.mmStruct && process.mmStruct > 0xffff000000000000) {
                 // Step 1: Use candidate PGD to translate mm_struct VA→PA
-                const mmPa = this.translateVA(BigInt(process.mmStruct), pgdAddr);
+                const mmPa = this.translateWithPgd(BigInt(process.mmStruct), pgdAddr);
 
                 if (debugFirst) {
 //                     console.log(`    Testing ${process.name}:`);
@@ -1275,7 +1149,7 @@ export class PagedKernelDiscovery {
                 }
 
                 // Step 4: Ultimate test - use process PGD to translate its own mm_struct
-                const verifyPa = this.translateVA(BigInt(process.mmStruct), processPgd);
+                const verifyPa = this.translateWithPgd(BigInt(process.mmStruct), processPgd);
                 if (verifyPa === mmPa) {
                     if (debugFirst) {
 //                         console.log(`      ✓ Process PGD successfully translates its own mm_struct!`);
@@ -1442,7 +1316,7 @@ export class PagedKernelDiscovery {
         // Translate kernel VA to physical address
         let actualNodePa: number;
         if ((cleanNodePtr & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
-            const translated = this.translateVA(cleanNodePtr, this.swapperPgDir);
+            const translated = this.translateWithPgd(cleanNodePtr, this.swapperPgDir);
             if (!translated) {
                 return; // Can't translate
             }
@@ -1580,7 +1454,7 @@ export class PagedKernelDiscovery {
                         }
 
                         // Try to extract VMA from the value (odd slot)
-                        const translated = this.translateVA(nextSlot, this.swapperPgDir);
+                        const translated = this.translateWithPgd(nextSlot, this.swapperPgDir);
                         if (translated) {
                             const vmaOffset = translated - KernelConstants.GUEST_RAM_START;
 
@@ -1659,7 +1533,7 @@ export class PagedKernelDiscovery {
 
                 if ((slotPtr & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
                     // Try to read as vm_area_struct
-                    const translated = this.translateVA(slotPtr, this.swapperPgDir);
+                    const translated = this.translateWithPgd(slotPtr, this.swapperPgDir);
                     if (!translated) {
                         if (depth <= 2) {
 //                             console.log(`${'  '.repeat(depth)}    Could not translate VA 0x${slotPtr.toString(16)}`);
@@ -1707,7 +1581,7 @@ export class PagedKernelDiscovery {
                         if (vmFile && vmFile !== 0n && (vmFile & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
 
                             // vm_file points to a struct file
-                            const fileTranslated = this.translateVA(vmFile, this.swapperPgDir);
+                            const fileTranslated = this.translateWithPgd(vmFile, this.swapperPgDir);
                             if (fileTranslated) {
                                 const fileOffset = fileTranslated - KernelConstants.GUEST_RAM_START;
 
@@ -1724,7 +1598,7 @@ export class PagedKernelDiscovery {
                                 const dentry = this.memory.readU64(fileOffset + 0x48);
 
                                 if (dentry && (dentry & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
-                                    const dentryTranslated = this.translateVA(dentry, this.swapperPgDir);
+                                    const dentryTranslated = this.translateWithPgd(dentry, this.swapperPgDir);
                                     if (dentryTranslated) {
                                         const dentryOffset = dentryTranslated - KernelConstants.GUEST_RAM_START;
 
@@ -1735,7 +1609,7 @@ export class PagedKernelDiscovery {
                                         if (dNamePtr) {
 
                                             if ((dNamePtr & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
-                                                const nameTranslated = this.translateVA(dNamePtr, this.swapperPgDir);
+                                                const nameTranslated = this.translateWithPgd(dNamePtr, this.swapperPgDir);
                                                 if (nameTranslated) {
                                                     const nameOffset = nameTranslated - KernelConstants.GUEST_RAM_START;
                                                     // Try to read up to 256 bytes for the filename
@@ -1885,7 +1759,7 @@ export class PagedKernelDiscovery {
         }
 
         // Translate mm_struct VA to PA using kernel PGD
-        const mmPa = this.translateVA(process.mmStruct, this.swapperPgDir);
+        const mmPa = this.translateWithPgd(process.mmStruct, this.swapperPgDir);
         if (!mmPa) {
             // Silently fail - not all processes have accessible mm_structs
             return sections;
@@ -2002,7 +1876,7 @@ export class PagedKernelDiscovery {
             // Could be a direct VMA pointer for single-entry tree
             // Try to read it as a vm_area_struct
             if ((maRootPtr & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
-                const translated = this.translateVA(maRootPtr, this.swapperPgDir);
+                const translated = this.translateWithPgd(maRootPtr, this.swapperPgDir);
                 if (translated) {
                     const vmaOffset = translated - KernelConstants.GUEST_RAM_START;
                     const vmStart = this.memory.readU64(vmaOffset);
@@ -2078,7 +1952,7 @@ export class PagedKernelDiscovery {
             }
 
             // Translate VMA VA to PA
-            const vmaPa = this.translateVA(currentVmaVa, this.swapperPgDir);
+            const vmaPa = this.translateWithPgd(currentVmaVa, this.swapperPgDir);
             if (!vmaPa) {
                 break;
             }
@@ -2483,9 +2357,49 @@ export class PagedKernelDiscovery {
 
         this.totalSize = totalSize;
 
-        // Process discovery - restored original approach
+        // Try to get kernel PGD from QMP ground truth first
+        let kernelPgd = 0;
+        try {
+            // Check if we're in Electron and can use QMP via IPC
+            if (typeof window !== 'undefined' && (window as any).electronAPI?.queryKernelInfo) {
+                const result = await (window as any).electronAPI.queryKernelInfo();
+                if (result.success && result.kernelPgd) {
+                    kernelPgd = result.kernelPgd;
+                    console.log(`******** QMP: Got ground truth SWAPPER_PG_DIR = 0x${kernelPgd.toString(16).toUpperCase()} ********`);
+                }
+            } else if (typeof window === 'undefined') {
+                // Node.js environment - can use direct connection
+                const { queryKernelPGDViaQMP } = await import('./utils/qmp-client');
+                const qmpResult = await queryKernelPGDViaQMP();
+                if (qmpResult) {
+                    kernelPgd = qmpResult;
+                    console.log(`******** QMP: Got ground truth SWAPPER_PG_DIR = 0x${kernelPgd.toString(16).toUpperCase()} ********`);
+                }
+            }
+        } catch (err: any) {
+            console.log(`QMP not available (${err.message}) - will use heuristic discovery`);
+        }
+
+        // If no QMP result, fall back to discovery
+        if (!kernelPgd) {
+            kernelPgd = this.findSwapperPgDir();
+            console.log(`Heuristic: Found kernel PGD = 0x${kernelPgd.toString(16)}`);
+        }
+
+        this.swapperPgDir = kernelPgd;
+        this.kmem.setKernelPgd(kernelPgd);
+
+        // TEST: Page cache discovery early
+        console.log('\n=== EARLY PAGE CACHE DISCOVERY TEST ===');
+        console.log('Kernel PGD found at:', kernelPgd ? `0x${kernelPgd.toString(16)}` : 'not found');
+        // Process discovery first - before page cache discovery
 //         console.log('\n=== PROCESS DISCOVERY (ORIGINAL APPROACH) ===');
         this.findProcesses(totalSize);
+
+        // Now do page cache discovery with processes already found
+        const pageCacheDiscovery = new PageCacheDiscovery(this.memory, kernelPgd, undefined, this);
+        const pageCacheResult = await pageCacheDiscovery.discover();
+        console.log('Page cache discovery result:', pageCacheResult);
 
         // Prepare tasks array from discovered processes
         const tasks: Array<{pid: number, name: string, offset: number, mmPtr: bigint}> = [];
@@ -2583,77 +2497,30 @@ export class PagedKernelDiscovery {
         } // Close the else block from SKIP_FULL_PGD_SCAN
 
         // Process list already populated by findProcesses() above
-        // Skip early weak validation - will use strict validation below
-        // this.swapperPgDir = this.findSwapperPgDir();
-        this.swapperPgDir = 0;  // Will be set by strict validation
+        // Skip early weak validation - kernel PGD already set in discover()
+        // The QMP query was moved to the beginning of discover() to get ground truth first
 
-        // Try to get ground truth from QMP if available
-//         console.log('\n=== KERNEL PGD DISCOVERY ===');
-
-        let qmpKernelPGD: number | null = null;
-        try {
-            // Check if we're in Electron and can use QMP via IPC
-            if (typeof window !== 'undefined' && (window as any).electronAPI?.queryKernelInfo) {
-//                 console.log('Trying QMP via Electron IPC...');
-                const result = await (window as any).electronAPI.queryKernelInfo();
-                if (result.success && result.kernelPgd) {
-                    qmpKernelPGD = result.kernelPgd;
-//                     console.log(`QMP (via IPC): Got kernel PGD = 0x${qmpKernelPGD.toString(16)}`);
-                } else {
-//                     console.log('QMP (via IPC): Failed -', result.error || 'No kernel PGD');
-                }
-            } else if (typeof window === 'undefined') {
-                // Node.js environment - can use direct connection
-                const { queryKernelPGDViaQMP } = await import('./utils/qmp-client');
-                qmpKernelPGD = await queryKernelPGDViaQMP();
-            }
-
-            if (qmpKernelPGD) {
-//                 console.log(`✓ QMP PROVIDED GROUND TRUTH: Kernel PGD at PA 0x${qmpKernelPGD.toString(16)}`);
-
-                // Verify it's in our accessible range
-                    const offset = qmpKernelPGD - KernelConstants.GUEST_RAM_START;
-                    if (offset >= 0 && offset < this.totalSize) {
-                        // Validate the structure
-                        const entryCount = this.testPgdWithEntryCountValidation(offset);
-//                         console.log(`  Validation: ${entryCount.validEntries} entries (${entryCount.userEntries} user, ${entryCount.kernelEntries} kernel)`);
-
-                        if (entryCount.validEntries > 0) {
-                            this.swapperPgDir = qmpKernelPGD;
-//                             console.log(`  ✓ Using QMP-provided kernel PGD`);
-                        } else {
-//                             console.log(`  ✗ QMP PGD has no valid entries - will use heuristic discovery`);
-                        }
-                    } else {
-//                         console.log(`  ✗ QMP PGD outside accessible range - will use heuristic discovery`);
-                    }
-                }
-        } catch (err: any) {
-//             console.log(`QMP not available (${err.message}) - using heuristic discovery`);
-        }
-
-        // Always run signature search to either confirm QMP or discover
+        // Always run signature search to either confirm or as backup
         const signatureDiscoveredPgd = this.findSwapperPgdByAdaptiveSignature();
 
-        if (qmpKernelPGD && signatureDiscoveredPgd) {
+        // this.swapperPgDir was already set in discover() from QMP or heuristic
+        if (this.swapperPgDir && signatureDiscoveredPgd) {
             // We have both - check if they match
-            if (signatureDiscoveredPgd === qmpKernelPGD) {
-//                 console.log(`  ✅ Signature search confirmed QMP ground truth!`);
+            if (signatureDiscoveredPgd === this.swapperPgDir) {
+//                 console.log(`  ✅ Signature search confirmed kernel PGD!`);
             } else {
 //                 console.log(`  ⚠️ Signature search found different candidate: 0x${signatureDiscoveredPgd.toString(16)}`);
-//                 console.log(`     Using QMP ground truth as authoritative`);
+//                 console.log(`     Using already set value: 0x${this.swapperPgDir.toString(16)}`);
             }
-            this.swapperPgDir = qmpKernelPGD;
-        } else if (!qmpKernelPGD && signatureDiscoveredPgd) {
-            // No QMP, but signature search found something
+            // Keep the already set value (from QMP or earlier discovery)
+        } else if (!this.swapperPgDir && signatureDiscoveredPgd) {
+            // No earlier result, but signature search found something
 //             console.log(`  Using signature-discovered swapper_pg_dir at PA 0x${signatureDiscoveredPgd.toString(16)}`);
             this.swapperPgDir = signatureDiscoveredPgd;
-        } else if (qmpKernelPGD && !signatureDiscoveredPgd) {
-            // Only QMP worked
-            this.swapperPgDir = qmpKernelPGD;
-        } else {
-            // Neither worked - will try to discover below through validation
-//             console.log('No QMP or signature search results - will discover kernel PGD through validation');
+            this.kmem.setKernelPgd(signatureDiscoveredPgd);
+        } else if (!this.swapperPgDir) {
+            // Nothing found - will try to discover below through validation
+//             console.log('No kernel PGD found - will discover through validation');
         }
 
         // We'll validate discovered PGDs below
@@ -2773,6 +2640,7 @@ export class PagedKernelDiscovery {
                     realKernelPGD = candidate.addr;
                     if (!this.swapperPgDir) {
                         this.swapperPgDir = candidate.addr;
+                        this.kmem.setKernelPgd(candidate.addr);
                     }
                     break; // Found it!
                 } else {
@@ -2957,7 +2825,7 @@ export class PagedKernelDiscovery {
                 }
 
                 // Pass as number since translateVA converts it anyway
-                const mmPA = this.translateVA(Number(mmClean), kernelPGDForTranslation);
+                const mmPA = this.translateWithPgd(Number(mmClean), kernelPGDForTranslation);
 
                 // Debug: show what we got
                 if (process.pid === 1736) {
@@ -2990,7 +2858,7 @@ export class PagedKernelDiscovery {
                             let pgdPA: number;
                             if ((pgdInMm & 0xFFFF000000000000n) === 0xFFFF000000000000n) {
                                 // It's a kernel VA - translate it
-                                const translated = this.translateVA(pgdInMm, kernelPGDForTranslation);
+                                const translated = this.translateWithPgd(pgdInMm, kernelPGDForTranslation);
                                 if (!translated) {
                                     console.log(`    ✗ Failed to translate PGD kernel VA to PA`);
                                     continue;
@@ -3084,7 +2952,7 @@ export class PagedKernelDiscovery {
 
                 // Fall back to complex translation if simple didn't work
                 if (!mmPa) {
-                    mmPa = this.translateVA(process.mmStruct, this.swapperPgDir);
+                    mmPa = this.translateWithPgd(process.mmStruct, this.swapperPgDir);
                 }
 
                 if (mmPa) {
@@ -3162,7 +3030,7 @@ export class PagedKernelDiscovery {
 
                             // Fall back to complex translation if simple didn't work
                             if (!translatedPgd) {
-                                translatedPgd = this.translateVA(pgdPtr, this.swapperPgDir);
+                                translatedPgd = this.translateWithPgd(pgdPtr, this.swapperPgDir);
                             }
                             if (translatedPgd && translatedPgd >= 0 && translatedPgd < this.totalSize) {
                                 // Simple translation gives us file offset, but page table walk expects physical address
@@ -3392,18 +3260,15 @@ export class PagedKernelDiscovery {
 
         console.timeEnd('Paged Kernel Discovery');
 
-        // Compare with QMP ground truth if available
-        if (qmpKernelPGD && realKernelPGD) {
-            if (qmpKernelPGD === realKernelPGD) {
-//                 console.log('\n✓✓✓ VALIDATION SUCCESS: Discovered kernel PGD matches QMP ground truth!');
-            } else {
-//                 console.log(`\n⚠ VALIDATION MISMATCH:`);
-//                 console.log(`  QMP says: 0x${qmpKernelPGD.toString(16)}`);
-//                 console.log(`  We found: 0x${realKernelPGD.toString(16)}`);
-//                 console.log(`  Using QMP value as it's authoritative`);
-                realKernelPGD = qmpKernelPGD;
-                this.swapperPgDir = qmpKernelPGD;
-            }
+        // Compare with previously set kernel PGD (from QMP or heuristic)
+        if (this.swapperPgDir && realKernelPGD && this.swapperPgDir !== realKernelPGD) {
+            // If they differ, the one we set earlier (especially from QMP) takes precedence
+//             console.log(`\n⚠ VALIDATION MISMATCH:`);
+//             console.log(`  Initial discovery: 0x${this.swapperPgDir.toString(16)}`);
+//             console.log(`  Later validation: 0x${realKernelPGD.toString(16)}`);
+//             console.log(`  Keeping initial value`);
+        } else if (this.swapperPgDir && realKernelPGD && this.swapperPgDir === realKernelPGD) {
+//             console.log('\n✓✓✓ VALIDATION SUCCESS: Kernel PGD confirmed!');
         }
 
         // FINAL SUMMARY - Concise output that won't get truncated
@@ -3467,7 +3332,7 @@ export class PagedKernelDiscovery {
         const pgdPA = pgdOffset + KernelConstants.GUEST_RAM_START;
 
         for (const va of linearTestVAs) {
-            const translatedPA = this.translateVA(va, pgdPA);
+            const translatedPA = this.translateWithPgd(va, pgdPA);
             if (translatedPA) {
                 // For linear mapping, VA offset should equal PA - RAM_START
                 const expectedPA = KernelConstants.GUEST_RAM_START + va;

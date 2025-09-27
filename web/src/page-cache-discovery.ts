@@ -120,6 +120,9 @@ export class PageCacheDiscovery {
         if (kernelPgd) {
             this.kmem.setKernelPgd(kernelPgd);
         }
+        if (kernelPgd) {
+            this.kmem.setKernelPgd(kernelPgd);
+        }
     }
 
     /**
@@ -410,7 +413,7 @@ export class PageCacheDiscovery {
             // Try to read filesystem type (s_type field -> file_system_type.name)
             const typeVA = sbAddrBig + BigInt(this.offsets['super_block.s_type']);
             console.log(`  Reading s_type from VA 0x${typeVA.toString(16)} (superblock 0x${sbAddrBig.toString(16)} + offset 0x${this.offsets['super_block.s_type'].toString(16)})`);
-            const typePA = this.kernelDiscovery ? this.kernelDiscovery.translateVA(typeVA, this.kernelPgd) : null;
+            const typePA = this.kmem.translateVA(typeVA);
             console.log(`  s_type VA->PA: 0x${typeVA.toString(16)} -> ${typePA ? '0x' + typePA.toString(16) : 'null'}`);
             if (typePA) {
                 const typeData = this.memory.readBytes(typePA - 0x40000000, 8);
@@ -420,7 +423,7 @@ export class PageCacheDiscovery {
 
                     // The file_system_type.name field is at offset 0, and it contains a pointer to the name string
                     console.log(`  Translating file_system_type VA 0x${typePtr.toString(16)}`);
-                    const namePA = this.kernelDiscovery ? this.kernelDiscovery.translateVA(typePtr, this.kernelPgd) : null;
+                    const namePA = this.kmem.translateVA(typePtr);
                     console.log(`  file_system_type VA->PA: 0x${typePtr.toString(16)} -> ${namePA ? '0x' + namePA.toString(16) : 'null'}`);
                     if (namePA) {
                         // Read the pointer to the name string
@@ -431,7 +434,7 @@ export class PageCacheDiscovery {
 
                             // Now read the actual name string
                             console.log(`  Translating name string VA 0x${namePtr.toString(16)}`);
-                            const nameStrPA = this.kernelDiscovery ? this.kernelDiscovery.translateVA(namePtr, this.kernelPgd) : null;
+                            const nameStrPA = this.kmem.translateVA(namePtr);
                             console.log(`  name string VA->PA: 0x${namePtr.toString(16)} -> ${nameStrPA ? '0x' + nameStrPA.toString(16) : 'null'}`);
                             if (nameStrPA) {
                                 const nameData = this.memory.readBytes(nameStrPA - 0x40000000, 32);
@@ -454,7 +457,7 @@ export class PageCacheDiscovery {
             // Try to read filesystem ID (s_id field - this is inline, not a pointer)
             const idVA = sbAddrBig + BigInt(this.offsets['super_block.s_id']);
             console.log(`  Reading s_id from VA 0x${idVA.toString(16)} (superblock 0x${sbAddrBig.toString(16)} + offset 0x${this.offsets['super_block.s_id'].toString(16)})`);
-            const idPA = this.kernelDiscovery ? this.kernelDiscovery.translateVA(idVA, this.kernelPgd) : null;
+            const idPA = this.kmem.translateVA(idVA);
             console.log(`  s_id VA->PA: 0x${idVA.toString(16)} -> ${idPA ? '0x' + idPA.toString(16) : 'null'}`);
             if (idPA) {
                 const idData = this.memory.readBytes(idPA - 0x40000000, 32);
@@ -715,36 +718,38 @@ export class PageCacheDiscovery {
      * Discover open files through process file tables
      * This is more reliable than walking s_inodes which contains unallocated entries
      */
-    async discoverOpenFiles(): Promise<Map<bigint, any>> {
+    async discoverOpenFiles(providedProcesses?: any[]): Promise<Map<bigint, any>> {
         console.log('\n=== Discovering Open Files Through Process File Tables ===\n');
 
         const openFiles = new Map<bigint, any>(); // inode address -> file info
 
-        if (!this.kernelDiscovery) {
-            console.error('Kernel discovery not available, cannot find processes');
-            return openFiles;
+        // Use provided processes, get from kernelDiscovery, or discover them
+        let processes = providedProcesses;
+        if (!processes && this.kernelDiscovery && typeof (this.kernelDiscovery as any).processes !== 'undefined') {
+            // Get from kernelDiscovery if it has already found them
+            const processMap = (this.kernelDiscovery as any).processes;
+            if (processMap && processMap.size > 0) {
+                console.log('Using processes from kernelDiscovery...');
+                processes = Array.from(processMap.values());
+            }
+        }
+        if (!processes) {
+            console.log('No processes provided, discovering them with library...');
+            const processMap = this.kmem.findProcesses();
+            processes = Array.from(processMap.values());
         }
 
-        // First, find init_task
-        const initTaskVA = BigInt('0xffff8000838e2880'); // Known init_task address
-        console.log(`Starting from init_task at VA 0x${initTaskVA.toString(16)}`);
-
-        // Walk the task list using kmem helper
-        const tasksOffset = this.offsets['task_struct.tasks'];
-        const taskAddrs = this.kmem.walkList(initTaskVA + BigInt(tasksOffset), tasksOffset, 200);
-
-        console.log(`Found ${taskAddrs.length} tasks`);
+        console.log(`Processing ${processes.length} processes`);
 
         const tasks: Array<{addr: bigint, pid: number, name: string}> = [];
 
-        for (const taskAddr of taskAddrs) {
-            // Read PID using kmem helper
-            const pid = this.kmem.readU32(taskAddr + BigInt(this.offsets['task_struct.pid']));
-            if (!pid || pid <= 0) continue;
+        for (const proc of processes) {
+            const taskAddr = BigInt(proc.taskStruct);
+            const pid = proc.pid;
+            const name = proc.name;  // ProcessInfo uses 'name'
 
-            // Read comm (process name) using kmem helper
-            const name = this.kmem.readString(taskAddr + BigInt(this.offsets['task_struct.comm']), 16);
-            if (!name || name.startsWith('[')) continue;
+            // Skip kernel threads
+            if (!name || name.startsWith('[') || proc.isKernelThread) continue;
 
             // Process user tasks
             tasks.push({addr: taskAddr, pid, name});

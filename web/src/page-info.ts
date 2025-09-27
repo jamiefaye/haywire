@@ -86,7 +86,7 @@ export class PageCollection {
     /**
      * Add a page mapping from PTE walk
      */
-    addPTEMapping(pid: number, processName: string, va: number, pa: number, flags: number, size: number = 4096): void {
+    addPTEMapping(pid: number, processName: string, va: number, pa: number, flags: number | bigint, size: number = 4096): void {
         // Filter out invalid physical addresses
         // ARM64 supports up to 52-bit physical addresses, but QEMU typically uses much less
         // Our memory file is 6GB (0x180000000), so filter out anything beyond reasonable range
@@ -386,12 +386,13 @@ export class PageCollection {
         };
     }
 
-    private decodePermissions(flags: number): string {
-        // ARM64 PTE flags
+    private decodePermissions(flags: number | bigint): string {
+        // ARM64 PTE flags - convert to BigInt for consistent operations
+        const f = typeof flags === 'bigint' ? flags : BigInt(flags);
         let perms = '';
-        perms += (flags & 0x1) ? 'r' : '-';  // Present implies readable
-        perms += (flags & 0x80) ? '-' : 'w'; // Bit 7: AP[2] (0=RW, 1=RO)
-        perms += (flags & 0x10) ? '-' : 'x'; // Bit 4: UXN (0=exec, 1=no-exec)
+        perms += (f & 0x1n) ? 'r' : '-';  // Present implies readable
+        perms += (f & 0x80n) ? '-' : 'w'; // Bit 7: AP[2] (0=RW, 1=RO)
+        perms += (f & 0x10n) ? '-' : 'x'; // Bit 4: UXN (0=exec, 1=no-exec)
         perms += 'p'; // Always private for now (could check shared)
         return perms;
     }
@@ -412,11 +413,12 @@ export class PageCollection {
         return null;
     }
 
-    private guessSectionType(va: number, flags: number): string {
+    private guessSectionType(va: number, flags: number | bigint): string {
         // Only use as fallback when no VMA data available
-        // Remove hardcoded x86-64 assumptions
-        const exec = !(flags & 0x10);
-        const write = !(flags & 0x80);
+        // Convert to BigInt for consistent operations
+        const f = typeof flags === 'bigint' ? flags : BigInt(flags);
+        const exec = !(f & 0x10n);
+        const write = !(f & 0x80n);
 
         if (exec && !write) return 'code';
         if (!exec && !write) return 'rodata';
@@ -424,9 +426,10 @@ export class PageCollection {
         return 'anon';
     }
 
-    private guessContentType(va: number, flags: number): PageContentType {
-        const exec = !(flags & 0x10);
-        const write = !(flags & 0x80);
+    private guessContentType(va: number, flags: number | bigint): PageContentType {
+        const f = typeof flags === 'bigint' ? flags : BigInt(flags);
+        const exec = !(f & 0x10n);
+        const write = !(f & 0x80n);
 
         if (exec && !write) return 'code';
         if (!exec && !write) return 'rodata';

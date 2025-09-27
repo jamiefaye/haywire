@@ -46,6 +46,7 @@ vgcore.*
 *.qcow2
 *.img
 *.iso
+haywire-vm-mem
 
 # Log files
 *.log
@@ -81,3 +82,6 @@ qemu-mods/qemu-system-aarch64-unsigned
 test_attempts/imgui.ini
 linux-source/
 linux-headers/
+
+# Electron node_modules (large binary files)
+web/node_modules/

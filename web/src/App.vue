@@ -535,7 +535,7 @@
         <button class="modal-close" @click="showOpenFilesTest = false">✕</button>
       </div>
       <div class="modal-body" style="overflow-y: auto;">
-        <OpenFilesTest :memory="pagedMemory" />
+        <OpenFilesTest :memory="pagedMemory" :kernelDiscovery="kernelDiscovery" :discoveryOutput="kernelOutput" />
       </div>
     </div>
   </div>
@@ -673,6 +673,8 @@ const kernelDiscoveryStatus = ref('Initializing...')
 const showOpenFilesTest = ref(false)
 const pagedMemory = ref<any>(null)  // Store PagedMemory instance for reuse
 const kernelDiscoveryResults = ref<any>(null)
+const kernelDiscovery = ref<any>(null)  // PagedKernelDiscovery instance
+const kernelOutput = ref<any>(null)  // Alias for results
 const pageCollection = ref<PageCollection | null>(null)
 const processSortKey = ref<'pid' | 'name' | 'ptes'>('pid')
 const processSortReverse = ref(false)
@@ -2209,6 +2211,7 @@ async function startDiscovery() {
 
         // Run discovery using PagedKernelDiscovery
         const discovery = new PagedKernelDiscovery(memory);
+        kernelDiscovery.value = discovery;  // Store instance for reuse
         const results = await discovery.discover(totalSize);
 
         kernelDiscoveryResults.value = {
@@ -2295,6 +2298,7 @@ async function startDiscovery() {
 
         // Run discovery using PagedKernelDiscovery
         const discovery = new PagedKernelDiscovery(memory);
+        kernelDiscovery.value = discovery;  // Store instance for reuse
         const results = await discovery.discover(totalSize);
 
         kernelDiscoveryResults.value = {

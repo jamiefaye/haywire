@@ -115,6 +115,7 @@ export interface ProcessInfo {
     isKernelThread: boolean;
     tasksNext: number;  // Next task in linked list
     tasksPrev: number;  // Previous task in linked list
+    files?: bigint;     // Pointer to files_struct (optional, may be null for kernel threads)
     ptes: PTE[];
     sections: MemorySection[];
 }
@@ -414,8 +415,15 @@ export class KernelDiscovery {
         console.log('Finding PTEs for processes...');
         let processedCount = 0;
         let pteCount = 0;
+        let noPgdCount = 0;
+        let kernelThreadCount = 0;
 
         for (const process of this.processes.values()) {
+            if (process.isKernelThread) {
+                kernelThreadCount++;
+                continue;  // Skip kernel threads, they don't have user PTEs
+            }
+
             if (process.pgd && process.pgd !== 0) {
                 console.log(`  Walking page table for PID ${process.pid} (${process.name}), PGD: 0x${process.pgd.toString(16)}`);
                 process.ptes = this.walkPageTable(process.pgd);
@@ -438,15 +446,14 @@ export class KernelDiscovery {
                 }
 
                 processedCount++;
-                // Only log first 5 to avoid spam
-                if (processedCount >= 5) {
-                    console.log(`  ... (processing ${this.processes.size} total processes)`);
-                    break;
-                }
+            } else {
+                noPgdCount++;
             }
         }
 
-        console.log(`Total PTEs found: ${pteCount}`);
+        console.log(`  Processed: ${processedCount} processes with PGDs`);
+        console.log(`  Skipped: ${kernelThreadCount} kernel threads, ${noPgdCount} user processes without PGDs`);
+        console.log(`  Total PTEs found: ${pteCount}`);
 
         this.stats.totalPTEs = Array.from(this.processes.values())
             .reduce((sum, p) => sum + p.ptes.length, 0);

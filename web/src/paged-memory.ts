@@ -39,6 +39,13 @@ export class PagedMemory {
     }
 
     /**
+     * Get total size of memory
+     */
+    getTotalSize(): number {
+        return this.totalSize;
+    }
+
+    /**
      * Read bytes from paged memory
      */
     read(offset: number, length: number): Uint8Array | null {

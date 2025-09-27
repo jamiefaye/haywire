@@ -46,9 +46,9 @@
 
       <div class="stat-card">
         <h3>Page Tables</h3>
-        <div class="stat-value">{{ stats.totalPTEs + stats.kernelPTEs }}</div>
+        <div class="stat-value">{{ computedStats.totalPTEs }}</div>
         <div class="stat-detail">
-          {{ stats.totalPTEs }} process / {{ stats.kernelPTEs }} kernel
+          {{ computedStats.processPTEs }} process / {{ computedStats.kernelPTEs }} kernel
         </div>
       </div>
 
@@ -97,7 +97,7 @@
                     {{ proc.isKernelThread ? 'Kernel' : 'User' }}
                   </span>
                 </td>
-                <td>{{ proc.ptes?.length || 0 }}</td>
+                <td>{{ getPteCount(proc.pid) }}</td>
                 <td>{{ proc.sections?.length || 0 }}</td>
                 <td class="mono">0x{{ proc.taskStruct?.toString(16) || '0' }}</td>
                 <td>
@@ -158,7 +158,7 @@
       <div class="report-section">
         <h3>Kernel Page Tables</h3>
         <div class="kernel-info">
-          <p><strong>swapper_pg_dir:</strong> <span class="mono">0x082c00000</span></p>
+          <p><strong>swapper_pg_dir:</strong> <span class="mono">0x{{ (discoveryOutput?.swapperPgDir || 0).toString(16).toUpperCase() }}</span></p>
           <p><strong>Kernel PTEs:</strong> {{ stats.kernelPTEs }}</p>
 
           <div class="kernel-sample">
@@ -387,6 +387,40 @@ export default defineComponent({
       }));
     });
 
+    // Computed properties
+    const computedStats = computed(() => {
+      if (!discoveryOutput.value?.ptesByPid) {
+        return {
+          totalPTEs: 0,
+          processPTEs: 0,
+          kernelPTEs: 0
+        };
+      }
+
+      let processPTEs = 0;
+      let kernelPTEs = 0;
+
+      for (const [pid, ptes] of discoveryOutput.value.ptesByPid) {
+        if (pid === 0) {
+          kernelPTEs += ptes.length;
+        } else {
+          processPTEs += ptes.length;
+        }
+      }
+
+      return {
+        totalPTEs: processPTEs + kernelPTEs,
+        processPTEs,
+        kernelPTEs
+      };
+    });
+
+    // Helper methods
+    const getPteCount = (pid: number): number => {
+      if (!discoveryOutput.value?.ptesByPid) return 0;
+      return discoveryOutput.value.ptesByPid.get(pid)?.length || 0;
+    };
+
     // Methods
     const runDiscovery = async () => {
       if (!props.memoryFile) {
@@ -469,9 +503,9 @@ export default defineComponent({
         p.pid,
         p.name,
         p.isKernelThread ? 'Kernel' : 'User',
-        p.ptes.length,
-        p.sections.length,
-        `0x${p.taskStruct.toString(16)}`,
+        getPteCount(p.pid),
+        p.sections?.length || 0,
+        `0x${p.taskStruct?.toString(16) || '0'}`,
       ]);
 
       const csv = [
@@ -590,6 +624,7 @@ export default defineComponent({
       reportTimestamp,
       processes,
       stats,
+      computedStats,
       sortedProcesses,
       topSharedPages,
       kernelPtesSample,
@@ -608,6 +643,7 @@ export default defineComponent({
       exportHTML,
       printReport,
       sortBy,
+      getPteCount,
       viewProcessDetail,
       closeProcessDetail,
       getProcessNames,
