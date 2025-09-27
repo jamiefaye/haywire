@@ -423,6 +423,5 @@ h2 {
   margin: 8px 0;
   font-size: 12px;
   overflow-x: auto;
-  color: #000;  /* Black text for better contrast */
 }
 </style>
