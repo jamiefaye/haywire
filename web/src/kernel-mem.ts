@@ -26,27 +26,27 @@ const KNOWN_PROCESSES = [
 
 // Structure offsets from pahole
 export const OFFSETS = {
-    // task_struct
-    'task.files': 0x990,  // Updated for Ubuntu kernel
-    'task.comm': 0x758,
-    'task.pid': 0x4E8,
-    'task.mm': 0x998,
-    'task.tasks': 0x508,
+    // task_struct - from pahole analysis
+    'task.files': 0x9B8,  // 2488 - files_struct pointer
+    'task.comm': 0x758,   // 1880 - process name
+    'task.pid': 0x4E8,    // 1256 - PID
+    'task.mm': 0x998,     // 2456 - mm_struct pointer
+    'task.tasks': 0x508,  // 1288 - task list
 
     // files_struct
-    'files.fdt': 0x20,
+    'files.fdt': 0x20,    // 32 - fdtable pointer
 
     // fdtable
-    'fdt.fd': 0x08,
-    'fdt.max_fds': 0x00,
+    'fdt.fd': 0x08,       // 8 - file descriptor array
+    'fdt.max_fds': 0x00,  // 0 - max fds
 
     // file
-    'file.inode': 0x28,
+    'file.inode': 0x28,   // 40 - inode pointer
 
     // inode
-    'inode.ino': 0x40,
-    'inode.size': 0x50,
-    'inode.mode': 0x00,
+    'inode.ino': 0x40,    // 64 - inode number
+    'inode.size': 0x50,   // 80 - file size
+    'inode.mode': 0x00,   // 0 - file mode
 };
 
 export class KernelMem {
@@ -488,7 +488,7 @@ export class KernelMem {
         }
 
         // Read files pointer (can be null for kernel threads)
-        const filesRaw = this.memory.readU64(offset + 0x990) || 0n;  // task.files offset
+        const filesRaw = this.memory.readU64(offset + OFFSETS['task.files']) || 0n;  // task.files offset
         const filesPtr = stripPAC(VA(filesRaw));
 
         return {
