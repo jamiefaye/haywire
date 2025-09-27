@@ -113,9 +113,10 @@ export class KernelMem {
         const pteIndex = Number((va >> 12n) & 0x1FFn);
         const offset = Number(va & 0xFFFn);
 
-        // Debug for vmalloc addresses
+        // Debug for vmalloc addresses (disabled - too verbose)
         const isVmalloc = (va >= 0xffff000000000000n && va < 0xffff800000000000n);
-        if (isVmalloc) {
+        const debugVmalloc = false;  // Set to true to debug vmalloc translations
+        if (isVmalloc && debugVmalloc) {
             console.log(`  Translating vmalloc VA: 0x${va.toString(16)}`);
             console.log(`    PGD index: ${pgdIndex}, PUD: ${pudIndex}, PMD: ${pmdIndex}, PTE: ${pteIndex}`);
             console.log(`    Using kernel PGD: 0x${this.kernelPgd.toString(16)}`);
@@ -124,31 +125,31 @@ export class KernelMem {
         // Read PGD entry
         const pgdData = this.memory.readBytes((this.kernelPgd - 0x40000000) + pgdIndex * 8, 8);
         if (!pgdData) {
-            if (isVmalloc) console.log(`    Failed to read PGD entry at PA: 0x${((this.kernelPgd - 0x40000000) + pgdIndex * 8).toString(16)}`);
+            if (isVmalloc && debugVmalloc) console.log(`    Failed to read PGD entry at PA: 0x${((this.kernelPgd - 0x40000000) + pgdIndex * 8).toString(16)}`);
             return null;
         }
 
         const pgdEntry = new DataView(pgdData.buffer, pgdData.byteOffset, pgdData.byteLength).getBigUint64(0, true);
         // Check valid bit (bit 0) - ARM64 page table entry
         if ((pgdEntry & 0x1n) === 0n) {
-            if (isVmalloc) console.log(`    PGD entry not valid: 0x${pgdEntry.toString(16)}`);
+            if (isVmalloc && debugVmalloc) console.log(`    PGD entry not valid: 0x${pgdEntry.toString(16)}`);
             return null;
         }
 
         // Extract PA from bits 47:12 (ARM64 48-bit PA)
         const pudPA = Number(pgdEntry & 0x0000FFFFFFFFF000n);
-        if (isVmalloc) console.log(`    PGD entry: 0x${pgdEntry.toString(16)}, extracted PUD PA: 0x${pudPA.toString(16)}`);
+        if (isVmalloc && debugVmalloc) console.log(`    PGD entry: 0x${pgdEntry.toString(16)}, extracted PUD PA: 0x${pudPA.toString(16)}`);
 
         // Read PUD entry
         const pudData = this.memory.readBytes((pudPA - 0x40000000) + pudIndex * 8, 8);
         if (!pudData) {
-            if (isVmalloc) console.log(`    Failed to read PUD entry at PA: 0x${((pudPA - 0x40000000) + pudIndex * 8).toString(16)}`);
+            if (isVmalloc && debugVmalloc) console.log(`    Failed to read PUD entry at PA: 0x${((pudPA - 0x40000000) + pudIndex * 8).toString(16)}`);
             return null;
         }
 
         const pudEntry = new DataView(pudData.buffer, pudData.byteOffset, pudData.byteLength).getBigUint64(0, true);
         if ((pudEntry & 0x1n) === 0n) {
-            if (isVmalloc) console.log(`    PUD entry not valid: 0x${pudEntry.toString(16)}`);
+            if (isVmalloc && debugVmalloc) console.log(`    PUD entry not valid: 0x${pudEntry.toString(16)}`);
             return null;  // Check valid bit
         }
 
