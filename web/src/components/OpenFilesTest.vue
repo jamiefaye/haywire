@@ -330,10 +330,28 @@ export default defineComponent({
 </script>
 
 <style scoped>
+/* Override body's #e0e0e0 color inheritance */
 .open-files-test {
   padding: 20px;
   max-width: 1200px;
   margin: 0 auto;
+  color: #000;  /* Set black as base color */
+}
+
+/* Ensure all child elements inherit black instead of body's gray */
+.open-files-test p,
+.open-files-test div,
+.open-files-test span,
+.open-files-test li,
+.open-files-test td,
+.open-files-test th,
+.open-files-test pre,
+.open-files-test h1,
+.open-files-test h2,
+.open-files-test h3,
+.open-files-test h4,
+.open-files-test h5 {
+  color: inherit;  /* Inherit black from parent */
 }
 
 h2 {
@@ -369,6 +387,7 @@ h2 {
   padding: 12px;
   margin: 20px 0;
   border-radius: 4px;
+  color: #000;  /* Explicit black text */
 }
 
 .summary p {
@@ -417,11 +436,14 @@ h2 {
   padding: 12px;
   background: #f5f5f5;
   border-radius: 4px;
+  color: #000;  /* Explicit black text */
 }
 
 .log pre {
   margin: 8px 0;
   font-size: 12px;
   overflow-x: auto;
+  color: #000;  /* Explicit black text */
+  white-space: pre-wrap;  /* Preserve formatting */
 }
 </style>
