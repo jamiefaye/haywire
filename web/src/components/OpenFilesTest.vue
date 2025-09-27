@@ -334,10 +334,12 @@ export default defineComponent({
   padding: 20px;
   max-width: 1200px;
   margin: 0 auto;
+  color: #000;  /* Default black text for all content */
 }
 
-h2 {
+h2, h3, h4 {
   margin-bottom: 20px;
+  color: #000;  /* Black headings */
 }
 
 .controls {
@@ -369,14 +371,17 @@ h2 {
   padding: 12px;
   margin: 20px 0;
   border-radius: 4px;
+  color: #000;  /* Black text for better contrast */
 }
 
 .summary p {
   margin: 4px 0;
+  color: #000;  /* Black text for better contrast */
 }
 
 .files-list {
   margin: 20px 0;
+  color: #000;  /* Black text for better contrast */
 }
 
 .files-list table {
@@ -389,11 +394,13 @@ h2 {
   padding: 8px;
   text-align: left;
   border-bottom: 2px solid #999;
+  color: #000;  /* Black text for better contrast */
 }
 
 .files-list td {
   padding: 6px 8px;
   border-bottom: 1px solid #ddd;
+  color: #000;  /* Black text for better contrast */
 }
 
 .known-files {
@@ -401,6 +408,7 @@ h2 {
   padding: 12px;
   background: #f5f5f5;
   border-radius: 4px;
+  color: #000;  /* Black text for better contrast */
 }
 
 .known-files ul {
@@ -410,6 +418,7 @@ h2 {
 
 .known-files li {
   padding: 4px 0;
+  color: #000;  /* Black text for better contrast */
 }
 
 .log {
@@ -417,6 +426,7 @@ h2 {
   padding: 12px;
   background: #f5f5f5;
   border-radius: 4px;
+  color: #000;  /* Black text for better contrast */
 }
 
 .log pre {
