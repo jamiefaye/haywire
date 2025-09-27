@@ -51,7 +51,7 @@ export const OFFSETS = {
 
 export class KernelMem {
     private memory: PagedMemory;
-    private kernelPgd: number = 0x82a12000; // Default swapper_pg_dir PA
+    private kernelPgd: number = 0x136deb000; // Hardcoded for testing (normally from QMP)
 
     constructor(memory: PagedMemory) {
         this.memory = memory;

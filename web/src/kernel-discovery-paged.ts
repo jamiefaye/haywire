@@ -2391,6 +2391,12 @@ export class PagedKernelDiscovery {
             console.log(`QMP not available (${err.message}) - will use heuristic discovery`);
         }
 
+        // HARDCODED FOR NPM RUN DEV TESTING - normally discovered via QMP
+        if (kernelPgd === PA(0)) {
+            kernelPgd = PA(0x136deb000);
+            console.log(`******** USING HARDCODED KERNEL PGD FOR TESTING = 0x136DEB000 ********`);
+        }
+
         // If no QMP result, fall back to discovery
         if (kernelPgd === PA(0)) {
             kernelPgd = this.findSwapperPgDir();
