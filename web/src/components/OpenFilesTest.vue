@@ -199,7 +199,7 @@ export default defineComponent({
             }
           }
 
-          processes = processes.filter(p => p.files && p.files > 0n);
+          processes = processes.filter((p: any) => p.files && p.files > 0n);
           logMsg(`Found ${processes.length} user processes with files`);
         } else {
           // Fall back to walking task list

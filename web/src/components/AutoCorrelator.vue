@@ -25,10 +25,6 @@ const props = defineProps<{
   sampleOffset?: number
 }>()
 
-const emit = defineEmits<{
-  peakDetected: [offset: number]
-}>()
-
 const canvas = ref<HTMLCanvasElement>()
 const correlationData = ref<Float32Array>(new Float32Array(2048))
 const peaks = ref<number[]>([])

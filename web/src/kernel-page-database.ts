@@ -62,8 +62,8 @@ export class KernelPageDatabase {
             this.processes.set(process.pid, process);
 
             // If we have a task_struct address, add it as a reference
-            if (process.taskStruct && process.taskStruct !== 0) {
-                const pageNum = Math.floor(process.taskStruct / 4096);
+            if (process.taskStruct && Number(process.taskStruct) !== 0) {
+                const pageNum = Math.floor(Number(process.taskStruct) / 4096);
                 let pageInfo = this.pageIndex.get(pageNum);
                 if (!pageInfo) {
                     pageInfo = {
@@ -117,8 +117,8 @@ export class KernelPageDatabase {
             if (!process || !ptes || ptes.length === 0) continue;
 
             for (const pte of ptes) {
-                if (!pte.pa || pte.pa === 0) continue;
-                const pageNum = Math.floor(pte.pa / 4096);
+                if (!pte.pa || Number(pte.pa) === 0) continue;
+                const pageNum = Math.floor(Number(pte.pa) / 4096);
 
                 // Get or create page info
                 let pageInfo = this.pageIndex.get(pageNum);
@@ -164,8 +164,8 @@ export class KernelPageDatabase {
                 if (!section.startPa || section.size === 0) continue;
                 // Sections describe virtual address ranges
                 // We need to find their physical pages through PTEs
-                const startPage = Math.floor(section.startPa / 4096);
-                const endPage = Math.ceil((section.startPa + section.size) / 4096);
+                const startPage = Math.floor(Number(section.startPa) / 4096);
+                const endPage = Math.ceil((Number(section.startPa) + section.size) / 4096);
 
                 for (let pageNum = startPage; pageNum < endPage; pageNum++) {
                     let pageInfo = this.pageIndex.get(pageNum);
@@ -193,7 +193,7 @@ export class KernelPageDatabase {
                             processName: process.name,
                             type: 'section',
                             virtualAddress: section.startVa,
-                            permissions: this.formatSectionFlags(section.flags),
+                            permissions: this.formatSectionFlags(Number(section.flags)),
                             sectionType: section.type,
                             size: section.size
                         });
@@ -214,8 +214,8 @@ export class KernelPageDatabase {
         }
 
         for (const pte of kernelPtes) {
-            if (!pte.pa || pte.pa === 0) continue;
-            const pageNum = Math.floor(pte.pa / 4096);
+            if (!pte.pa || Number(pte.pa) === 0) continue;
+            const pageNum = Math.floor(Number(pte.pa) / 4096);
 
             let pageInfo = this.pageIndex.get(pageNum);
             if (!pageInfo) {

@@ -534,14 +534,14 @@ export class KernelDiscovery {
                 pageCount++;
                 if (this.checkPteTable(offset)) {
                     pteTableCount++;
-                    const absoluteAddr = this.baseOffset + offset + KernelConstants.GUEST_RAM_START;
+                    const absoluteAddr = this.baseOffset + offset + Number(KernelConstants.GUEST_RAM_START);
                     console.log(`    Found PTE table at offset 0x${(this.baseOffset + offset).toString(16)} (addr: 0x${absoluteAddr.toString(16)})`);
 
                     // Add a representative PTE entry for this table
                     this.kernelPtes.push({
-                        va: BigInt(absoluteAddr),
-                        pa: absoluteAddr,
-                        flags: 0x3, // Valid flags
+                        va: VA(BigInt(absoluteAddr)),
+                        pa: PA(BigInt(absoluteAddr)),
+                        flags: BigInt(0x3), // Valid flags
                         r: true,
                         w: true,
                         x: false
@@ -948,7 +948,7 @@ export class KernelDiscovery {
                     currentSection = {
                         type: this.determineType(va),
                         startVa: va,
-                        endVa: va + KernelConstants.PAGE_SIZE,
+                        endVa: VirtualAddress.add(va, KernelConstants.PAGE_SIZE),
                         startPa: pte.pa,
                         size: KernelConstants.PAGE_SIZE,
                         pages: 1,

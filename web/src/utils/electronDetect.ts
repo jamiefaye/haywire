@@ -5,7 +5,7 @@ export function isElectron(): boolean {
   // Check for Electron-specific properties
   if (typeof window !== 'undefined') {
     // Check for Electron's process object
-    if (window.process?.type === 'renderer') {
+    if ((window as any).process?.type === 'renderer') {
       return true
     }
 

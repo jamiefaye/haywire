@@ -1,6 +1,5 @@
 // Vue composable for WebAssembly memory renderer
-import { onUnmounted } from 'vue'
-import { wasmModule, wasmIsLoading, wasmError, sharedMemoryState, loadWasmModule } from './wasmSingleton'
+import { wasmModule, wasmIsLoading, wasmError, sharedMemoryState } from './wasmSingleton'
 
 // Pixel format enum matching C++ PixelFormat::Type from common.h
 export enum PixelFormat {

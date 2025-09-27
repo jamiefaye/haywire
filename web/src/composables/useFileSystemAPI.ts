@@ -18,7 +18,7 @@ export function useFileSystemAPI() {
   async function openMemoryFile(): Promise<boolean> {
     try {
       // Show file picker - accept any file type
-      const [handle] = await window.showOpenFilePicker({
+      const [handle] = await (window as any).showOpenFilePicker({
         multiple: false
         // No type restrictions - can open any file
       })
@@ -50,7 +50,7 @@ export function useFileSystemAPI() {
       // User must select it, but we can suggest the directory
       const suggestedName = path.split('/').pop() || 'haywire-vm-mem'
 
-      const [handle] = await window.showOpenFilePicker({
+      const [handle] = await (window as any).showOpenFilePicker({
         startIn: 'desktop',
         suggestedName,
         multiple: false

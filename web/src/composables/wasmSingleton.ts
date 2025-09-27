@@ -1,6 +1,5 @@
 // Singleton for WASM module to prevent multiple loads
 import { ref } from 'vue'
-import { PixelFormat } from './useWasmRenderer'
 
 interface MemoryRendererModule {
   _renderMemoryToCanvas(

@@ -163,7 +163,7 @@ function draw() {
     const tempCanvas = document.createElement('canvas')
     tempCanvas.width = sourceWidth
     tempCanvas.height = sourceHeight
-    const tempCtx = tempCanvas.getContext('2d', { imageSmoothingEnabled: false })!
+    const tempCtx = tempCanvas.getContext('2d', { imageSmoothingEnabled: false }) as CanvasRenderingContext2D
     tempCtx.putImageData(imageData, 0, 0)
 
     // Draw scaled up version

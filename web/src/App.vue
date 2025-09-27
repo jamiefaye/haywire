@@ -313,7 +313,7 @@
       v-for="viewer in miniViewers"
       :key="viewer.id"
       :id="viewer.id"
-      :memory-data="viewer.memoryData || memoryData || undefined"
+      :memory-data="viewer.memoryData || memoryData || emptyMemoryData"
       :offset="0"
       :initial-width="viewer.width"
       :initial-height="viewer.height"
@@ -582,17 +582,14 @@ const {
 
 // Change detection
 const {
-  isLoading: isLoadingChangeDetection,
-  error: changeDetectionError,
   state: changeDetectionState,
   loadModule: loadChangeDetectionModule,
-  scanMemory,
-  getChunkAtOffset,
   testChunkZero
 } = useChangeDetection()
 
 // Memory data
 const memoryData = ref<Uint8Array | null>(null)
+const emptyMemoryData = new Uint8Array(0)  // Default empty data
 const isLoadingFile = ref(false)
 const memoryCanvasRef = ref<InstanceType<typeof MemoryCanvas>>()
 
@@ -749,28 +746,6 @@ const canvasHeight = computed(() => {
 
 const bytesPerPixel = computed(() => {
   return getBytesPerPixel(selectedFormat.value)
-})
-
-const formatDisplayName = computed(() => {
-  const formats: Record<PixelFormat, string> = {
-    [PixelFormat.GRAYSCALE]: 'GRAY8',
-    [PixelFormat.RGB565]: 'RGB565',
-    [PixelFormat.RGB888]: 'RGB',
-    [PixelFormat.RGBA8888]: 'RGBA',
-    [PixelFormat.BGR888]: 'BGR',
-    [PixelFormat.BGRA8888]: 'BGRA',
-    [PixelFormat.ARGB8888]: 'ARGB',
-    [PixelFormat.ABGR8888]: 'ABGR',
-    [PixelFormat.BINARY]: 'BINARY',
-    [PixelFormat.HEX_PIXEL]: 'HEX_PIXEL',
-    [PixelFormat.CHAR_8BIT]: 'CHAR_8BIT',
-    [PixelFormat.RGBA8888_SPLIT]: 'R|G|B|A',
-    [PixelFormat.BGRA8888_SPLIT]: 'B|G|R|A',
-    [PixelFormat.ARGB8888_SPLIT]: 'A|R|G|B',
-    [PixelFormat.ABGR8888_SPLIT]: 'A|B|G|R',
-    [PixelFormat.CUSTOM]: 'CUSTOM'  // Add missing value
-  }
-  return formats[selectedFormat.value] || 'GRAY8'
 })
 
 // Offset handling
@@ -1306,15 +1281,6 @@ function updateOffset() {
 }
 
 // Slider control functions
-function onSliderChange() {
-  const newOffset = Math.floor(sliderPosition.value)
-  if (newOffset !== currentOffset.value) {
-    currentOffset.value = newOffset
-    offsetInput.value = `0x${newOffset.toString(16).toUpperCase()}`
-    refreshMemory()
-  }
-}
-
 function onInvertedSliderChange(event: Event) {
   // Get the inverted value from the slider
   const invertedValue = parseInt((event.target as HTMLInputElement).value)
@@ -1883,16 +1849,8 @@ function updateFFTIndicatorPosition() {
   }
 }
 
-// Clear FFT sample point
-function clearFFTSamplePoint() {
-  fftSampleOffset.value = 0
-  fftRelativePosition.value = null
-  fftIndicatorPosition.value = null
-  console.log('Cleared FFT sample point')
-}
-
 // Drag and drop handlers
-function onDragOver(event: DragEvent) {
+function onDragOver(_event: DragEvent) {
   isDraggingFile.value = true
 }
 
@@ -1916,10 +1874,13 @@ async function onDrop(event: DragEvent) {
 
   // Read the file content directly
   const arrayBuffer = await file.arrayBuffer()
-  const data = new Uint8Array(arrayBuffer)
+
+  // @ts-ignore - TypeScript bug with Uint8Array constructor
+  const fileDataBytes = new Uint8Array(arrayBuffer)
 
   // Store for memory reading
-  (window as any).__droppedFileData = data
+  // @ts-ignore
+  (window as any).__droppedFileData = fileDataBytes
 
   isFileOpen.value = true
   await refreshMemory()
@@ -3009,7 +2970,7 @@ async function refreshMemoryElectron() {
     try {
       const result = await window.electronAPI.readMemoryChunk(currentOffset.value, memorySize)
       if (result.success) {
-        memoryData.value = result.data
+        memoryData.value = result.data || null
         return
       }
     } catch (error) {
