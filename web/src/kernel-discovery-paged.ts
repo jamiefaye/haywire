@@ -1025,9 +1025,9 @@ export class PagedKernelDiscovery {
 
                     // Add a representative PTE entry for this table
                     this.kernelPtes.push({
-                        va: BigInt(absoluteAddr),
-                        pa: absoluteAddr,
-                        flags: 0x3,
+                        va: VA(BigInt(absoluteAddr)),
+                        pa: PA(absoluteAddr),
+                        flags: BigInt(0x3),
                         r: true,
                         w: true,
                         x: false
@@ -1162,7 +1162,7 @@ export class PagedKernelDiscovery {
 //                         console.log(`      ✓ Process PGD successfully translates its own mm_struct!`);
                     }
                     successCount++;
-                    process.pgd = processPgd;
+                    process.pgd = PA(processPgd);
                 } else {
                     if (debugFirst) {
 //                         console.log(`      ✗ Process PGD failed to translate correctly`);
@@ -1685,10 +1685,10 @@ export class PagedKernelDiscovery {
                             }
                         }
 
-                        const section = {
-                            startVa: Number(vmStart),
-                            endVa: Number(vmEnd),
-                            startPa: 0,
+                        const section: MemorySection = {
+                            startVa: VA(vmStart),
+                            endVa: VA(vmEnd),
+                            startPa: PA(0),
                             size: Number(vmEnd - vmStart),
                             pages: Math.ceil(Number(vmEnd - vmStart) / 4096),
                             flags: Number(vmFlags || 0),
@@ -1809,7 +1809,7 @@ export class PagedKernelDiscovery {
 //             console.log(`    mm_users @ offset 0x38 = ${mmUsers38 || 0} (wrong offset)`);
 
             // Dump first few fields to understand structure (only for processes with active mm_users)
-            if (mmUsers > 0) {
+            if (mmUsers !== null && mmUsers > 0) {
 //                 console.log(`    ✓ Process has active mm_users, should have valid VMAs`);
                 for (let i = 0; i < 128; i += 8) {
                     const val = this.memory.readU64(mmStructOffset + i);
@@ -1819,7 +1819,7 @@ export class PagedKernelDiscovery {
                 }
             } else {
 //                 console.log(`    ⚠️  mm_users = ${mmUsers}, mm_count = ${mmCount}`);
-                if (mmUsers === 0 && mmCount > 0) {
+                if (mmUsers === 0 && mmCount !== null && mmCount > 0) {
 //                     console.log(`    Process exiting but mm still valid (mm_count > 0)`);
                 } else if (mmUsers === 0 && mmCount === 0) {
 //                     console.log(`    Process completely freed - maple tree may be corrupted`);
@@ -1895,9 +1895,9 @@ export class PagedKernelDiscovery {
 //                             console.log(`  Single VMA tree: 0x${vmStart.toString(16)}-0x${vmEnd.toString(16)}`);
                         }
                         sections.push({
-                            startVa: Number(vmStart),
-                            endVa: Number(vmEnd),
-                            startPa: 0,
+                            startVa: VA(vmStart),
+                            endVa: VA(vmEnd),
+                            startPa: PA(0),
                             size: Number(vmEnd - vmStart),
                             pages: Math.ceil(Number(vmEnd - vmStart) / 4096),
                             flags: 0,

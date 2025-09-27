@@ -216,10 +216,10 @@ function render() {
       ctx.fillStyle = '#0a0a0a' // Very dark for unscanned
     } else if (chunk.isZero) {
       ctx.fillStyle = '#202020' // Dark gray for zero
-    } else if (chunk.scanCount <= 1) {
+    } else if (chunk.scanCount && chunk.scanCount <= 1) {
       // First scan - show as neutral blue (not a change)
       ctx.fillStyle = '#4080c0'
-    } else if (chunk.lastChangeTime > 0) {
+    } else if (chunk.lastChangeTime && chunk.lastChangeTime > 0) {
       // Has changed at some point - use logarithmic decay from hot to cool
       const timeSinceChange = Date.now() - chunk.lastChangeTime
       const secondsSinceChange = timeSinceChange / 1000

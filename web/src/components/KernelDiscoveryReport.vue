@@ -304,8 +304,8 @@ export default defineComponent({
     const sortedProcesses = computed(() => {
       const procs = [...processes.value];
       procs.sort((a, b) => {
-        let aVal = a[sortField.value];
-        let bVal = b[sortField.value];
+        let aVal = (a as any)[sortField.value];
+        let bVal = (b as any)[sortField.value];
 
         // Handle array properties (ptes and sections)
         if (Array.isArray(aVal)) {
@@ -339,7 +339,7 @@ export default defineComponent({
 
       const result: Record<string, number[]> = {};
       for (const [page, pids] of sorted) {
-        result[`0x${page.toString(16)}`] = Array.from(pids);
+        result[page] = Array.from(pids);
       }
       return result;
     });
@@ -383,7 +383,7 @@ export default defineComponent({
         name,
         count: stats.count,
         size: stats.size,
-        color: colors[name] || '#757575',
+        color: colors[name as keyof typeof colors] || '#757575',
       }));
     });
 
@@ -465,7 +465,7 @@ export default defineComponent({
 
       } catch (error) {
         console.error('Discovery failed:', error);
-        alert('Discovery failed: ' + error.message);
+        alert('Discovery failed: ' + (error as Error).message);
         isRunning.value = false;
       }
     };

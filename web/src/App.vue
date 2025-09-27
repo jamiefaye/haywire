@@ -752,7 +752,7 @@ const bytesPerPixel = computed(() => {
 })
 
 const formatDisplayName = computed(() => {
-  const formats = {
+  const formats: Record<PixelFormat, string> = {
     [PixelFormat.GRAYSCALE]: 'GRAY8',
     [PixelFormat.RGB565]: 'RGB565',
     [PixelFormat.RGB888]: 'RGB',
@@ -767,7 +767,8 @@ const formatDisplayName = computed(() => {
     [PixelFormat.RGBA8888_SPLIT]: 'R|G|B|A',
     [PixelFormat.BGRA8888_SPLIT]: 'B|G|R|A',
     [PixelFormat.ARGB8888_SPLIT]: 'A|R|G|B',
-    [PixelFormat.ABGR8888_SPLIT]: 'A|B|G|R'
+    [PixelFormat.ABGR8888_SPLIT]: 'A|B|G|R',
+    [PixelFormat.CUSTOM]: 'CUSTOM'  // Add missing value
   }
   return formats[selectedFormat.value] || 'GRAY8'
 })
@@ -2332,7 +2333,7 @@ async function startDiscovery() {
         return;
       } catch (e) {
         console.error('File handle read failed:', e)
-        kernelDiscoveryStatus.value = 'File read failed: ' + e.message
+        kernelDiscoveryStatus.value = 'File read failed: ' + (e as Error).message
         kernelDiscoveryRunning.value = false;
         return;
       }
@@ -2368,7 +2369,7 @@ async function startDiscovery() {
     }
   } catch (error) {
     console.error('Kernel discovery failed:', error)
-    kernelDiscoveryStatus.value = `Error: ${error.message || 'Discovery failed'}`
+    kernelDiscoveryStatus.value = `Error: ${(error as Error).message || 'Discovery failed'}`
   } finally {
     kernelDiscoveryRunning.value = false
   }
@@ -2952,7 +2953,7 @@ onUnmounted(() => {
   }
 })
 // Electron file handlers
-async function handleElectronFileOpened({ size }) {
+async function handleElectronFileOpened({ path, size }: { path: string, size: number }) {
   fileSize.value = size
   fileName.value = path.split('/').pop() || 'memory.bin'
   isFileOpen.value = true
@@ -2970,10 +2971,10 @@ async function handleElectronFileOpened({ size }) {
   }
 }
 
-let lastDataRefreshTime = null
+let lastDataRefreshTime: number | null = null
 let dataRefreshCount = 0
 
-async function handleElectronFileRefreshed({ size }) {
+async function handleElectronFileRefreshed({ size }: { size: number }) {
   const now = Date.now()
   if (lastDataRefreshTime) {
     // const delta = now - lastDataRefreshTime
@@ -2992,10 +2993,10 @@ function handleElectronFileClosed() {
   memoryData.value = null
   fileSize.value = 0
   fileName.value = ''
-  stopChangeDetection()
+  // stopChangeDetection() // Function not available
 }
 
-// Override refreshMemory to use Electron API when available
+// Wrapper for refreshMemory to use Electron API when available
 const originalRefreshMemory = refreshMemory
 async function refreshMemoryElectron() {
   if (!isFileOpen.value) return
@@ -3020,9 +3021,13 @@ async function refreshMemoryElectron() {
   return originalRefreshMemory()
 }
 
-// Use Electron version if available
-if (isElectron.value) {
-  refreshMemory = refreshMemoryElectron
+// Use Electron version if available - wrapped in function
+async function refreshMemoryWrapper() {
+  if (isElectron.value) {
+    return refreshMemoryElectron()
+  } else {
+    return refreshMemory()
+  }
 }
 </script>
 

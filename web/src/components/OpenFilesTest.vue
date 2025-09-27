@@ -183,8 +183,8 @@ export default defineComponent({
           logMsg('Using existing processes from discovery...');
           // Convert discovery processes to the format we need
           processes = discoveryResult.processes
-            .filter(p => !p.isKernelThread && p.name && !p.name.startsWith('['))
-            .map(p => ({
+            .filter((p: any) => !p.isKernelThread && p.name && !p.name.startsWith('['))
+            .map((p: any) => ({
               addr: BigInt(p.taskStruct),
               pid: p.pid,
               name: p.name,
