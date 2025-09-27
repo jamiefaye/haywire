@@ -2392,12 +2392,14 @@ export class PagedKernelDiscovery {
         }
 
         // HARDCODED FOR NPM RUN DEV TESTING - normally discovered via QMP
-        if (kernelPgd === PA(0)) {
+        // Check if running in browser (npm run dev) and hardcode the value
+        const isBrowser = typeof window !== 'undefined' && !(window as any).electronAPI;
+        if (isBrowser) {
             kernelPgd = PA(0x136deb000);
-            console.log(`******** USING HARDCODED KERNEL PGD FOR TESTING = 0x136DEB000 ********`);
+            console.log(`******** BROWSER MODE: USING HARDCODED KERNEL PGD = 0x136DEB000 ********`);
         }
 
-        // If no QMP result, fall back to discovery
+        // If no QMP result and not hardcoded, fall back to discovery
         if (kernelPgd === PA(0)) {
             kernelPgd = this.findSwapperPgDir();
             console.log(`Heuristic: Found kernel PGD = ${PhysicalAddress.toHex(kernelPgd)}`);
