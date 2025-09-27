@@ -85,8 +85,8 @@ interface Results {
   files: FileInfo[];
 }
 
-// Known addresses for our test system
-const INIT_TASK = BigInt('0xffff8000838e2880');
+// Note: INIT_TASK doesn't work reliably in our Linux setup
+// We rely on process discovery instead
 
 export default defineComponent({
   name: 'OpenFilesTest',
@@ -176,7 +176,7 @@ export default defineComponent({
           logMsg('Warning: Could not find kernel PGD, using default 0x82a12000');
         }
 
-        // Use existing processes or walk task list to find them
+        // Get processes from discovery (required - INIT_TASK walking doesn't work reliably)
         let processes = [];
 
         if (discoveryResult && discoveryResult.processes && discoveryResult.processes.length > 0) {
@@ -196,32 +196,19 @@ export default defineComponent({
             const files = kmem.readU64(proc.addr + BigInt(OFFSETS['task.files']));
             if (files && files > 0n) {
               proc.files = files;
+              logMsg(`  ${proc.name}[${proc.pid}]: files=0x${files.toString(16)}`);
+            } else {
+              logMsg(`  ${proc.name}[${proc.pid}]: no files pointer`);
             }
           }
 
           processes = processes.filter((p: any) => p.files && p.files > 0n);
           logMsg(`Found ${processes.length} user processes with files`);
         } else {
-          // Fall back to walking task list
-          logMsg('Walking task list...');
-          const taskAddrs = kmem.walkList(INIT_TASK + BigInt(OFFSETS['task.tasks']), OFFSETS['task.tasks'], 500);
-
-          logMsg(`Found ${taskAddrs.length} tasks`);
-
-          for (const taskAddr of taskAddrs) {
-            const pid = kmem.readU32(taskAddr + BigInt(OFFSETS['task.pid']));
-            if (!pid || pid <= 0) continue;
-
-            const name = kmem.readString(taskAddr + BigInt(OFFSETS['task.comm']));
-            if (!name || name.startsWith('[')) continue; // Skip kernel threads
-
-            const files = kmem.readU64(taskAddr + BigInt(OFFSETS['task.files']));
-            if (files && files > 0n) {
-              processes.push({ addr: taskAddr, pid, name, files });
-            }
-          }
-
-          logMsg(`Found ${processes.length} user processes with files`);
+          // Process discovery is required
+          error.value = 'No process data available. Please run kernel discovery first.';
+          logMsg('ERROR: Process discovery required - INIT_TASK walking is not reliable');
+          return;
         }
 
         // Discover open files
@@ -230,12 +217,18 @@ export default defineComponent({
         for (const proc of processes) {
           // Read fdtable
           const fdtPtr = kmem.readU64(proc.files + BigInt(OFFSETS['files.fdt']));
-          if (!fdtPtr) continue;
+          if (!fdtPtr) {
+            logMsg(`  ${proc.name}[${proc.pid}]: No fdtPtr at files+0x${OFFSETS['files.fdt'].toString(16)} (files=0x${proc.files.toString(16)})`);
+            continue;
+          }
 
           const maxFds = kmem.readU32(fdtPtr + BigInt(OFFSETS['fdt.max_fds']));
           const fdArrayPtr = kmem.readU64(fdtPtr + BigInt(OFFSETS['fdt.fd']));
 
-          if (!maxFds || !fdArrayPtr) continue;
+          if (!maxFds || !fdArrayPtr) {
+            logMsg(`  ${proc.name}[${proc.pid}]: No maxFds/fdArrayPtr (maxFds=${maxFds}, fdArrayPtr=0x${fdArrayPtr?.toString(16) || '0'})`);
+            continue;
+          }
 
           const checkFds = Math.min(maxFds, 100);
           let foundInProc = 0;
