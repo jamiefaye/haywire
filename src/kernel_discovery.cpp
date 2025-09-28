@@ -1,0 +1,1292 @@
+/**
+ * Kernel Discovery for Haywire
+ *
+ * Discovers kernel structures and process information using QMP and memory scanning
+ * Replaces the need for companion processes or guest agents
+ */
+
+#include <iostream>
+#include <iomanip>
+#include <vector>
+#include <map>
+#include <set>
+#include <algorithm>
+#include <cstring>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+// #include <nlohmann/json.hpp>  // Not needed for basic testing
+// using json = nlohmann::json;
+
+namespace Haywire {
+
+// Kernel structure offsets (from working web version kernel-discovery.ts)
+struct KernelOffsets {
+    // task_struct offsets
+    size_t tasks_list = 0x7e0;     // TASKS_LIST_OFFSET (NOT 0x7e8!)
+    size_t tasks_next = 0x7e0;     // tasks.next
+    size_t tasks_prev = 0x7e8;     // tasks.prev (tasks_list + 8)
+    size_t pid = 0x750;            // PID_OFFSET
+    size_t comm = 0x970;           // COMM_OFFSET
+    size_t mm = 0x6d0;             // MM_OFFSET
+
+    // mm_struct offsets
+    size_t mm_pgd = 0x68;          // pgd (page global directory)
+    size_t mm_mt = 0x40;           // maple tree root
+    size_t mm_users = 0x74;        // mm_users refcount
+
+    // maple tree node offsets
+    size_t mt_root = 0x48;         // Actual root node pointer at offset 8 in maple_tree
+
+    // vm_area_struct offsets (in maple tree leaves)
+    size_t vma_start = 0x00;       // vm_start
+    size_t vma_end = 0x08;         // vm_end
+    size_t vma_next = 0x10;        // vm_next (linked list)
+    size_t vma_flags = 0x50;       // vm_flags
+    size_t vma_file = 0x90;        // vm_file pointer
+};
+
+// Known process names from web version
+const std::vector<std::string> KNOWN_PROCESSES = {
+    "systemd", "init", "kthreadd", "kworker", "ksoftirqd", "migration",
+    "rcu_", "sshd", "bash", "NetworkManager", "dbus", "cron", "systemd-",
+    "kswapd", "kauditd", "kcompactd", "khugepaged", "systemd-journal",
+    "systemd-resolved", "systemd-networkd", "vlc", "firefox", "chrome"
+};
+
+class KernelDiscovery {
+public:
+    struct MemorySection {
+        uint64_t start;             // Start virtual address
+        uint64_t end;               // End virtual address
+        uint64_t flags;             // VM flags
+        std::string name;           // Mapped file name (if any)
+    };
+
+    struct PTE {
+        uint64_t va;                // Virtual address
+        uint64_t pa;                // Physical address
+        uint64_t size;              // Page size
+        bool present;
+        bool writable;
+        bool executable;
+    };
+
+    struct ProcessInfo {
+        uint64_t task_addr;        // Physical address of task_struct
+        uint32_t pid;
+        uint32_t tgid;
+        std::string comm;
+        uint64_t mm_addr;           // Kernel VA of mm_struct (or 0 for kernel threads)
+        uint64_t pgd;               // Page Global Directory physical address
+        bool has_mm;
+        bool is_kernel_thread;      // mm == 0 indicates kernel thread
+        std::vector<MemorySection> sections;  // Memory sections from maple tree
+        std::vector<PTE> ptes;      // Page table entries
+    };
+
+    struct KernelInfo {
+        uint64_t swapper_pgd;       // Kernel PGD from TTBR1
+        uint64_t init_task;         // init_task address
+        uint64_t current_task;      // Current task on CPU
+        KernelOffsets offsets;      // Detected/configured offsets
+    };
+
+    KernelDiscovery(const std::string& memFile = "/tmp/haywire-vm-mem",
+                    const std::string& qmpHost = "localhost",
+                    int qmpPort = 4445)
+        : memoryFile(memFile), qmpHost(qmpHost), qmpPort(qmpPort),
+          memFd(-1), memBase(nullptr), qmpSocket(-1) {}
+
+    ~KernelDiscovery() {
+        Cleanup();
+    }
+
+    bool Initialize() {
+        // Open memory file
+        memFd = open(memoryFile.c_str(), O_RDONLY);
+        if (memFd < 0) {
+            std::cerr << "Failed to open memory file: " << memoryFile << std::endl;
+            return false;
+        }
+
+        // Get file size
+        off_t fileSize = lseek(memFd, 0, SEEK_END);
+        if (fileSize < 0) {
+            std::cerr << "Failed to get file size" << std::endl;
+            close(memFd);
+            return false;
+        }
+        memorySize = fileSize;
+
+        // Memory map the file for fast access
+        memBase = mmap(nullptr, memorySize, PROT_READ, MAP_PRIVATE, memFd, 0);
+        if (memBase == MAP_FAILED) {
+            std::cerr << "Failed to mmap memory file" << std::endl;
+            close(memFd);
+            return false;
+        }
+
+        std::cout << "Memory mapped: " << (memorySize / (1024*1024)) << " MB" << std::endl;
+
+        // Connect to QMP
+        if (!ConnectQMP()) {
+            std::cerr << "Warning: QMP connection failed, will use scanning only" << std::endl;
+            // Continue anyway - we can still scan
+        }
+
+        return true;
+    }
+
+    bool DiscoverKernel() {
+        std::cout << "\n=== Kernel Discovery ===" << std::endl;
+
+        // Try to get kernel info from QMP first
+        if (qmpSocket >= 0) {
+            std::cout << "Querying QMP for kernel info..." << std::endl;
+            if (QueryKernelInfo()) {
+                // Successfully got kernel info from QMP
+                std::cout << "QMP query successful" << std::endl;
+            } else {
+                std::cout << "QMP query failed, will use scanning" << std::endl;
+            }
+        }
+
+        // If no QMP, scan for swapper PGD
+        if (kernelInfo.swapper_pgd == 0) {
+            std::cout << "Scanning for swapper PGD..." << std::endl;
+            kernelInfo.swapper_pgd = FindSwapperPGD();
+            if (kernelInfo.swapper_pgd) {
+                std::cout << "Found swapper PGD at 0x"
+                          << std::hex << kernelInfo.swapper_pgd << std::dec << std::endl;
+            }
+        }
+
+        // We don't need init_task - we'll scan for all processes instead
+
+        return kernelInfo.swapper_pgd != 0 || kernelInfo.init_task != 0;
+    }
+
+    bool DiscoverProcesses() {
+        std::cout << "\n=== Process Discovery ===" << std::endl;
+        std::cout << "Scanning memory for task_structs..." << std::endl;
+
+        processes.clear();
+        std::set<uint32_t> seenPids;
+
+        // SLAB offsets where task_structs are commonly found (from web version)
+        const uint64_t SLAB_OFFSETS[] = {0x0, 0x2380, 0x4700};  // 32KB SLAB positions
+        const uint64_t PAGE_STRADDLE_OFFSETS[] = {0x0, 0x380, 0x700};  // Page-straddle offsets
+        const uint64_t PAGE_SIZE = 4096;
+        const uint64_t TASK_STRUCT_SIZE = 9088;  // Exact size from web version
+
+        // Scan entire memory
+        uint64_t scannedMB = 0;
+        uint32_t lastPid = 0;
+        for (uint64_t pageStart = 0; pageStart < memorySize; pageStart += PAGE_SIZE) {
+            // Progress report every 1GB
+            if (pageStart % (1024 * 1024 * 1024) == 0) {
+                scannedMB = pageStart / (1024 * 1024);
+                std::cout << "  Scanned " << scannedMB << "MB... ("
+                          << processes.size() << " processes found)\r" << std::flush;
+            }
+
+            // Try both SLAB offsets and PAGE_STRADDLE offsets
+            std::vector<uint64_t> offsetsToCheck;
+            for (auto off : SLAB_OFFSETS) offsetsToCheck.push_back(off);
+            for (auto off : PAGE_STRADDLE_OFFSETS) offsetsToCheck.push_back(off);
+
+            for (const auto slabOffset : offsetsToCheck) {
+                uint64_t offset = pageStart + slabOffset;
+                if (offset + TASK_STRUCT_SIZE > memorySize) {
+                    continue;
+                }
+
+                ProcessInfo proc;
+                if (CheckTaskStruct(offset, proc)) {
+                    // Avoid duplicates and consecutive identical PIDs (likely same task)
+                    if (seenPids.find(proc.pid) == seenPids.end()) {
+                        seenPids.insert(proc.pid);
+                        processes.push_back(proc);
+
+                        // Debug first few valid processes
+                        if (processes.size() <= 5) {
+                            std::cout << "\n  Found PID " << proc.pid << " (" << proc.comm << ")"
+                                      << " at file offset 0x" << std::hex << offset
+                                      << " (PA 0x" << (offset + 0x40000000) << ")" << std::dec;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Count kernel vs user processes
+        int kernelThreads = 0;
+        int userProcesses = 0;
+        for (const auto& proc : processes) {
+            if (proc.is_kernel_thread) kernelThreads++;
+            else userProcesses++;
+        }
+
+        std::cout << "\nFound " << processes.size() << " unique processes:" << std::endl;
+        std::cout << "  Kernel threads (mm==0): " << kernelThreads << std::endl;
+        std::cout << "  User processes (mm!=0): " << userProcesses << std::endl;
+
+        // Display first 20 processes
+        std::cout << "\nFirst 20 processes:" << std::endl;
+        std::cout << "PID     | Name             | Type   | PGD" << std::endl;
+        std::cout << "--------|------------------|--------|----------------" << std::endl;
+
+        int displayed = 0;
+        for (const auto& proc : processes) {
+            if (displayed >= 20) break;
+
+            std::cout << std::setw(7) << proc.pid
+                      << " | " << std::setw(16) << proc.comm
+                      << " | " << (proc.is_kernel_thread ? "Kernel" : "User  ")
+                      << " | ";
+
+            if (proc.pgd) {
+                std::cout << "0x" << std::hex << proc.pgd << std::dec;
+            } else {
+                std::cout << "NULL";
+            }
+            std::cout << std::endl;
+            displayed++;
+        }
+
+        return !processes.empty();
+    }
+
+    const std::vector<ProcessInfo>& GetProcesses() const { return processes; }
+    const KernelInfo& GetKernelInfo() const { return kernelInfo; }
+
+    // Walk page tables for a process to extract PTEs
+    void WalkProcessPageTables(ProcessInfo& proc) {
+        if (!proc.pgd || proc.is_kernel_thread) return;
+
+        // Walk all PGD entries - with ASLR, user space can use any index
+        for (int pgdIdx = 0; pgdIdx < 512; pgdIdx++) {
+            uint64_t pgdOffset = (proc.pgd - 0x40000000) + (pgdIdx * 8);
+            if (pgdOffset + 8 > memorySize) continue;
+
+            uint64_t pgdEntry = *(uint64_t*)((uint8_t*)memBase + pgdOffset);
+            if (!pgdEntry || (pgdEntry & 3) == 0) continue;
+
+            // Walk through PUD, PMD, PTE levels
+            WalkPudLevel(pgdEntry, pgdIdx, proc.ptes);
+        }
+    }
+
+    void WalkPudLevel(uint64_t pudTableAddr, int pgdIdx, std::vector<PTE>& ptes) {
+        // Extract physical address from page table entry (bits [47:12])
+        uint64_t pudBase = pudTableAddr & 0x0000FFFFFFFFF000ULL;
+
+        for (int pudIdx = 0; pudIdx < 512; pudIdx++) {
+            uint64_t pudPhysAddr = pudBase + (pudIdx * 8);
+            uint64_t pudOffset = pudPhysAddr >= 0x40000000
+                ? pudPhysAddr - 0x40000000
+                : pudPhysAddr;
+
+            if (pudOffset + 8 > memorySize) continue;
+            uint64_t pudEntry = *(uint64_t*)((uint8_t*)memBase + pudOffset);
+
+            if (!pudEntry || (pudEntry & 3) == 0) continue;
+
+            uint32_t entryType = pudEntry & 3;
+            if (entryType == 1) {
+                // 1GB huge page
+                uint64_t va = ((uint64_t)pgdIdx << 39) | ((uint64_t)pudIdx << 30);
+
+                // Skip kernel VAs (those with bits 63-48 all set)
+                if ((va >> 48) == 0xFFFF) continue;
+
+                uint32_t pudFlags = pudEntry & 0xFFF;
+                uint64_t pa = pudEntry & 0x0000FFFFC0000000ULL;
+
+                PTE pte;
+                pte.va = va;
+                pte.pa = pa;
+                pte.size = 0x40000000;  // 1GB
+                pte.present = (pudFlags & 1) != 0;
+                pte.writable = (pudFlags & 0x80) == 0;
+                pte.executable = (pudFlags & 0x10) == 0;
+                ptes.push_back(pte);
+            } else if (entryType == 3) {
+                // Table descriptor, continue to PMD
+                WalkPmdLevel(pudEntry, pgdIdx, pudIdx, ptes);
+            }
+        }
+    }
+
+    void WalkPmdLevel(uint64_t pmdTableAddr, int pgdIdx, int pudIdx, std::vector<PTE>& ptes) {
+        // Extract physical address from page table entry (bits [47:12])
+        uint64_t pmdBase = pmdTableAddr & 0x0000FFFFFFFFF000ULL;
+
+        for (int pmdIdx = 0; pmdIdx < 512; pmdIdx++) {
+            uint64_t pmdPhysAddr = pmdBase + (pmdIdx * 8);
+            uint64_t pmdOffset = pmdPhysAddr >= 0x40000000
+                ? pmdPhysAddr - 0x40000000
+                : pmdPhysAddr;
+
+            if (pmdOffset + 8 > memorySize) continue;
+            uint64_t pmdEntry = *(uint64_t*)((uint8_t*)memBase + pmdOffset);
+
+            if (!pmdEntry || (pmdEntry & 3) == 0) continue;
+
+            uint32_t entryType = pmdEntry & 3;
+            if (entryType == 1) {
+                // 2MB huge page
+                uint64_t va = ((uint64_t)pgdIdx << 39) | ((uint64_t)pudIdx << 30) | ((uint64_t)pmdIdx << 21);
+
+                // Skip kernel VAs
+                if ((va >> 48) == 0xFFFF) continue;
+
+                uint32_t pmdFlags = pmdEntry & 0xFFF;
+                uint64_t pa = pmdEntry & 0x0000FFFFFFE00000ULL;
+
+                PTE pte;
+                pte.va = va;
+                pte.pa = pa;
+                pte.size = 0x200000;  // 2MB
+                pte.present = (pmdFlags & 1) != 0;
+                pte.writable = (pmdFlags & 0x80) == 0;
+                pte.executable = (pmdFlags & 0x10) == 0;
+                ptes.push_back(pte);
+            } else if (entryType == 3) {
+                // Table descriptor, continue to PTE
+                WalkPteLevel(pmdEntry, pgdIdx, pudIdx, pmdIdx, ptes);
+            }
+        }
+    }
+
+    void WalkPteLevel(uint64_t pteTableAddr, int pgdIdx, int pudIdx, int pmdIdx, std::vector<PTE>& ptes) {
+        // Extract physical address from page table entry (bits [47:12])
+        uint64_t pteBase = pteTableAddr & 0x0000FFFFFFFFF000ULL;
+
+        for (int pteIdx = 0; pteIdx < 512; pteIdx++) {
+            uint64_t ptePhysAddr = pteBase + (pteIdx * 8);
+            uint64_t pteOffset = ptePhysAddr >= 0x40000000
+                ? ptePhysAddr - 0x40000000
+                : ptePhysAddr;
+
+            if (pteOffset + 8 > memorySize) continue;
+            uint64_t pteEntry = *(uint64_t*)((uint8_t*)memBase + pteOffset);
+
+            if (!pteEntry || (pteEntry & 3) == 0) continue;
+
+            // Regular 4KB page
+            uint64_t va = ((uint64_t)pgdIdx << 39) | ((uint64_t)pudIdx << 30) |
+                          ((uint64_t)pmdIdx << 21) | ((uint64_t)pteIdx << 12);
+
+            // With modern ARM64 + ASLR, user processes can use high addresses
+            // Only skip actual kernel space addresses (0xFFFF...)
+            if ((va >> 48) == 0xFFFF) continue;
+
+            uint32_t pteFlags = pteEntry & 0xFFF;
+            uint64_t pa = pteEntry & 0x0000FFFFFFFFF000ULL;
+
+            PTE pte;
+            pte.va = va;
+            pte.pa = pa;
+            pte.size = 0x1000;  // 4KB
+            pte.present = (pteFlags & 1) != 0;
+            pte.writable = (pteFlags & 0x80) == 0;
+            pte.executable = (pteFlags & 0x10) == 0;
+            ptes.push_back(pte);
+        }
+    }
+
+    // Extract PGD for each process
+    void ExtractProcessPGDs() {
+        std::cout << "\n=== Extracting Process PGDs ===" << std::endl;
+
+        int successCount = 0;
+        int failCount = 0;
+
+        // Debug: Check if we have swapper PGD
+        if (kernelInfo.swapper_pgd == 0) {
+            std::cout << "ERROR: No swapper PGD found, cannot translate kernel VAs" << std::endl;
+            return;
+        }
+        std::cout << "Using swapper PGD: 0x" << std::hex << kernelInfo.swapper_pgd << std::dec << std::endl;
+
+        for (auto& proc : processes) {
+            if (proc.is_kernel_thread) continue;  // Skip kernel threads
+
+            // Debug first few
+            if (failCount < 3) {
+                std::cout << "\nTranslating mm_struct for PID " << proc.pid << " (" << proc.comm << ")" << std::endl;
+                std::cout << "  mm_struct VA: 0x" << std::hex << proc.mm_addr << std::dec << std::endl;
+            }
+
+            // Translate mm_struct VA to PA using swapper PGD
+            uint64_t mmPA = TranslateVA(proc.mm_addr, kernelInfo.swapper_pgd);
+            if (!mmPA) {
+                if (failCount < 3) {
+                    std::cout << "  Failed to translate mm_struct VA to PA" << std::endl;
+                }
+                failCount++;
+                continue;
+            }
+
+            if (successCount < 3) {
+                std::cout << "  mm_struct PA: 0x" << std::hex << mmPA << std::dec << std::endl;
+            }
+
+            // Read PGD from mm_struct at offset 0x68
+            uint64_t mmOffset = mmPA - 0x40000000;
+            if (mmOffset + kernelInfo.offsets.mm_pgd + 8 > memorySize) {
+                failCount++;
+                continue;
+            }
+
+            uint64_t pgdVA = *(uint64_t*)((uint8_t*)memBase + mmOffset + kernelInfo.offsets.mm_pgd);
+
+            // The PGD is stored as a kernel VA, translate it to PA
+            uint64_t pgdPA = TranslateVA(pgdVA, kernelInfo.swapper_pgd);
+            if (!pgdPA) {
+                if (failCount < 3) {
+                    std::cout << "  Failed to translate PGD VA 0x" << std::hex << pgdVA
+                              << " to PA" << std::dec << std::endl;
+                }
+                failCount++;
+                continue;
+            }
+
+            proc.pgd = pgdPA;  // Store the physical address
+
+            // Try to walk maple tree for memory sections
+            WalkMapleTree(mmPA, proc.sections);
+
+            // Walk page tables to extract PTEs
+            WalkProcessPageTables(proc);
+
+            successCount++;
+
+            // Show first few
+            if (successCount <= 5) {
+                std::cout << "PID " << proc.pid << " (" << proc.comm << "): PGD = 0x"
+                          << std::hex << proc.pgd << std::dec << " (PA)";
+                if (!proc.sections.empty()) {
+                    std::cout << ", " << proc.sections.size() << " memory sections";
+                }
+                std::cout << std::endl;
+            }
+        }
+
+        std::cout << "\nExtracted PGDs: " << successCount << " success, "
+                  << failCount << " failed" << std::endl;
+    }
+
+private:
+    std::string memoryFile;
+    std::string qmpHost;
+    int qmpPort;
+    int memFd;
+    void* memBase;
+    size_t memorySize;
+    int qmpSocket;
+
+    KernelInfo kernelInfo;
+    std::vector<ProcessInfo> processes;
+
+    void Cleanup() {
+        if (memBase && memBase != MAP_FAILED) {
+            munmap(memBase, memorySize);
+        }
+        if (memFd >= 0) {
+            close(memFd);
+        }
+        if (qmpSocket >= 0) {
+            close(qmpSocket);
+        }
+    }
+
+    bool ConnectQMP() {
+        qmpSocket = socket(AF_INET, SOCK_STREAM, 0);
+        if (qmpSocket < 0) {
+            std::cerr << "Failed to create socket" << std::endl;
+            return false;
+        }
+
+        struct sockaddr_in addr;
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(qmpPort);
+        // Use 127.0.0.1 if "localhost" is provided
+        std::string hostIP = qmpHost;
+        if (hostIP == "localhost") {
+            hostIP = "127.0.0.1";
+        }
+        addr.sin_addr.s_addr = inet_addr(hostIP.c_str());
+
+        std::cout << "Connecting to QMP at " << qmpHost << ":" << qmpPort << "..." << std::endl;
+
+        if (connect(qmpSocket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            std::cerr << "Failed to connect to QMP: " << strerror(errno) << std::endl;
+            close(qmpSocket);
+            qmpSocket = -1;
+            return false;
+        }
+        std::cout << "Connected to QMP successfully" << std::endl;
+
+        // Read QMP greeting
+        char buffer[4096];
+        recv(qmpSocket, buffer, sizeof(buffer), 0);
+
+        // Enter command mode
+        std::string cmd = "{\"execute\": \"qmp_capabilities\"}\n";
+        send(qmpSocket, cmd.c_str(), cmd.length(), 0);
+        recv(qmpSocket, buffer, sizeof(buffer), 0);
+
+        return true;
+    }
+
+    // Simple QMP query without JSON library
+    bool QueryKernelInfo() {
+        if (qmpSocket < 0) return false;
+
+        // Send query-kernel-info command
+        std::string cmd = "{\"execute\": \"query-kernel-info\", \"arguments\": {\"cpu-index\": 0}}\n";
+        send(qmpSocket, cmd.c_str(), cmd.length(), 0);
+
+        char buffer[8192];
+        int received = recv(qmpSocket, buffer, sizeof(buffer)-1, 0);
+        if (received <= 0) return false;
+
+        buffer[received] = '\0';
+        std::string response(buffer);
+
+        // Parse ttbr1 (swapper PGD) from response manually
+        size_t ttbr1Pos = response.find("\"ttbr1\":");
+        if (ttbr1Pos != std::string::npos) {
+            // Find the number after "ttbr1":
+            size_t start = ttbr1Pos + 8;  // Length of ""ttbr1":"
+            while (start < response.length() && (response[start] == ' ' || response[start] == '\t')) start++;
+
+            // Read the number
+            uint64_t value = 0;
+            size_t end = start;
+            while (end < response.length() && (isdigit(response[end]) || response[end] == 'x' ||
+                   (response[end] >= 'a' && response[end] <= 'f') ||
+                   (response[end] >= 'A' && response[end] <= 'F'))) {
+                end++;
+            }
+
+            if (end > start) {
+                std::string numStr = response.substr(start, end - start);
+                value = std::stoull(numStr, nullptr, 0);
+                kernelInfo.swapper_pgd = value;
+                std::cout << "QMP: Found swapper PGD (TTBR1) = 0x"
+                          << std::hex << value << std::dec << std::endl;
+            }
+        }
+
+        // Parse current-task
+        size_t taskPos = response.find("\"current-task\":");
+        if (taskPos != std::string::npos) {
+            size_t start = taskPos + 16;  // Length of ""current-task":"
+            while (start < response.length() && (response[start] == ' ' || response[start] == '\t')) start++;
+
+            uint64_t value = 0;
+            size_t end = start;
+            while (end < response.length() && (isdigit(response[end]) || response[end] == 'x' ||
+                   (response[end] >= 'a' && response[end] <= 'f') ||
+                   (response[end] >= 'A' && response[end] <= 'F'))) {
+                end++;
+            }
+
+            if (end > start) {
+                std::string numStr = response.substr(start, end - start);
+                value = std::stoull(numStr, nullptr, 0);
+                kernelInfo.current_task = value;
+                std::cout << "QMP: Found current task = 0x"
+                          << std::hex << value << std::dec << std::endl;
+            }
+        }
+
+        return kernelInfo.swapper_pgd != 0;
+    }
+
+    uint64_t FindSwapperPGD() {
+        // Scan for page tables with specific patterns
+        // Looking for tables with many PUD entries pointing to contiguous RAM
+
+        const uint64_t PAGE_SIZE = 4096;
+        const uint64_t TABLE_ENTRY_VALID = 0x3;
+
+        struct Candidate {
+            uint64_t addr;
+            int score;
+        };
+        std::vector<Candidate> candidates;
+
+        // Scan memory regions where kernel structures typically reside
+        std::vector<std::pair<uint64_t, uint64_t>> scanRanges = {
+            {0xB0000000, 0xC0000000},    // ~3GB range
+            {0x130000000, 0x140000000},  // ~5GB range
+        };
+
+        for (const auto& range : scanRanges) {
+            uint64_t startPA = range.first;
+            uint64_t endPA = range.second;
+
+            // Ensure we don't go beyond mapped memory
+            if (startPA >= memorySize) continue;
+            if (endPA > memorySize) endPA = memorySize;
+
+            for (uint64_t pa = startPA; pa < endPA; pa += PAGE_SIZE) {
+                uint64_t* table = (uint64_t*)((uint8_t*)memBase + pa);
+
+                // Count valid entries pointing to RAM
+                int validEntries = 0;
+                int pudEntries = 0;
+
+                for (int i = 0; i < 512; i++) {
+                    uint64_t entry = table[i];
+                    if ((entry & TABLE_ENTRY_VALID) == TABLE_ENTRY_VALID) {
+                        validEntries++;
+
+                        // Check if it points to a PUD table
+                        uint64_t pudPA = entry & 0xFFFFFFFFF000ULL;
+                        if (pudPA >= 0x40000000 && pudPA < 0x140000000) {
+                            pudEntries++;
+                        }
+                    }
+                }
+
+                // Kernel PGD typically has 3-5 PUD entries for RAM mapping
+                if (pudEntries >= 2 && pudEntries <= 10 && validEntries < 50) {
+                    candidates.push_back({pa, pudEntries * 10 + validEntries});
+                }
+            }
+        }
+
+        // Return highest scoring candidate
+        if (!candidates.empty()) {
+            std::sort(candidates.begin(), candidates.end(),
+                     [](const Candidate& a, const Candidate& b) {
+                         return a.score > b.score;
+                     });
+            return candidates[0].addr;
+        }
+
+        return 0;
+    }
+
+    uint64_t FindInitTask() {
+        // Scan for task_struct with PID 0 and comm="swapper"
+        const char* SWAPPER_NAME = "swapper";
+
+        // Common memory regions for kernel structures
+        std::vector<std::pair<uint64_t, uint64_t>> scanRanges = {
+            {0x40000000, 0x80000000},    // 1-2GB
+            {0xB0000000, 0xC0000000},    // ~3GB
+            {0x130000000, 0x140000000},  // ~5GB
+        };
+
+        for (const auto& range : scanRanges) {
+            uint64_t startPA = range.first;
+            uint64_t endPA = range.second;
+
+            if (startPA >= memorySize) continue;
+            if (endPA > memorySize) endPA = memorySize;
+
+            for (uint64_t pa = startPA; pa < endPA; pa += 8) {
+                uint8_t* ptr = (uint8_t*)memBase + pa;
+
+                // Check for PID 0 at expected offset
+                uint32_t* pidPtr = (uint32_t*)(ptr + kernelInfo.offsets.pid);
+                if (*pidPtr != 0) continue;
+
+                // Check for "swapper" at comm offset
+                char* commPtr = (char*)(ptr + kernelInfo.offsets.comm);
+                if (strncmp(commPtr, SWAPPER_NAME, strlen(SWAPPER_NAME)) == 0) {
+                    // Validate it looks like a task_struct
+                    // Check that tasks list pointers are in kernel memory range
+                    uint64_t* tasksNext = (uint64_t*)(ptr + kernelInfo.offsets.tasks_next);
+                    if (*tasksNext > 0x40000000 && *tasksNext < 0x200000000) {
+                        return pa;
+                    }
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    bool IsKernelPointer(uint64_t ptr) {
+        // Kernel pointers have top 16 bits = 0xFFFF
+        return (ptr >> 48) == 0xFFFF;
+    }
+
+    bool ValidateLinkedList(uint8_t* task) {
+        uint64_t* nextPtr = (uint64_t*)(task + kernelInfo.offsets.tasks_list);
+        uint64_t* prevPtr = (uint64_t*)(task + kernelInfo.offsets.tasks_list + 8);
+
+        if (*nextPtr == 0 || *prevPtr == 0) return false;
+        if (!IsKernelPointer(*nextPtr) || !IsKernelPointer(*prevPtr)) return false;
+
+        return true;
+    }
+
+    int CountKernelPointers(uint8_t* task) {
+        int count = 0;
+        // Check first 512 bytes for kernel pointers
+        for (uint64_t checkOffset = 0; checkOffset < 512; checkOffset += 8) {
+            uint64_t* ptr = (uint64_t*)(task + checkOffset);
+            if (IsKernelPointer(*ptr)) {
+                count++;
+                if (count >= 10) break;
+            }
+        }
+        return count;
+    }
+
+    int CountCaseTransitions(const std::string& str) {
+        int transitions = 0;
+        for (size_t i = 1; i < str.length(); i++) {
+            bool prevIsUpper = (str[i-1] >= 'A' && str[i-1] <= 'Z');
+            bool currIsUpper = (str[i] >= 'A' && str[i] <= 'Z');
+            bool prevIsLower = (str[i-1] >= 'a' && str[i-1] <= 'z');
+            bool currIsLower = (str[i] >= 'a' && str[i] <= 'z');
+
+            if ((prevIsUpper && currIsLower) || (prevIsLower && currIsUpper)) {
+                transitions++;
+            }
+        }
+        return transitions;
+    }
+
+    bool IsPrintableString(const std::string& str) {
+        // Exact implementation from web version
+        if (str.length() < 2 || str.length() > 15) return false;
+
+        int alphaNum = 0;
+        int special = 0;
+        int invalid = 0;
+
+        for (char c : str) {
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+                alphaNum++;
+            } else if (c == '/' || c == '-' || c == '_' || c == ':' || c == '.' || c == '[' || c == ']') {
+                special++;
+            } else if (c < ' ' || c > '~') {
+                invalid++;
+            }
+        }
+
+        // Must have mostly alphanumeric characters
+        return alphaNum >= 2 && invalid == 0 && (alphaNum + special) >= str.length() * 0.8;
+    }
+
+    bool CheckTaskStruct(uint64_t offset, ProcessInfo& info) {
+        if (offset + 9088 >= memorySize) return false;  // TASK_STRUCT_SIZE
+
+        uint8_t* task = (uint8_t*)memBase + offset;
+
+        // Read potential PID
+        uint32_t pid = *(uint32_t*)(task + kernelInfo.offsets.pid);
+
+        // Basic PID validation
+        if (pid == 0 || pid > 32768) return false;  // PID 0 is swapper, max is typically 32768
+
+        // Read comm (process name) - match web version exactly
+        char* comm = (char*)(task + kernelInfo.offsets.comm);
+
+        // Find null terminator (web version uses indexOf(0))
+        int nullIdx = -1;
+        for (int i = 0; i < 16; i++) {
+            if (comm[i] == 0) {
+                nullIdx = i;
+                break;
+            }
+        }
+
+        // Web version: returns null if nullIdx === 0 || nullIdx > 15
+        // Note: nullIdx == -1 means no null found, which should fail the > 15 check
+        // But in JS, indexOf returns -1 which is NOT > 15, so this should pass
+        // Actually the web version uses Uint8Array.indexOf() which returns -1 if not found
+        // And -1 is NOT > 15, so only nullIdx === 0 would fail here for empty string
+        if (nullIdx == 0) {
+            return false;  // Empty string
+        }
+        if (nullIdx == -1) {
+            return false;  // No null terminator in 16 bytes
+        }
+
+        // Check ALL characters are printable ASCII (0x20-0x7E)
+        // Web version uses regex: /^[\x20-\x7E]+$/
+        for (int i = 0; i < nullIdx; i++) {
+            if (comm[i] < 0x20 || comm[i] > 0x7E) {
+                return false;  // Non-printable character
+            }
+        }
+
+        std::string name(comm, nullIdx);
+
+        // Check if it's a known process
+        bool isKnown = false;
+        for (const auto& known : KNOWN_PROCESSES) {
+            if (name.find(known) != std::string::npos) {
+                isKnown = true;
+                break;
+            }
+        }
+
+        // Check if name is valid - be ULTRA strict (from web version)
+        if (!IsPrintableString(name)) {
+            return false;
+        }
+
+        // Reject very short names unless known
+        if (name.length() < 3 && !isKnown) {
+            return false;
+        }
+
+        // Must match pattern: ^[a-zA-Z\/][a-zA-Z0-9\-_\/\[\]:\.\$]*$
+        if (name.length() > 0) {
+            char first = name[0];
+            if (!((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '/')) {
+                return false;
+            }
+            for (size_t i = 1; i < name.length(); i++) {
+                char c = name[i];
+                if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                      (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+                      c == '/' || c == '[' || c == ']' || c == ':' ||
+                      c == '.' || c == '$')) {
+                    return false;
+                }
+            }
+        }
+
+        // Require at least 2 alphanumeric characters
+        int alphaCount = 0;
+        for (char c : name) {
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+                alphaCount++;
+            }
+        }
+        if (alphaCount < 2) {
+            return false;
+        }
+
+        // Check case transitions for mixed-case names
+        if (!isKnown && name.length() > 2) {
+            int upperCount = 0, lowerCount = 0;
+            for (char c : name) {
+                if (c >= 'A' && c <= 'Z') upperCount++;
+                if (c >= 'a' && c <= 'z') lowerCount++;
+            }
+
+            if (upperCount > 0 && lowerCount > 0) {
+                int transitions = CountCaseTransitions(name);
+                if (transitions > name.length() / 2) {
+                    return false;  // Too many case transitions
+                }
+            }
+        }
+
+        // Check kernel pointer count FIRST - web version requires at least 3
+        int kernelPtrCount = CountKernelPointers(task);
+        if (kernelPtrCount < 3) {
+            return false;  // Web version early rejects if < 3 kernel pointers
+        }
+
+        // Calculate validity score
+        int validityScore = 0;
+
+        if (isKnown) validityScore += 3;
+
+        bool hasValidList = ValidateLinkedList(task);
+        if (hasValidList) validityScore += 2;
+
+        if (kernelPtrCount >= 5) validityScore += 2;
+        if (kernelPtrCount >= 10) validityScore += 1;
+
+        // Check mm pointer
+        uint64_t mmPtr = *(uint64_t*)(task + kernelInfo.offsets.mm);
+        if (mmPtr == 0 || IsKernelPointer(mmPtr)) {
+            validityScore += 1;
+        }
+
+        // Require score >= 3
+        if (validityScore < 3) {
+            return false;
+        }
+
+        // Additional mm_struct validation
+        if (mmPtr != 0) {
+            // For user processes, mm should be kernel VA or in guest RAM range
+            if (!IsKernelPointer(mmPtr)) {
+                // Check if it's in guest RAM range (0x40000000 to 0x1C0000000 for 6GB)
+                // Physical addresses in guest RAM would be 0x40000000 to 0x1C0000000
+                if (mmPtr < 0x40000000 || mmPtr >= 0x1C0000000) {
+                    return false;  // Neither kernel VA nor plausible physical address
+                }
+            }
+        }
+
+        // Check tasks list pointers look valid (should be kernel addresses)
+        uint64_t tasksNext = *(uint64_t*)(task + kernelInfo.offsets.tasks_next);
+        uint64_t tasksPrev = *(uint64_t*)(task + kernelInfo.offsets.tasks_prev);
+
+        // Tasks pointers are now validated in ValidateLinkedList
+
+        // If we get here, it's likely a valid task_struct
+        // Store as physical address (file offset + GUEST_RAM_START)
+        info.task_addr = offset + 0x40000000;  // Convert to physical address
+        info.pid = pid;
+
+        // Process name already extracted and validated above
+        info.comm = name;
+
+        // mm_struct pointer was already read earlier for validation
+
+        // Store mm_struct info
+        info.mm_addr = mmPtr;  // Store the kernel VA (or 0 for kernel threads)
+        info.has_mm = (mmPtr != 0);
+        info.is_kernel_thread = (mmPtr == 0);
+        info.pgd = 0;  // Would require VA->PA translation to read from mm_struct
+
+        return true;
+    }
+
+    uint64_t GetNextTask(uint64_t currentTaskPA) {
+        if (currentTaskPA >= memorySize) return 0;
+
+        uint8_t* task = (uint8_t*)memBase + currentTaskPA;
+        uint64_t nextPtr = *(uint64_t*)(task + kernelInfo.offsets.tasks_next);
+
+        // The tasks list pointer points to the tasks field of the next task_struct
+        // We need to subtract the offset to get the actual task_struct address
+        if (nextPtr > kernelInfo.offsets.tasks_next) {
+            return nextPtr - kernelInfo.offsets.tasks_next;
+        }
+
+        return 0;
+    }
+
+    // Page table walking functions (from web version)
+    uint64_t TranslateVA(uint64_t va, uint64_t pgdBase) {
+        // ARM64 page table translation (4KB pages, 48-bit VA)
+        // Level 0 (PGD): bits 47:39
+        // Level 1 (PUD): bits 38:30
+        // Level 2 (PMD): bits 29:21
+        // Level 3 (PTE): bits 20:12
+        // Offset: bits 11:0
+
+        const uint64_t VALID_BIT = 1;
+        const uint64_t TABLE_BIT = 2;  // For non-leaf entries
+        const uint64_t PA_MASK = 0x0000FFFFFFFFF000ULL;
+
+        // Extract indices
+        uint32_t pgdIndex = (va >> 39) & 0x1FF;
+        uint32_t pudIndex = (va >> 30) & 0x1FF;
+        uint32_t pmdIndex = (va >> 21) & 0x1FF;
+        uint32_t pteIndex = (va >> 12) & 0x1FF;
+        uint32_t pageOffset = va & 0xFFF;
+
+        // Read PGD entry
+        // pgdBase should be a physical address in guest RAM
+        if (pgdBase < 0x40000000 || pgdBase >= 0x40000000 + memorySize) {
+            // Invalid PGD base address
+            return 0;
+        }
+        uint64_t pgdOffset = (pgdBase - 0x40000000) + (pgdIndex * 8);
+        if (pgdOffset + 8 > memorySize) return 0;
+        uint64_t pgdEntry = *(uint64_t*)((uint8_t*)memBase + pgdOffset);
+
+        if (!(pgdEntry & VALID_BIT)) return 0;
+        if (!(pgdEntry & TABLE_BIT)) return 0;  // Not a table descriptor
+
+        // Read PUD entry
+        uint64_t pudBase = pgdEntry & PA_MASK;
+        uint64_t pudOffset = (pudBase - 0x40000000) + (pudIndex * 8);
+        if (pudOffset + 8 > memorySize) return 0;
+        uint64_t pudEntry = *(uint64_t*)((uint8_t*)memBase + pudOffset);
+
+        if (!(pudEntry & VALID_BIT)) return 0;
+
+        // Check if PUD is a huge page (1GB)
+        if (!(pudEntry & TABLE_BIT)) {
+            // 1GB page
+            return (pudEntry & 0x0000FFFFC0000000ULL) | (va & 0x3FFFFFFF);
+        }
+
+        // Read PMD entry
+        uint64_t pmdBase = pudEntry & PA_MASK;
+        uint64_t pmdOffset = (pmdBase - 0x40000000) + (pmdIndex * 8);
+        if (pmdOffset + 8 > memorySize) return 0;
+        uint64_t pmdEntry = *(uint64_t*)((uint8_t*)memBase + pmdOffset);
+
+        if (!(pmdEntry & VALID_BIT)) return 0;
+
+        // Check if PMD is a huge page (2MB)
+        if (!(pmdEntry & TABLE_BIT)) {
+            // 2MB page
+            return (pmdEntry & 0x0000FFFFFFE00000ULL) | (va & 0x1FFFFF);
+        }
+
+        // Read PTE entry
+        uint64_t pteBase = pmdEntry & PA_MASK;
+        uint64_t pteOffset = (pteBase - 0x40000000) + (pteIndex * 8);
+        if (pteOffset + 8 > memorySize) return 0;
+        uint64_t pteEntry = *(uint64_t*)((uint8_t*)memBase + pteOffset);
+
+        if (!(pteEntry & VALID_BIT)) return 0;
+
+        // 4KB page
+        return (pteEntry & PA_MASK) | pageOffset;
+    }
+
+    // Walk maple tree to get memory sections (VMAs)
+    bool WalkMapleTree(uint64_t mmPA, std::vector<MemorySection>& sections) {
+        // Read maple tree root at mm_struct + 0x40
+        uint64_t mtOffset = mmPA - 0x40000000 + 0x40;
+        if (mtOffset + 0x10 > memorySize) {
+            return false;
+        }
+
+        // The actual root node is at offset 0x8 within maple_tree
+        uint64_t rootPtrVA = *(uint64_t*)((uint8_t*)memBase + mtOffset + 0x8);
+        if (!rootPtrVA || !IsKernelPointer(rootPtrVA)) {
+            return false;
+        }
+
+        // Walk the maple tree starting from root
+        WalkMapleNode(rootPtrVA, sections, 0);
+        return !sections.empty();
+    }
+
+    void WalkMapleNode(uint64_t nodePtr, std::vector<MemorySection>& sections, int depth) {
+        if (!nodePtr || nodePtr == 0 || depth > 15) {
+            return; // Prevent infinite recursion
+        }
+
+        // Maple nodes have type encoding in low 8 bits (MAPLE_NODE_MASK = 0xFF)
+        // The kernel uses mte_to_node() to clean pointers
+        const uint64_t MAPLE_NODE_MASK = 0xFF;
+        uint32_t nodeType = nodePtr & MAPLE_NODE_MASK;
+        uint64_t cleanNodePtr = nodePtr & ~MAPLE_NODE_MASK;
+
+        // Extract maple_type using kernel's exact method:
+        // mte_node_type() = (entry >> MAPLE_NODE_TYPE_SHIFT) & MAPLE_NODE_TYPE_MASK
+        const int MAPLE_NODE_TYPE_SHIFT = 3;
+        const int MAPLE_NODE_TYPE_MASK = 0x0F;
+        uint32_t mapleType = (nodePtr >> MAPLE_NODE_TYPE_SHIFT) & MAPLE_NODE_TYPE_MASK;
+
+        // enum maple_type values from kernel
+        const uint32_t MAPLE_DENSE = 0;
+        const uint32_t MAPLE_LEAF_64 = 1;
+        const uint32_t MAPLE_RANGE_64 = 2;
+        const uint32_t MAPLE_ARANGE_64 = 3;
+
+        // THE CRITICAL TEST from kernel: ma_is_leaf(type) = type < maple_range_64
+        bool isLeafNode = mapleType < MAPLE_RANGE_64;  // type 0 or 1 = leaf
+        bool isInternalNode = !isLeafNode;              // type 2 or 3 = internal
+
+        // Translate kernel VA to physical address
+        uint64_t actualNodePA;
+        if (IsKernelPointer(cleanNodePtr)) {
+            actualNodePA = TranslateVA(cleanNodePtr, kernelInfo.swapper_pgd);
+            if (!actualNodePA) {
+                return; // Can't translate
+            }
+        } else {
+            actualNodePA = cleanNodePtr;
+        }
+
+        if (actualNodePA < 0x40000000 || actualNodePA >= 0x40000000 + memorySize) {
+            return; // Invalid physical address
+        }
+
+        uint64_t nodeOffset = actualNodePA - 0x40000000;
+
+        // CRITICAL DISTINCTION: Internal nodes vs Leaf nodes
+        // Internal nodes have slots pointing to child nodes
+        // Leaf nodes have slots pointing to actual data (vm_area_structs)
+
+        int numSlots;
+        int slotsOffset;
+        int metadataOffset;
+
+        if (mapleType == MAPLE_ARANGE_64) {
+            // maple_arange_64 - ALWAYS an internal node!
+            numSlots = 10;
+            slotsOffset = 80;
+            metadataOffset = 240;
+        } else if (mapleType == MAPLE_RANGE_64) {
+            // maple_range_64 - ALWAYS an internal node!
+            numSlots = 16;
+            slotsOffset = 128;
+            metadataOffset = 256;
+        } else if (isLeafNode) {
+            // Leaf node - contains BOTH pivots (keys) and values (vm_area_struct pointers)
+            if (mapleType == MAPLE_DENSE) {
+                // maple_dense stores values inline
+                numSlots = 15;
+                slotsOffset = 8;  // Values start right after header
+                metadataOffset = 248;
+            } else {
+                // maple_leaf_64 has complex structure:
+                // [0x00-0x7F]: Pivots (16 x 8 bytes = 128 bytes)
+                // [0x80-0xFF]: Slots (16 x 8 bytes = 128 bytes)
+                // [0x100+]: Metadata
+                numSlots = 16;
+                slotsOffset = 128;  // Skip pivot array, start at slots
+                metadataOffset = 256;
+            }
+        } else {
+            // Unknown type - try to handle as potential data node
+            numSlots = 16;
+            slotsOffset = 128;
+            metadataOffset = 256;
+        }
+
+        // Read metadata to get actual slot count
+        if (nodeOffset + metadataOffset + 16 <= memorySize) {
+            uint8_t* metadata = (uint8_t*)memBase + nodeOffset + metadataOffset;
+            // For leaf nodes, metadata[0] is often max_index
+            if (metadata[0] > 0 && metadata[0] < numSlots) {
+                numSlots = metadata[0] + 1;
+            }
+        }
+
+        // Process slots based on whether this is an internal or leaf node
+        for (int i = 0; i < numSlots; i++) {
+            if (nodeOffset + slotsOffset + (i + 1) * 8 > memorySize) break;
+
+            uint64_t slotPtr = *(uint64_t*)((uint8_t*)memBase + nodeOffset + slotsOffset + i * 8);
+            if (!slotPtr || slotPtr == 0) {
+                continue;
+            }
+
+            // For maple dense nodes, check if we're looking at key-value pairs
+            if (isLeafNode && mapleType == MAPLE_DENSE) {
+                if (i % 2 == 0 && i + 1 < numSlots) {
+                    // This is a key (address range), next slot is the value (VMA pointer)
+                    uint64_t nextSlot = *(uint64_t*)((uint8_t*)memBase + nodeOffset + slotsOffset + (i + 1) * 8);
+                    if (nextSlot && IsKernelPointer(nextSlot)) {
+                        // Try to extract VMA from the value (odd slot)
+                        uint64_t translated = TranslateVA(nextSlot, kernelInfo.swapper_pgd);
+                        if (translated) {
+                            ExtractVMA(translated, sections);
+                        }
+                        continue; // Skip the next slot since we processed it
+                    }
+                }
+            }
+
+            // Skip small values that are likely metadata/indices
+            if (slotPtr < 0x1000) {
+                continue;
+            }
+
+            if (isInternalNode) {
+                // INTERNAL NODE: Slots contain pointers to child nodes
+                if (IsKernelPointer(slotPtr)) {
+                    // This looks like a kernel VA - follow it as a child node
+                    WalkMapleNode(slotPtr, sections, depth + 1);
+                }
+            } else if (isLeafNode) {
+                // LEAF NODE: Slots contain actual data (vm_area_structs)
+                if (IsKernelPointer(slotPtr)) {
+                    // Try to read as vm_area_struct
+                    uint64_t translated = TranslateVA(slotPtr, kernelInfo.swapper_pgd);
+                    if (translated) {
+                        ExtractVMA(translated, sections);
+                    }
+                }
+            }
+        }
+    }
+
+    void ExtractVMA(uint64_t vmaPA, std::vector<MemorySection>& sections) {
+        if (vmaPA < 0x40000000 || vmaPA >= 0x40000000 + memorySize) return;
+
+        uint64_t vmaOffset = vmaPA - 0x40000000;
+        if (vmaOffset + 0x100 > memorySize) return;
+
+        uint8_t* vma = (uint8_t*)memBase + vmaOffset;
+
+        // Read VMA fields at correct offsets
+        uint64_t vmStart = *(uint64_t*)(vma + 0x00);  // vm_start at offset 0
+        uint64_t vmEnd = *(uint64_t*)(vma + 0x08);    // vm_end at offset 8
+        uint64_t vmFlags = *(uint64_t*)(vma + 0x20);  // vm_flags at offset 0x20 (32)
+        uint64_t vmFile = *(uint64_t*)(vma + 0x80);   // vm_file at offset 0x80 (128)
+
+        // Validate it looks like a VMA (user addresses)
+        // ARM64 user space can go up to ~0xffffff000000 (48-bit addresses)
+        if (vmStart && vmEnd && vmEnd > vmStart &&
+            vmStart >= 0x10000 && vmStart < 0x1000000000000ULL &&
+            vmEnd >= 0x10000 && vmEnd < 0x1000000000000ULL &&
+            (vmEnd - vmStart) >= 0x1000) {  // At least one page
+
+            MemorySection section;
+            section.start = vmStart;
+            section.end = vmEnd;
+            section.flags = vmFlags;
+            section.name = "";
+
+            // Try to extract filename if vm_file exists
+            if (vmFile && IsKernelPointer(vmFile)) {
+                ExtractFileName(vmFile, section.name);
+            }
+
+            sections.push_back(section);
+        }
+    }
+
+    void ExtractFileName(uint64_t vmFile, std::string& filename) {
+        // vm_file points to a struct file
+        uint64_t filePA = TranslateVA(vmFile, kernelInfo.swapper_pgd);
+        if (!filePA) return;
+
+        uint64_t fileOffset = filePA - 0x40000000;
+        if (fileOffset + 0x100 > memorySize) return;
+
+        // struct file: f_path at offset 0x40 (64 decimal)
+        // struct path contains: dentry at +8
+        // So dentry is at file offset 0x48
+        uint64_t dentry = *(uint64_t*)((uint8_t*)memBase + fileOffset + 0x48);
+
+        if (dentry && IsKernelPointer(dentry)) {
+            uint64_t dentryPA = TranslateVA(dentry, kernelInfo.swapper_pgd);
+            if (!dentryPA) return;
+
+            uint64_t dentryOffset = dentryPA - 0x40000000;
+            if (dentryOffset + 0x100 > memorySize) return;
+
+            // dentry has d_name (qstr) at offset 0x20 (32 decimal)
+            // qstr.name pointer is at offset 0x8 within qstr
+            uint64_t dNamePtr = *(uint64_t*)((uint8_t*)memBase + dentryOffset + 0x20 + 0x8);
+
+            if (dNamePtr && IsKernelPointer(dNamePtr)) {
+                uint64_t namePA = TranslateVA(dNamePtr, kernelInfo.swapper_pgd);
+                if (!namePA) return;
+
+                uint64_t nameOffset = namePA - 0x40000000;
+                if (nameOffset + 256 > memorySize) return;
+
+                // Read up to 256 bytes for the filename
+                char* nameStr = (char*)memBase + nameOffset;
+                size_t len = strnlen(nameStr, 256);
+                if (len > 0 && len < 256) {
+                    filename = std::string(nameStr, len);
+                }
+            }
+        }
+    }
+
+}; // End of KernelDiscovery class
+
+} // namespace Haywire
+
+// Standalone test program
+// Main function removed - this is now a library class
+// Use test_kernel_discovery.cpp for testing
