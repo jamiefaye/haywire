@@ -99,6 +99,7 @@ add_executable(haywire
     src/hex_overlay.cpp
     src/autocorrelator.cpp
     src/fft16384.cpp
+    # TODO: Remove beacon dependencies from other files
     src/beacon_reader.cpp
     src/beacon_decoder.cpp
     src/beacon_translator.cpp
