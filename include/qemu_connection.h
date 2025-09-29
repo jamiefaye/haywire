@@ -16,8 +16,21 @@
 namespace Haywire {
 
 class QemuConnection {
-public:
+private:
+    // Private constructor for singleton
     QemuConnection();
+
+public:
+    // Get singleton instance
+    static QemuConnection& getInstance() {
+        static QemuConnection instance;
+        return instance;
+    }
+
+    // Delete copy constructor and assignment operator
+    QemuConnection(const QemuConnection&) = delete;
+    QemuConnection& operator=(const QemuConnection&) = delete;
+
     ~QemuConnection();
     
     bool ConnectQMP(const std::string& host = "localhost", int port = 4445);
@@ -49,7 +62,10 @@ public:
     
     bool QueryStatus(nlohmann::json& status);
     bool QueryMemoryRegions(std::vector<std::pair<uint64_t, uint64_t>>& regions);
-    
+
+    // Query kernel info (swapper PGD, current task, etc.)
+    bool QueryKernelInfo(int cpuIndex, uint64_t& swapperPgd, uint64_t& currentTask);
+
     // Public for MMapReader
     bool SendQMPCommand(const nlohmann::json& command, nlohmann::json& response);
     

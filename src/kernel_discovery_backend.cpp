@@ -35,7 +35,7 @@ bool KernelDiscoveryBackend::Initialize(const std::string& memoryPath,
     std::cout << "[KernelDiscovery] QMP connection: " << qmpHost << ":" << qmpPort << std::endl;
 
     // Initialize kernel discovery with memory file and QMP settings
-    discovery = std::make_unique<KernelDiscovery>(memoryPath, qmpHost, qmpPort);
+    discovery = std::make_unique<KernelDiscovery>(memoryPath);
 
     std::cout << "[KernelDiscovery] Calling Initialize()..." << std::endl;
     if (!discovery->Initialize()) {

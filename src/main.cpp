@@ -75,7 +75,8 @@ int main(int argc, char** argv) {
     
     ImVec4 clear_color = ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
     
-    QemuConnection qemu;
+    // Get singleton QMP connection
+    QemuConnection& qemu = QemuConnection::getInstance();
     MemoryVisualizer visualizer;
     MemoryOverview overview;
     HexOverlay hexOverlay;
@@ -88,18 +89,8 @@ int main(int argc, char** argv) {
     auto memoryMapper = std::make_shared<MemoryMapper>();
 
     // Auto-connect to QEMU for memory access
-    // When using kernel discovery, skip AutoConnect to avoid QMP port conflict
-    // Kernel discovery will handle QMP connection
-    bool autoConnected = false;
-    if (!useKernelDiscovery) {
-        autoConnected = qemu.AutoConnect();
-    } else {
-        // For kernel discovery mode, just connect to memory backend directly
-        if (qemu.GetMemoryBackend() && qemu.GetMemoryBackend()->AutoDetect()) {
-            autoConnected = true;
-            std::cout << "Memory backend connected for visualization\n";
-        }
-    }
+    // ALWAYS connect for visualization, regardless of kernel discovery mode
+    bool autoConnected = qemu.AutoConnect();
 
     // If connected, initialize memory mapper
     if (autoConnected) {
@@ -408,10 +399,13 @@ int main(int argc, char** argv) {
             if (false) { // was: !useKernelDiscovery && qemu.IsGuestAgentConnected()
                 // uint32_t focusPid = visualizer.GetTargetPID();
                 // beaconReader->RefreshCompanion(qemu.GetGuestAgent(), focusPid);
-            } else if (useKernelDiscovery) {
+            } else if (useKernelDiscovery && kernelDiscovery->ShouldRefresh()) {
                 // In kernel discovery mode, refresh from kernel structures
-                // Commented out to avoid looping
-                // kernelDiscovery->RefreshProcessList();
+                // Using fast suspect-based refresh after initial scan
+                kernelDiscovery->RefreshProcessList();
+
+                // Refresh process info in PID selector (will update on next Show())
+                std::cout << "Process list refreshed\n";
             }
 
             // Rescan beacon data (only in beacon mode)

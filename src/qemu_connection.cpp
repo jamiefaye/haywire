@@ -875,6 +875,44 @@ bool QemuConnection::QueryMemoryRegions(std::vector<std::pair<uint64_t, uint64_t
     return false;
 }
 
+bool QemuConnection::QueryKernelInfo(int cpuIndex, uint64_t& swapperPgd, uint64_t& currentTask) {
+    if (!connected || qmpSocket < 0) {
+        return false;
+    }
+
+    nlohmann::json cmd = {
+        {"execute", "query-kernel-info"},
+        {"arguments", {{"cpu-index", cpuIndex}}}
+    };
+
+    nlohmann::json response;
+    if (!SendQMPCommand(cmd, response)) {
+        std::cerr << "Failed to send query-kernel-info command" << std::endl;
+        return false;
+    }
+
+    // Parse response
+    if (response.contains("return")) {
+        auto ret = response["return"];
+
+        // Extract TTBR1 (swapper PGD)
+        if (ret.contains("ttbr1")) {
+            swapperPgd = ret["ttbr1"];
+            // Mask off non-address bits
+            swapperPgd &= 0xFFFFFFFFF000ULL;
+        }
+
+        // Extract current task
+        if (ret.contains("current-task")) {
+            currentTask = ret["current-task"];
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
 bool QemuConnection::TranslateVA2PA(int cpuIndex, uint64_t virtualAddr, uint64_t& physicalAddr) {
     if (!connected || qmpSocket < 0) {
         return false;
