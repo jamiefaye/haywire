@@ -121,10 +121,9 @@ int main(int argc, char** argv) {
             kernelDiscovery->GetPIDList(pids);
             std::cout << "Found " << pids.size() << " processes via kernel discovery\n";
         } else {
-            std::cerr << "Failed to initialize kernel discovery\n";
-            std::cerr << "Please configure memory file path and QMP connection\n";
-            // Show connection dialog to configure
-            // show_connection_window = true; // TODO: Fix variable scope
+            std::cerr << "FATAL: Failed to initialize kernel discovery\n";
+            std::cerr << "Cannot get swapper PGD from QMP - exiting\n";
+            return 1;  // Exit with error code
         }
     }
 

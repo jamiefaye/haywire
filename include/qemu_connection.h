@@ -43,6 +43,7 @@ public:
     
     bool IsConnected() const { return connected.load(); }
     bool IsAvailable() const { return IsConnected(); }
+    bool IsQMPConnected() const { return qmpSocket >= 0; }
     bool IsUsingMemoryBackend() const { return useMemoryBackend; }
     MemoryBackend* GetMemoryBackend() { return memoryBackend.get(); }
     bool IsGuestAgentConnected() const { return guestAgent && guestAgent->IsConnected(); }

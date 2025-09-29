@@ -46,8 +46,8 @@ bool KernelDiscoveryBackend::Initialize(const std::string& memoryPath,
     // Discover kernel structures (gets swapper PGD from QMP)
     std::cout << "[KernelDiscovery] Calling DiscoverKernel() to find swapper PGD..." << std::endl;
     if (!discovery->DiscoverKernel()) {
-        std::cerr << "[KernelDiscovery] Failed to discover kernel structures" << std::endl;
-        // Continue anyway - we might still find some processes
+        std::cerr << "[KernelDiscovery] Failed to discover kernel structures - cannot proceed without QMP" << std::endl;
+        return false;  // Fail initialization if we can't get swapper PGD
     }
 
     // Initial process discovery

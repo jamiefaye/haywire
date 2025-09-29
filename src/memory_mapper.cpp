@@ -33,8 +33,8 @@ std::string MemoryMapper::QueryMonitor(const std::string& host, int port, const 
     server_addr.sin_addr.s_addr = inet_addr(host.c_str());
 
     if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        std::cerr << "MemoryMapper: Failed to connect to QEMU monitor at " 
-                  << host << ":" << port << std::endl;
+        // Monitor connection is optional - QMP provides the essential functionality
+        // Silently return empty string - caller will use defaults
         close(sock);
         return "";
     }
@@ -196,10 +196,8 @@ bool MemoryMapper::DiscoverMemoryMap(const std::string& monitor_host, int monito
     std::string output = QueryMonitor(monitor_host, monitor_port, "info mtree -f");
     
     if (output.empty()) {
-        std::cerr << "MemoryMapper: Failed to query QEMU monitor" << std::endl;
-        
-        // Fall back to default ARM64 mapping
-        std::cout << "MemoryMapper: Using default ARM64 memory map" << std::endl;
+        // This is normal when monitor is not available - we have good defaults
+        std::cout << "MemoryMapper: Using default ARM64 memory map (monitor unavailable)" << std::endl;
         MemoryRegion region;
         region.gpa_start = 0x40000000;
         region.gpa_end = 0x13FFFFFFF;  // 4GB

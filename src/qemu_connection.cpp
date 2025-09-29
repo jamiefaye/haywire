@@ -41,31 +41,37 @@ QemuConnection::~QemuConnection() {
 }
 
 bool QemuConnection::ConnectQMP(const std::string& host, int port) {
+    std::cerr << "[QMP] Attempting to connect to " << host << ":" << port << std::endl;
+
     if (qmpSocket >= 0) {
         close(qmpSocket);
     }
-    
+
     qmpSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (qmpSocket < 0) {
+        std::cerr << "[QMP] Failed to create socket" << std::endl;
         return false;
     }
-    
+
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
-    
+
     // Handle "localhost" specially
     if (host == "localhost") {
         addr.sin_addr.s_addr = inet_addr("127.0.0.1");
     } else {
         addr.sin_addr.s_addr = inet_addr(host.c_str());
     }
-    
+
     if (connect(qmpSocket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        std::cerr << "[QMP] Failed to connect: " << strerror(errno) << std::endl;
         close(qmpSocket);
         qmpSocket = -1;
         return false;
     }
+
+    std::cerr << "[QMP] Connected successfully" << std::endl;
     
     nlohmann::json greeting;
     char buffer[4096];
@@ -117,19 +123,19 @@ bool QemuConnection::AutoConnect() {
         // Memory backend detected, try QMP for control
         if (ConnectQMP("localhost", 4445)) {
             connected = true;
-            // Also try to connect guest agent
-            if (guestAgent && guestAgent->Connect()) {
-                std::cerr << "✓ Guest agent connected\n";
-            }
+            // DISABLED: Guest agent connection per user request
+            // if (guestAgent && guestAgent->Connect()) {
+            //     std::cerr << "✓ Guest agent connected\n";
+            // }
             return true;
         }
         
         // Memory backend works even without QMP for read-only access
         connected = true;
-        // Try guest agent even without QMP
-        if (guestAgent && guestAgent->Connect()) {
-            std::cerr << "✓ Guest agent connected\n";
-        }
+        // DISABLED: Guest agent connection per user request
+        // if (guestAgent && guestAgent->Connect()) {
+        //     std::cerr << "✓ Guest agent connected\n";
+        // }
         return true;
     }
     
@@ -141,10 +147,10 @@ bool QemuConnection::AutoConnect() {
         }
         
         connected = true;
-        // Try guest agent
-        if (guestAgent && guestAgent->Connect()) {
-            std::cerr << "✓ Guest agent connected\n";
-        }
+        // DISABLED: Guest agent connection per user request
+        // if (guestAgent && guestAgent->Connect()) {
+        //     std::cerr << "✓ Guest agent connected\n";
+        // }
         return true;
     }
     
@@ -718,13 +724,14 @@ void QemuConnection::DrawConnectionUI() {
         } else if (guestAgent) {
             ImGui::Separator();
             ImGui::TextColored(ImVec4(1, 1, 0, 1), "Guest Agent Not Connected");
-            if (ImGui::Button("Connect Guest Agent", ImVec2(150, 0))) {
-                if (guestAgent->Connect()) {
-                    std::cerr << "✓ Guest agent connected\n";
-                } else {
-                    std::cerr << "Failed to connect guest agent\n";
-                }
-            }
+            // DISABLED: Guest agent connection per user request
+            // if (ImGui::Button("Connect Guest Agent", ImVec2(150, 0))) {
+            //     if (guestAgent->Connect()) {
+            //         std::cerr << "✓ Guest agent connected\n";
+            //     } else {
+            //         std::cerr << "Failed to connect guest agent\n";
+            //     }
+            // }
         }
         
         ImGui::Spacing();

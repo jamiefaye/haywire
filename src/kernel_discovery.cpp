@@ -133,10 +133,7 @@ public:
 
         std::cout << "Memory mapped: " << (memorySize / (1024*1024)) << " MB" << std::endl;
 
-        // Skip QMP for now - conflicts with main program's QMP connection
-        // TODO: Share QMP connection from main program
-        std::cout << "Note: Skipping QMP connection (conflicts with main program)" << std::endl;
-
+        // QMP connection will be handled via singleton from main program
         return true;
     }
 
@@ -145,38 +142,27 @@ public:
 
         // Use singleton QMP connection
         QemuConnection& qemu = QemuConnection::getInstance();
-        if (qemu.IsConnected()) {
+        if (qemu.IsQMPConnected()) {
             std::cout << "Using shared QMP connection for kernel info..." << std::endl;
             if (qemu.QueryKernelInfo(0, kernelInfo.swapper_pgd, kernelInfo.current_task)) {
                 // Successfully got kernel info from QMP
                 std::cout << "QMP query successful" << std::endl;
                 std::cout << "Got swapper PGD from QMP: 0x" << std::hex << kernelInfo.swapper_pgd << std::dec << std::endl;
                 std::cout << "Got current_task from QMP: 0x" << std::hex << kernelInfo.current_task << std::dec << std::endl;
+                return true;
             } else {
-                std::cout << "QMP query failed, will use fallback" << std::endl;
-                // FALLBACK: Use known good swapper PGD for this specific VM
-                kernelInfo.swapper_pgd = 0x136deb000;
-                std::cout << "Using FALLBACK swapper PGD: 0x" << std::hex << kernelInfo.swapper_pgd << std::dec << std::endl;
+                std::cerr << "ERROR: QMP query failed - cannot get swapper PGD" << std::endl;
+                std::cerr << "Cannot proceed without kernel information from QMP" << std::endl;
+                return false;
             }
         } else {
-            std::cout << "QMP not connected, using fallback" << std::endl;
-            kernelInfo.swapper_pgd = 0x136deb000;
-            std::cout << "Using FALLBACK swapper PGD: 0x" << std::hex << kernelInfo.swapper_pgd << std::dec << std::endl;
+            std::cerr << "ERROR: QMP not connected - cannot get swapper PGD" << std::endl;
+            std::cerr << "Cannot proceed without QMP connection" << std::endl;
+            return false;
         }
 
-        // If still no PGD, try scanning (usually won't work correctly)
-        if (kernelInfo.swapper_pgd == 0) {
-            std::cout << "Scanning for swapper PGD..." << std::endl;
-            kernelInfo.swapper_pgd = FindSwapperPGD();
-            if (kernelInfo.swapper_pgd) {
-                std::cout << "Found swapper PGD at 0x"
-                          << std::hex << kernelInfo.swapper_pgd << std::dec << std::endl;
-            }
-        }
-
-        // We don't need init_task - we'll scan for all processes instead
-
-        return kernelInfo.swapper_pgd != 0 || kernelInfo.init_task != 0;
+        // No fallback - we require QMP to work properly
+        return false;
     }
 
     bool DiscoverProcesses() {
