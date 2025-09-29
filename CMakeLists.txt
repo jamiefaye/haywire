@@ -99,6 +99,9 @@ add_executable(haywire
     src/hex_overlay.cpp
     src/autocorrelator.cpp
     src/fft16384.cpp
+    # New memory reader using kernel discovery
+    src/kernel_memory_reader.cpp
+    src/memory_file_reader.cpp
     # TODO: Remove beacon dependencies from other files
     src/beacon_reader.cpp
     src/beacon_decoder.cpp
@@ -197,9 +200,7 @@ file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_CURRENT_BINARY_
 #     src/memory_mapper.cpp
 #     src/crunched_memory_reader.cpp
 #     src/mmap_reader.cpp
-#     src/beacon_reader.cpp
-#     src/beacon_decoder.cpp
-#     src/beacon_translator.cpp
+#     # Beacon files removed - using kernel discovery
 #     src/address_space_flattener.cpp
 #     src/viewport_translator.cpp
 #     src/pagemap_cache.cpp

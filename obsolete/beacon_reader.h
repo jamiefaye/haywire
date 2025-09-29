@@ -6,11 +6,11 @@
 #include <cstdint>
 #include <memory>
 #include "beacon_protocol.h"
-#include "beacon_decoder.h"  // Need full definition for shared_ptr
 
 namespace Haywire {
 
-// BeaconDecoder included above
+// Forward declarations
+class BeaconDecoder;
 struct SectionEntry;
 
 // Process information from beacon pages

@@ -16,9 +16,11 @@
 #include "memory_overview.h"
 #include "hex_overlay.h"
 #include "viewport_translator.h"
-#include "beacon_reader.h"
-#include "beacon_decoder.h"
-#include "beacon_translator.h"
+// Beacon headers - keeping beacon_reader for memory mapping only
+#include "beacon_reader.h"  // Still needed for bitmap viewers' memory access
+// #include "beacon_decoder.h"  // OBSOLETE
+// #include "beacon_translator.h"  // OBSOLETE
+#include "memory_types.h"  // For SectionEntry
 #include "kernel_discovery_backend.h"
 #include "pid_selector.h"
 #include "memory_mapper.h"
@@ -98,10 +100,21 @@ int main(int argc, char** argv) {
         memoryMapper->LogRegions();
     }
 
-    // Beacon reader and kernel discovery backend
-    auto beaconReader = std::make_shared<BeaconReader>();
+    // Kernel discovery backend (replacing beacon data reading)
     auto kernelDiscovery = std::make_shared<KernelDiscoveryBackend>();
-    std::shared_ptr<BeaconTranslator> beaconTranslator;
+
+    // Create beacon reader for memory mapping (still needed by bitmap viewers)
+    // This is only used for direct memory access, not beacon data
+    auto beaconReader = std::make_shared<BeaconReader>();
+    // Initialize it with the memory file for direct memory access
+    if (beaconReader->Initialize("/tmp/haywire-vm-mem")) {
+        std::cout << "Memory file mapped for bitmap viewers\n";
+        visualizer.SetBeaconReader(beaconReader);  // For bitmap viewers only
+    } else {
+        std::cerr << "Warning: Could not map memory file for bitmap viewers\n";
+    }
+
+    // std::shared_ptr<BeaconTranslator> beaconTranslator;  // OBSOLETE
     PIDSelector pidSelector;
 
     // Initialize VA translation backend
@@ -120,6 +133,9 @@ int main(int argc, char** argv) {
             std::vector<uint32_t> pids;
             kernelDiscovery->GetPIDList(pids);
             std::cout << "Found " << pids.size() << " processes via kernel discovery\n";
+
+            // Set kernel discovery for PID selector
+            pidSelector.SetKernelDiscovery(kernelDiscovery);
         } else {
             std::cerr << "FATAL: Failed to initialize kernel discovery\n";
             std::cerr << "Cannot get swapper PGD from QMP - exiting\n";
@@ -127,10 +143,10 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Only use beacon reader if kernel discovery is not enabled or failed
-    if (!useKernelDiscovery) {
-        std::cout << "Using beacon reader mode (companion process)\n";
-
+    // Beacon reader mode - OBSOLETE
+    if (false) {  // was: !useKernelDiscovery
+        // OBSOLETE: beacon reader code removed
+        /*
         if (beaconReader->Initialize()) {
             std::cout << "Beacon reader initialized successfully\n";
 
@@ -148,13 +164,12 @@ int main(int argc, char** argv) {
                 // }
             }
 
-            pidSelector.SetBeaconReader(beaconReader);
+            // pidSelector.SetBeaconReader(beaconReader);  // OBSOLETE
+            pidSelector.SetKernelDiscovery(kernelDiscovery);  // Use kernel discovery instead
 
-            // Create beacon translator using the reader
-            beaconTranslator = std::make_shared<BeaconTranslator>(beaconReader);
-            visualizer.SetBeaconTranslator(beaconTranslator);
-            visualizer.SetBeaconReader(beaconReader);  // Also set beacon reader for bitmap viewers
+            // OBSOLETE beacon translator code
         }
+        */
     }
 
     // Set common connections regardless of mode
@@ -170,9 +185,10 @@ int main(int argc, char** argv) {
         }
     };
 
-    if (!useKernelDiscovery && beaconTranslator) {
-        std::cout << "Beacon translator created and connected to visualizer\n";
-    }
+    // Beacon translator check - OBSOLETE
+    // if (!useKernelDiscovery && beaconTranslator) {
+    //     std::cout << "Beacon translator created and connected to visualizer\n";
+    // }
 
     // Set callback to switch to process mode when PID is selected
     pidSelector.SetSelectionCallback([&](uint32_t pid, const std::string& processName) {
@@ -192,38 +208,26 @@ int main(int argc, char** argv) {
                 // Give it a moment to complete
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-                // Re-scan for updated beacon data
-                if (!useKernelDiscovery) {
-                    beaconReader->FindDiscovery();
-                }
+                // OBSOLETE: Re-scan for updated beacon data
+                // if (!useKernelDiscovery) {
+                //     beaconReader->FindDiscovery();
+                // }
             } else {
                 // Without QGA, we can't trigger oneshot companion
                 std::cout << "Warning: Guest agent not connected, cannot refresh camera data\n";
             }
 
-            // Load process sections from camera beacon data with retry
+            // Load process sections from kernel discovery
             std::vector<SectionEntry> sections;
-            
-            // Retry for up to 3 seconds for camera data to become available
-            int retries = 30;  // 30 * 100ms = 3 seconds
             bool gotSections = false;
-            while (retries > 0) {
-                if (beaconReader->GetCameraProcessSections(1, pid, sections) && !sections.empty()) {
-                    gotSections = true;
-                    break;
-                }
-                usleep(100000);  // Wait 100ms
-                retries--;
-                
-                // Re-scan beacon data to pick up new camera writes
-                if (!useKernelDiscovery) {
-                    beaconReader->FindDiscovery();
-                }
+
+            if (useKernelDiscovery && kernelDiscovery) {
+                gotSections = kernelDiscovery->GetProcessSections(pid, sections);
             }
             
             if (gotSections) {
                 std::cout << "\n=== Memory Map for PID " << pid << " ===\n";
-                std::cout << "Loaded " << sections.size() << " memory sections from camera beacon\n";
+                std::cout << "Loaded " << sections.size() << " memory sections from kernel discovery\n";
                 std::cout << "------------------------------------------------\n";
                 
                 // Print section details
@@ -258,9 +262,9 @@ int main(int argc, char** argv) {
                 }
                 std::cout << "------------------------------------------------\n";
                 
-                // Also get and display PTEs
+                // Also get and display PTEs from kernel discovery
                 std::unordered_map<uint64_t, uint64_t> ptes;
-                if (beaconReader->GetCameraPTEs(1, pid, ptes)) {
+                if (useKernelDiscovery && kernelDiscovery && kernelDiscovery->GetProcessPTEs(pid, ptes)) {
                     std::cout << "\n=== Page Table Entries for PID " << pid << " ===\n";
                     std::cout << "Found " << ptes.size() << " PTEs\n";
                     
@@ -373,9 +377,9 @@ int main(int argc, char** argv) {
     auto lastTime = std::chrono::high_resolution_clock::now();
     int frameCount = 0;
     
-    // Track beacon refresh timing
-    auto lastBeaconRefresh = std::chrono::high_resolution_clock::now();
-    const auto beaconRefreshInterval = std::chrono::seconds(5); // Refresh every 5 seconds
+    // OBSOLETE: beacon refresh timing
+    // auto lastBeaconRefresh = std::chrono::high_resolution_clock::now();
+    // const auto beaconRefreshInterval = std::chrono::seconds(5);
     
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -389,9 +393,9 @@ int main(int argc, char** argv) {
             lastTime = currentTime;
         }
         
-        // Periodically refresh beacon data
-        if (currentTime - lastBeaconRefresh > beaconRefreshInterval) {
-            lastBeaconRefresh = currentTime;
+        // Periodically refresh kernel discovery data
+        if (currentTime - lastTime > std::chrono::seconds(5)) {  // Refresh every 5 seconds
+            // lastBeaconRefresh = currentTime;  // OBSOLETE
 
             // Trigger companion_oneshot to refresh beacon data (only in beacon mode)
             // REMOVED: Guest agent
@@ -407,11 +411,10 @@ int main(int argc, char** argv) {
                 std::cout << "Process list refreshed\n";
             }
 
-            // Rescan beacon data (only in beacon mode)
-            if (!useKernelDiscovery && beaconReader->FindDiscovery()) {
-                // Beacon data refreshed - process list will update automatically
-                // PIDSelector will see the new data next time it's opened
-            }
+            // OBSOLETE: Rescan beacon data
+            // if (!useKernelDiscovery && beaconReader->FindDiscovery()) {
+            //     // Beacon data refreshed
+            // }
         }
         
         ImGui_ImplOpenGL3_NewFrame();
@@ -553,6 +556,9 @@ int main(int argc, char** argv) {
                         std::vector<uint32_t> pids;
                         kernelDiscovery->GetPIDList(pids);
                         std::cout << "Found " << pids.size() << " processes\n";
+
+                        // Set kernel discovery for PID selector
+                        pidSelector.SetKernelDiscovery(kernelDiscovery);
                     } else {
                         std::cerr << "Failed to connect with kernel discovery\n";
                     }

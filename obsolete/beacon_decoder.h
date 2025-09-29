@@ -6,12 +6,18 @@
 #include <map>
 #include <unordered_map>
 #include <cstring>
-#include "memory_types.h"  // For SectionEntry, PIDEntry, PTEEntry
 
 namespace Haywire {
 
-// SectionEntry moved to memory_types.h
-// Using the one from memory_types.h
+// Section entry - still used by BeaconReader for conversion
+struct SectionEntry {
+    uint32_t type;  // ENTRY_SECTION
+    uint32_t pid;
+    uint64_t va_start;
+    uint64_t va_end;
+    uint32_t perms;
+    char path[64];
+} __attribute__((packed));
 
 #ifdef USE_OLD_BEACON_PROTOCOL
 // Match the encoder's constants

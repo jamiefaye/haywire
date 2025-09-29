@@ -72,8 +72,15 @@ test_*.sh
 # ImGui config
 imgui.ini
 
-# VM images (keep in vms/ folder but don't track)
-vms/*.qcow2
+# VM images and dumps (ignore entire vms directory)
+vms/
+
+# Large memory dump files
+haywire-vm-mem
+*.iso
+
+# Linux source archives
+linux-source/
 
 # QEMU binaries (built locally)
 qemu-mods/qemu-system-aarch64-unsigned
@@ -85,3 +92,10 @@ linux-headers/
 
 # Electron node_modules (large binary files)
 web/node_modules/
+
+# Video files that shouldn't be in git
+*.mp4
+*.avi
+*.mov
+*.mkv
+test_attempts/media/*.ts

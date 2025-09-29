@@ -1,0 +1,45 @@
+diff --git a/hw/arm/virt.c b/hw/arm/virt.c
+--- a/hw/arm/virt.c
++++ b/hw/arm/virt.c
+@@ -2000,6 +2000,40 @@ static void virt_machine_init(MachineState *machine)
+     memory_region_add_subregion(sysmem, vms->memmap[VIRT_MEM].base,
+                                 machine->ram);
+
++    /* Haywire: Create additional memory file for kernel structures
++     * This exposes memory regions that are normally hidden from
++     * the standard memory-backend-file
++     */
++    {
++        const char *kernel_mem_path = "/tmp/haywire-kernel-mem";
++        int fd;
++        void *kernel_map;
++        size_t kernel_size = 256 * 1024 * 1024; /* 256MB for kernel structures */
++
++        fd = open(kernel_mem_path, O_RDWR | O_CREAT | O_TRUNC, 0600);
++        if (fd >= 0) {
++            if (ftruncate(fd, kernel_size) == 0) {
++                kernel_map = mmap(NULL, kernel_size, PROT_READ | PROT_WRITE,
++                                 MAP_SHARED, fd, 0);
++                if (kernel_map != MAP_FAILED) {
++                    /* Create a memory region for kernel structures */
++                    MemoryRegion *kernel_mr = g_new(MemoryRegion, 1);
++                    memory_region_init_ram_ptr(kernel_mr, NULL, "haywire.kernel",
++                                               kernel_size, kernel_map);
++
++                    /* Map it at a high physical address where kernel structures live */
++                    /* This is typically around 0x1B4DBF000 for highmem=on */
++                    hwaddr kernel_base = 0x1B00000000ULL; /* ~6.75GB */
++                    memory_region_add_subregion(sysmem, kernel_base, kernel_mr);
++
++                    fprintf(stderr, "Haywire: Kernel memory exposed at %s "
++                           "(PA 0x%llx, size %zu MB)\n",
++                           kernel_mem_path, (unsigned long long)kernel_base,
++                           kernel_size / (1024*1024));
++                }
++            }
++            close(fd);
++        }
++    }
++
+     if (machine->device_memory) {
+         memory_region_add_subregion(sysmem, machine->device_memory->base,

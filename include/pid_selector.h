@@ -3,7 +3,8 @@
 #include <vector>
 #include <string>
 #include <functional>
-#include "beacon_reader.h"
+// #include "beacon_reader.h"  // OBSOLETE
+#include "kernel_discovery_backend.h"
 #include "imgui.h"
 
 namespace Haywire {
@@ -13,12 +14,17 @@ public:
     PIDSelector();
     ~PIDSelector();
     
-    // Initialize with beacon reader
-    void SetBeaconReader(std::shared_ptr<BeaconReader> reader) {
-        beaconReader = reader;
+    // Initialize with kernel discovery backend
+    void SetKernelDiscovery(std::shared_ptr<KernelDiscoveryBackend> backend) {
+        kernelDiscovery = backend;
     }
+
+    // OBSOLETE: beacon reader initialization
+    // void SetBeaconReader(std::shared_ptr<BeaconReader> reader) {
+    //     beaconReader = reader;
+    // }
     
-    // Update PID list from beacon
+    // Update PID list from kernel discovery
     void RefreshPIDList();
     
     // Draw the PID selection menu
@@ -101,8 +107,11 @@ private:
     bool showKernelThreads;
     bool showOnlyWithDetails;
     
-    // Beacon reader
-    std::shared_ptr<BeaconReader> beaconReader;
+    // Kernel discovery backend
+    std::shared_ptr<KernelDiscoveryBackend> kernelDiscovery;
+
+    // OBSOLETE: Beacon reader
+    // std::shared_ptr<BeaconReader> beaconReader;
     
     // Selection callback
     SelectionCallback onSelection;

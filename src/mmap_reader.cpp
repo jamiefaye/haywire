@@ -18,6 +18,9 @@ MMapReader::~MMapReader() {
 }
 
 bool MMapReader::DumpAndMap(QemuConnection& qemu, uint64_t address, size_t size) {
+    // REMOVED: QMP-based memory dumping no longer supported
+    return false;
+#if 0
     // Use QMP to dump memory to a file with restrictive permissions
     std::string dumpPath = "/tmp/haywire_mem.dump";
     
@@ -94,6 +97,7 @@ bool MMapReader::MapFile(const std::string& path, size_t size) {
     mappedSize = fileSize;
     // std::cerr << "Mapped " << mappedSize << " bytes from " << path << "\n";
     return true;
+#endif
 }
 
 bool MMapReader::Read(uint64_t offset, size_t size, std::vector<uint8_t>& buffer) {

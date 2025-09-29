@@ -68,6 +68,17 @@ export namespace VirtualAddress {
   }
 
   /**
+   * Convert VirtualAddress to number
+   * Safe for addresses that fit in 53 bits (JavaScript's safe integer range)
+   */
+  export function toNumber(va: VirtualAddress): number {
+    if (va > 0x1FFFFFFFFFFFFFn) { // Larger than 53 bits
+      throw new Error(`VirtualAddress ${va.toString(16)} too large for safe number conversion`);
+    }
+    return Number(va);
+  }
+
+  /**
    * Extract PGD index (bits 47:39)
    */
   export function pgdIndex(va: VirtualAddress): number {

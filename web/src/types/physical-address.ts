@@ -49,6 +49,17 @@ export namespace PhysicalAddress {
   }
 
   /**
+   * Convert PhysicalAddress to number
+   * Safe for addresses that fit in 53 bits (JavaScript's safe integer range)
+   */
+  export function toNumber(pa: PhysicalAddress): number {
+    if (pa > 0x1FFFFFFFFFFFFFn) { // Larger than 53 bits
+      throw new Error(`PhysicalAddress ${pa.toString(16)} too large for safe number conversion`);
+    }
+    return Number(pa);
+  }
+
+  /**
    * Get page number (physical address >> 12)
    */
   export function pageNumber(pa: PhysicalAddress): bigint {

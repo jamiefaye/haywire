@@ -6,6 +6,8 @@
 
 namespace Haywire {
 
+// REMOVED: ViewportTranslator depends on GuestAgent which has been removed
+#if 0
 ViewportTranslator::ViewportTranslator(std::shared_ptr<GuestAgent> agent) 
     : guestAgent(agent), currentPid(-1), viewportCenter(0), viewportSize(0),
       pagemapCache(std::make_unique<PagemapCache>()) {
@@ -246,6 +248,30 @@ void ViewportTranslator::ClearCache(int pid) {
             cache.erase(it);
         }
     }
+}
+
+}
+#endif
+
+// Stub implementations for ViewportTranslator when GuestAgent is disabled
+ViewportTranslator::ViewportTranslator(std::shared_ptr<GuestAgent> agent) {
+    // Stub - no implementation without GuestAgent
+}
+
+ViewportTranslator::~ViewportTranslator() {
+}
+
+void ViewportTranslator::SetViewport(int pid, uint64_t centerVA, size_t viewSize) {
+    // Stub - no implementation
+}
+
+uint64_t ViewportTranslator::TranslateAddress(int pid, uint64_t virtualAddr) {
+    // Stub - return 0 (no translation)
+    return 0;
+}
+
+void ViewportTranslator::ClearCache(int pid) {
+    // Stub - no cache to clear
 }
 
 }

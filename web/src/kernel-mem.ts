@@ -51,7 +51,7 @@ export const OFFSETS = {
 
 export class KernelMem {
     private memory: PagedMemory;
-    private kernelPgd: number = 0x136deb000; // Hardcoded for testing (normally from QMP)
+    private kernelPgd: number = 0; // Must be set via setKernelPgd() before use
 
     constructor(memory: PagedMemory) {
         this.memory = memory;
@@ -104,8 +104,10 @@ export class KernelMem {
 
     /**
      * Translate kernel virtual address to physical
+     * CACHE BUST: 2025-09-27-v2 - Vmalloc logging disabled
      */
     translateVA(va: bigint): number | null {
+        // IMPORTANT: No debug logging here - this gets called 160,000+ times!
         // Page table walk for other addresses
         const pgdIndex = Number((va >> 39n) & 0x1FFn);
         const pudIndex = Number((va >> 30n) & 0x1FFn);
@@ -113,49 +115,39 @@ export class KernelMem {
         const pteIndex = Number((va >> 12n) & 0x1FFn);
         const offset = Number(va & 0xFFFn);
 
-        // Debug for vmalloc addresses
-        const isVmalloc = (va >= 0xffff000000000000n && va < 0xffff800000000000n);
-        if (isVmalloc) {
-            console.log(`  Translating vmalloc VA: 0x${va.toString(16)}`);
-            console.log(`    PGD index: ${pgdIndex}, PUD: ${pudIndex}, PMD: ${pmdIndex}, PTE: ${pteIndex}`);
-            console.log(`    Using kernel PGD: 0x${this.kernelPgd.toString(16)}`);
-        }
-
         // Read PGD entry
-        const pgdData = this.memory.readBytes((this.kernelPgd - 0x40000000) + pgdIndex * 8, 8);
+        const pgdOffset = (this.kernelPgd - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START)) + pgdIndex * 8;
+        const pgdData = this.memory.readBytes(pgdOffset, 8);
         if (!pgdData) {
-            if (isVmalloc) console.log(`    Failed to read PGD entry at PA: 0x${((this.kernelPgd - 0x40000000) + pgdIndex * 8).toString(16)}`);
             return null;
         }
 
         const pgdEntry = new DataView(pgdData.buffer, pgdData.byteOffset, pgdData.byteLength).getBigUint64(0, true);
         // Check valid bit (bit 0) - ARM64 page table entry
         if ((pgdEntry & 0x1n) === 0n) {
-            if (isVmalloc) console.log(`    PGD entry not valid: 0x${pgdEntry.toString(16)}`);
             return null;
         }
 
         // Extract PA from bits 47:12 (ARM64 48-bit PA)
         const pudPA = Number(pgdEntry & 0x0000FFFFFFFFF000n);
-        if (isVmalloc) console.log(`    PGD entry: 0x${pgdEntry.toString(16)}, extracted PUD PA: 0x${pudPA.toString(16)}`);
 
         // Read PUD entry
-        const pudData = this.memory.readBytes((pudPA - 0x40000000) + pudIndex * 8, 8);
+        const pudOffset = (pudPA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START)) + pudIndex * 8;
+        const pudData = this.memory.readBytes(pudOffset, 8);
         if (!pudData) {
-            if (isVmalloc) console.log(`    Failed to read PUD entry at PA: 0x${((pudPA - 0x40000000) + pudIndex * 8).toString(16)}`);
             return null;
         }
 
         const pudEntry = new DataView(pudData.buffer, pudData.byteOffset, pudData.byteLength).getBigUint64(0, true);
         if ((pudEntry & 0x1n) === 0n) {
-            if (isVmalloc) console.log(`    PUD entry not valid: 0x${pudEntry.toString(16)}`);
             return null;  // Check valid bit
         }
 
         const pmdPA = Number(pudEntry & 0x0000FFFFFFFFF000n);
 
         // Read PMD entry
-        const pmdData = this.memory.readBytes((pmdPA - 0x40000000) + pmdIndex * 8, 8);
+        const pmdOffset = (pmdPA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START)) + pmdIndex * 8;
+        const pmdData = this.memory.readBytes(pmdOffset, 8);
         if (!pmdData) return null;
 
         const pmdEntry = new DataView(pmdData.buffer, pmdData.byteOffset, pmdData.byteLength).getBigUint64(0, true);
@@ -164,7 +156,8 @@ export class KernelMem {
         const ptePA = Number(pmdEntry & 0x0000FFFFFFFFF000n);
 
         // Read PTE entry
-        const pteData = this.memory.readBytes((ptePA - 0x40000000) + pteIndex * 8, 8);
+        const pteOffset = (ptePA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START)) + pteIndex * 8;
+        const pteData = this.memory.readBytes(pteOffset, 8);
         if (!pteData) return null;
 
         const pteEntry = new DataView(pteData.buffer, pteData.byteOffset, pteData.byteLength).getBigUint64(0, true);
@@ -180,7 +173,7 @@ export class KernelMem {
     read(va: bigint, size: number): Uint8Array | null {
         const pa = this.translateVA(va);
         if (!pa) return null;
-        return this.memory.readBytes(pa - 0x40000000, size);
+        return this.memory.readBytes(pa - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), size);
     }
 
     /**
@@ -471,7 +464,7 @@ export class KernelMem {
             // Or it could be a physical address (less common)
             if (mmStripped < 0xffff000000000000n) {
                 // Possibly a physical address - let's be more lenient here
-                if (mmStripped >= 0x40000000n && mmStripped < 0x200000000n) {
+                if (mmStripped >= MemoryConfig.GUEST_RAM_START && mmStripped < MemoryConfig.GUEST_RAM_END) {
                     // Looks like a plausible physical address
                 } else {
                     return null;  // Neither kernel VA nor plausible physical
@@ -481,8 +474,8 @@ export class KernelMem {
 
         // Try to get PGD if mm_struct looks valid
         let pgdPtr = 0;
-        if (mmStripped && mmStripped >= BigInt(MemoryConfig.GUEST_RAM_START) && mmStripped < BigInt(MemoryConfig.GUEST_RAM_END)) {
-            const mmOffset = Number(mmStripped - BigInt(MemoryConfig.GUEST_RAM_START));
+        if (mmStripped && mmStripped >= MemoryConfig.GUEST_RAM_START && mmStripped < MemoryConfig.GUEST_RAM_END) {
+            const mmOffset = Number(mmStripped - MemoryConfig.GUEST_RAM_START);
             pgdPtr = Number(this.memory.readU64(mmOffset + KernelConstants.PGD_OFFSET_IN_MM) || 0n);
         }
 
@@ -493,7 +486,7 @@ export class KernelMem {
         return {
             pid: pid,
             name: name,
-            taskStruct: PA(Number(MemoryConfig.GUEST_RAM_START) + offset),
+            taskStruct: PA(PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START) + offset),
             isKernelThread: isKernel,
             tasksNext: PA(tasksNext),
             tasksPrev: PA(tasksPrev),
@@ -520,7 +513,7 @@ export class KernelMem {
         this.processes.clear();
 
         for (let pageStart = 0; pageStart < totalSize; pageStart += KernelConstants.PAGE_SIZE) {
-            if (pageStart % (500 * 1024 * 1024) === 0) {  // Report every 500MB
+            if (pageStart % (1024 * 1024 * 1024) === 0) {  // Report every 1GB (reduced from 500MB)
                 console.log(`  Scanning ${pageStart / (1024 * 1024)}MB... (${this.processes.size} processes)`);
             }
 

@@ -6,7 +6,7 @@
  */
 
 #include "kernel_discovery_backend.h"
-#include "beacon_decoder.h"  // For SectionEntry definition
+#include "memory_types.h"  // For SectionEntry definition
 #include <iostream>
 #include <iomanip>
 #include <algorithm>

@@ -1,0 +1,100 @@
+diff --git a/include/exec/cpu-common.h b/include/exec/cpu-common.h
+--- a/include/exec/cpu-common.h
++++ b/include/exec/cpu-common.h
+@@ -150,4 +150,8 @@ int cpu_memory_rw_debug(CPUState *cpu, vaddr addr,
+
+ extern int singlestep;
+
++/* Haywire kernel memory tracking */
++void haywire_track_memory(hwaddr addr, void *host_ptr, size_t size);
++void haywire_init_kernel_tracking(void);
++
+ #endif /* CPU_COMMON_H */
+diff --git a/system/physmem.c b/system/physmem.c
+--- a/system/physmem.c
++++ b/system/physmem.c
+@@ -60,6 +60,69 @@
+ #include "migration/vmstate.h"
+ #include "qemu/range.h"
+
++/* ===== HAYWIRE KERNEL MEMORY TRACKING ===== */
++#include <fcntl.h>
++#include <sys/mman.h>
++
++static int haywire_fd = -1;
++static void *haywire_map = NULL;
++static size_t haywire_size = 0;
++
++#define HAYWIRE_FILE "/tmp/haywire-all-mem"
++#define HAYWIRE_MAX_SIZE (8ULL * 1024 * 1024 * 1024)  /* 8GB max */
++
++typedef struct HaywireRegion {
++    hwaddr phys_addr;
++    size_t size;
++    uint64_t offset;  /* Offset in our file */
++    struct HaywireRegion *next;
++} HaywireRegion;
++
++static HaywireRegion *haywire_regions = NULL;
++static uint64_t haywire_next_offset = 0;
++
++void haywire_init_kernel_tracking(void)
++{
++    if (haywire_fd >= 0) return;
++
++    haywire_fd = open(HAYWIRE_FILE, O_RDWR | O_CREAT | O_TRUNC, 0600);
++    if (haywire_fd < 0) {
++        fprintf(stderr, "Haywire: Failed to create %s\n", HAYWIRE_FILE);
++        return;
++    }
++
++    /* Start with 1GB, will grow as needed */
++    haywire_size = 1ULL * 1024 * 1024 * 1024;
++    ftruncate(haywire_fd, haywire_size);
++
++    haywire_map = mmap(NULL, haywire_size, PROT_READ | PROT_WRITE,
++                      MAP_SHARED, haywire_fd, 0);
++    if (haywire_map == MAP_FAILED) {
++        haywire_map = NULL;
++        close(haywire_fd);
++        haywire_fd = -1;
++        return;
++    }
++
++    fprintf(stderr, "Haywire: Memory tracking initialized at %s\n", HAYWIRE_FILE);
++
++    /* Write header with region map */
++    uint32_t magic = 0x48415957; /* "HAYW" */
++    memcpy(haywire_map, &magic, 4);
++    haywire_next_offset = 4096; /* Start data at 4KB */
++}
++
++void haywire_track_memory(hwaddr addr, void *host_ptr, size_t size)
++{
++    if (!haywire_map || !host_ptr) return;
++
++    /* Log what we're tracking */
++    fprintf(stderr, "Haywire: Tracking PA 0x%llx size %zu KB\n",
++           (unsigned long long)addr, size / 1024);
++
++    /* For now, just log - actual tracking implementation here */
++}
++
++/* ===== END HAYWIRE ===== */
++
+ //#define DEBUG_SUBPAGE
+
+ #if !defined(CONFIG_USER_ONLY)
+@@ -1982,6 +2045,12 @@ static void ram_block_add(RAMBlock *new_block, Error **errp)
+         ram_list.mru_block = NULL;
+     }
+
++    /* Haywire: Track this memory allocation */
++    if (new_block->host && new_block->mr) {
++        haywire_init_kernel_tracking(); /* Initialize if needed */
++        haywire_track_memory(new_block->mr->addr, new_block->host, new_block->used_length);
++    }
++
+     ram_list.mru_block = NULL;
+     /* Write list before version */
+     smp_wmb();

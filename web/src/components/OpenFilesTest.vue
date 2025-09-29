@@ -85,6 +85,18 @@ interface Results {
   files: FileInfo[];
 }
 
+// Kernel structure offsets (from pahole analysis)
+const OFFSETS = {
+  'task.files': 0x9B8,      // 2488 - files_struct pointer
+  'files.fdt': 0x20,        // 32 - fdtable pointer
+  'fdt.max_fds': 0x00,      // 0 - max file descriptors
+  'fdt.fd': 0x08,           // 8 - file descriptor array
+  'file.inode': 0x28,       // 40 - inode pointer
+  'inode.ino': 0x40,        // 64 - inode number
+  'inode.size': 0x50,       // 80 - file size
+  'inode.mode': 0x00,       // 0 - file mode
+};
+
 // Note: INIT_TASK doesn't work reliably in our Linux setup
 // We rely on process discovery instead
 
@@ -217,9 +229,10 @@ export default defineComponent({
             const files = kmem.readU64(proc.addr + BigInt(OFFSETS['task.files']));
             if (files && files > 0n) {
               proc.files = files;
-              logMsg(`  ${proc.name}[${proc.pid}]: files=0x${files.toString(16)}`);
-            } else {
-              logMsg(`  ${proc.name}[${proc.pid}]: no files pointer`);
+              // Only log first few for debugging
+              if (processes.indexOf(proc) < 3) {
+                logMsg(`  ${proc.name}[${proc.pid}]: files=0x${files.toString(16)}`);
+              }
             }
           }
 
@@ -239,7 +252,7 @@ export default defineComponent({
           // Read fdtable
           const fdtPtr = kmem.readU64(proc.files + BigInt(OFFSETS['files.fdt']));
           if (!fdtPtr) {
-            logMsg(`  ${proc.name}[${proc.pid}]: No fdtPtr at files+0x${OFFSETS['files.fdt'].toString(16)} (files=0x${proc.files.toString(16)})`);
+            // Skip processes without fdtable (kernel threads, etc)
             continue;
           }
 
@@ -247,7 +260,7 @@ export default defineComponent({
           const fdArrayPtr = kmem.readU64(fdtPtr + BigInt(OFFSETS['fdt.fd']));
 
           if (!maxFds || !fdArrayPtr) {
-            logMsg(`  ${proc.name}[${proc.pid}]: No maxFds/fdArrayPtr (maxFds=${maxFds}, fdArrayPtr=0x${fdArrayPtr?.toString(16) || '0'})`);
+            // Skip if no file descriptors
             continue;
           }
 
@@ -268,12 +281,6 @@ export default defineComponent({
               const size = kmem.readU64(inodePtr + BigInt(OFFSETS['inode.size'])) || 0n;
               const mode = kmem.readU32(inodePtr + BigInt(OFFSETS['inode.mode'])) || 0;
 
-              // Debug logging for first few files
-              if (openFiles.size < 3) {
-                logMsg(`    fd=${fd}: filePtr=0x${filePtr.toString(16)}, inodePtr=0x${inodePtr.toString(16)}`);
-                logMsg(`      ino=${ino}, size=${size}, mode=0x${mode.toString(16)}`);
-              }
-
               // Only add files that have valid data
               if (ino > 0n || size > 0n || mode > 0) {
                 openFiles.set(inodePtr, {
@@ -289,7 +296,8 @@ export default defineComponent({
             }
           }
 
-          if (foundInProc > 0) {
+          // Only log file counts for first few processes to reduce spam
+          if (foundInProc > 0 && processes.indexOf(proc) < 3) {
             logMsg(`  ${proc.name}[${proc.pid}]: ${foundInProc} open files`);
           }
         }
@@ -328,6 +336,8 @@ export default defineComponent({
         logMsg(`\nDiscovery complete: ${openFiles.size} unique files found`);
 
       } catch (e) {
+        console.error('Open Files Discovery error:', e);
+        console.error('Error stack:', (e as Error).stack);
         error.value = e instanceof Error ? e.message : String(e);
         logMsg(`Error: ${error.value}`);
       } finally {
@@ -350,18 +360,19 @@ export default defineComponent({
 });
 </script>
 
-<style scoped>
-/* Override body's #e0e0e0 color inheritance */
+<style>
+/* Using global styles for this component to ensure they override body styles */
 .open-files-test {
   padding: 20px;
   max-width: 1200px;
   margin: 0 auto;
-  color: #000;  /* Set black as base color */
+  color: #000 !important;
 }
 
-/* Ensure all child elements inherit black instead of body's gray */
+/* Very specific selectors to override inherited styles */
+.open-files-test,
 .open-files-test p,
-.open-files-test div,
+.open-files-test div:not(.error),
 .open-files-test span,
 .open-files-test li,
 .open-files-test td,
@@ -370,9 +381,15 @@ export default defineComponent({
 .open-files-test h1,
 .open-files-test h2,
 .open-files-test h3,
-.open-files-test h4,
-.open-files-test h5 {
-  color: inherit;  /* Inherit black from parent */
+.open-files-test h4 {
+  color: #000 !important;
+}
+
+/* Error styling with higher specificity */
+.open-files-test .error,
+.open-files-test .error * {
+  background: #ffebee !important;
+  color: #c62828 !important;
 }
 
 h2 {
@@ -395,76 +412,74 @@ h2 {
   cursor: not-allowed;
 }
 
-.error {
-  background: #ffebee;
-  color: #c62828;
+.open-files-test .summary {
+  background: #f5f5f5 !important;
   padding: 12px;
   margin: 20px 0;
   border-radius: 4px;
 }
 
-.summary {
-  background: #f5f5f5;
-  padding: 12px;
-  margin: 20px 0;
-  border-radius: 4px;
-  color: #000;  /* Explicit black text */
-}
-
-.summary p {
+.open-files-test .summary p {
+  color: #000 !important;
   margin: 4px 0;
 }
 
-.files-list {
+.open-files-test .files-list {
   margin: 20px 0;
 }
 
-.files-list table {
+.open-files-test .files-list table {
   width: 100%;
   border-collapse: collapse;
 }
 
-.files-list th {
+.open-files-test .files-list th {
   background: #e0e0e0;
   padding: 8px;
   text-align: left;
   border-bottom: 2px solid #999;
+  color: #000 !important;
 }
 
-.files-list td {
+.open-files-test .files-list td {
   padding: 6px 8px;
   border-bottom: 1px solid #ddd;
+  color: #000 !important;
 }
 
-.known-files {
+.open-files-test .known-files {
   margin: 20px 0;
   padding: 12px;
   background: #f5f5f5;
   border-radius: 4px;
 }
 
-.known-files ul {
+.open-files-test .known-files ul {
   list-style: none;
   padding: 0;
 }
 
-.known-files li {
+.open-files-test .known-files li {
   padding: 4px 0;
+  color: #000 !important;
 }
 
-.log {
+.open-files-test .log {
   margin-top: 20px;
   padding: 12px;
   background: #f5f5f5;
   border-radius: 4px;
-  color: #000;  /* Explicit black text */
 }
 
-.log pre {
+.open-files-test .log h4 {
+  color: #000 !important;
+}
+
+.open-files-test .log pre {
   margin: 8px 0;
   font-size: 12px;
   overflow-x: auto;
-  color: #000;  /* Explicit black text */
-  white-space: pre-wrap;  /* Preserve formatting */
+  color: #000 !important;
+  white-space: pre-wrap;
 }
 </style>

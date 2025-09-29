@@ -58,10 +58,12 @@ void MemoryOverview::ScanMemoryLayout(QemuConnection& qemu) {
     };
     
     nlohmann::json response;
+    // QMP support removed - comment out for now
+    #if 0
     if (qemu.SendQMPCommand(cmd, response)) {
         if (response.contains("return")) {
             std::string mtree = response["return"];
-            
+
             // Parse the memory tree output to find populated regions
             std::istringstream iss(mtree);
             std::string line;
@@ -118,7 +120,8 @@ void MemoryOverview::ScanMemoryLayout(QemuConnection& qemu) {
             }
         }
     }
-    
+    #endif  // End of commented out QMP code
+
     // Keep a broad view including low memory
     if (!regions.empty()) {
         // Find min/max addresses

@@ -1,5 +1,5 @@
 #include "beacon_reader.h"
-#include "memory_types.h"  // For SectionEntry, PIDEntry, PTEEntry
+#include "beacon_decoder.h"
 #include "guest_agent.h"
 #include <iostream>
 #include <iomanip>

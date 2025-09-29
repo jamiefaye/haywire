@@ -1,4 +1,5 @@
 #include "pid_selector.h"
+#include "kernel_discovery_backend.h"  // For ProcessInfo
 #include <algorithm>
 #include <cstring>
 #include <iostream>
@@ -17,43 +18,39 @@ PIDSelector::~PIDSelector() {
 }
 
 void PIDSelector::RefreshPIDList() {
-    if (!beaconReader) return;
-    
-    processes.clear();
-    
-    // Get raw PID list
-    pidList.clear();
-    if (!beaconReader->GetPIDList(pidList)) {
-        std::cerr << "Failed to get PID list from beacon\n";
+    if (!kernelDiscovery) {
+        std::cerr << "No kernel discovery backend available\n";
         return;
     }
-    
-    // Get process details from round-robin
-    auto processInfo = beaconReader->GetAllProcessInfo();
-    
-    std::cout << "PIDSelector: Got " << processInfo.size() << " processes with info from beacon\n";
+
+    processes.clear();
+
+    // Get raw PID list from kernel discovery
+    pidList.clear();
+    kernelDiscovery->GetPIDList(pidList);
+
+    std::cout << "PIDSelector: Got " << pidList.size() << " processes from kernel discovery\n";
     
     // Build display entries
     for (uint32_t pid : pidList) {
         ProcessDisplayEntry entry;
         entry.pid = pid;
-        
-        // Check if we have details from round-robin
-        auto it = processInfo.find(pid);
-        if (it != processInfo.end()) {
-            const auto& info = it->second;
-            entry.ppid = info.ppid;
+
+        // Get process info from kernel discovery
+        ProcessInfo info;
+        if (kernelDiscovery->GetProcessInfo(pid, info)) {
             entry.name = info.name;
+            entry.ppid = info.ppid;
             entry.exe = info.exe_path;
             entry.state = info.state;
             entry.vsizeMB = info.vsize / (1024 * 1024);
-            entry.rssMB = (info.rss * 4096) / (1024 * 1024);  // rss is in pages
+            entry.rssMB = info.rss / (1024 * 1024);
             entry.threads = info.num_threads;
-            entry.hasDetails = true;
+            entry.hasDetails = info.hasDetails;
         } else {
-            // No details available yet
-            entry.ppid = 0;
+            // No details available
             entry.name = "PID " + std::to_string(pid);
+            entry.ppid = 0;
             entry.exe = "";
             entry.state = '?';
             entry.vsizeMB = 0;
@@ -61,12 +58,11 @@ void PIDSelector::RefreshPIDList() {
             entry.threads = 0;
             entry.hasDetails = false;
         }
-        
+
         processes.push_back(entry);
     }
     
-    std::cout << "Refreshed PID list: " << processes.size() << " processes, "
-              << processInfo.size() << " with details\n";
+    std::cout << "Refreshed PID list: " << processes.size() << " processes\n";
     
     SortProcessList();
 }
@@ -112,13 +108,13 @@ void PIDSelector::Draw() {
     ImGui::SameLine();
     if (ImGui::RadioButton("Camera 2", selectedCamera == 2)) selectedCamera = 2;
     
-    // Current focus
-    if (beaconReader) {
-        uint32_t cam1Focus = beaconReader->GetCameraFocus(1);
-        uint32_t cam2Focus = beaconReader->GetCameraFocus(2);
-        ImGui::SameLine();
-        ImGui::Text("   Current: Cam1=%u, Cam2=%u", cam1Focus, cam2Focus);
-    }
+    // Current focus - no longer using camera system
+    // if (beaconReader) {
+    //     uint32_t cam1Focus = beaconReader->GetCameraFocus(1);
+    //     uint32_t cam2Focus = beaconReader->GetCameraFocus(2);
+    //     ImGui::SameLine();
+    //     ImGui::Text("   Current: Cam1=%u, Cam2=%u", cam1Focus, cam2Focus);
+    // }
     
     ImGui::Separator();
     
@@ -335,10 +331,9 @@ void PIDSelector::HandleSelection(uint32_t pid) {
         }
     }
     
-    // Camera focus is now set via RefreshCompanion in the callback
-    // No need to call SetCameraFocus here anymore
-    if (!beaconReader) {
-        std::cout << "WARNING: No beacon reader available!\n";
+    // Using kernel discovery backend now
+    if (!kernelDiscovery) {
+        std::cout << "WARNING: No kernel discovery backend available!\n";
     }
     
     // Call selection callback with PID and process name

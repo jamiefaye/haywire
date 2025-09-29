@@ -15,7 +15,7 @@
 namespace Haywire {
 
 // Forward declarations
-class BeaconReader;
+class KernelMemoryReader;
 class QemuConnection;
 class MemoryMapper;
 class CrunchedMemoryReader;
@@ -24,14 +24,14 @@ class MemoryUtils {
 public:
     // Read memory with automatic fallback between different methods
     // Tries in order:
-    // 1. Direct beacon reader (mmap'd file) for SHARED addresses
-    // 2. CrunchedReader for CRUNCHED/VIRTUAL addresses (if available)
+    // 1. KernelMemoryReader for VIRTUAL/PHYSICAL addresses
+    // 2. CrunchedReader for CRUNCHED addresses (if available)
     // 3. QemuConnection (which itself tries MemoryBackend then QMP)
     static bool ReadMemoryWithFallback(
         const TypedAddress& address,
         size_t size,
         std::vector<uint8_t>& buffer,
-        BeaconReader* beacon,
+        KernelMemoryReader* kernelReader,
         QemuConnection* qemu,
         MemoryMapper* mapper,
         CrunchedMemoryReader* crunchedReader = nullptr,
@@ -49,7 +49,7 @@ public:
     // Check if an address is readable with current resources
     static bool IsAddressReadable(
         const TypedAddress& address,
-        BeaconReader* beacon,
+        KernelMemoryReader* kernelReader,
         QemuConnection* qemu,
         MemoryMapper* mapper
     );

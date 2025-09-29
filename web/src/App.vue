@@ -314,7 +314,7 @@
       :key="viewer.id"
       :id="viewer.id"
       :memory-data="viewer.memoryData || memoryData || emptyMemoryData"
-      :offset="0"
+      :offset="viewer.offset"
       :initial-width="viewer.width"
       :initial-height="viewer.height"
       :initial-format="viewer.format"
@@ -2004,6 +2004,9 @@ function stopCanvasDrag() {
   isCanvasDragging.value = false
   // Update anchor points after drag completes
   updateMiniViewerAnchors()
+  if (isFileOpen.value) {
+    refreshMemory()
+  }
 }
 
 // Watch for display changes
@@ -2922,8 +2925,8 @@ async function handleElectronFileOpened({ path, size }: { path: string, size: nu
   isFileOpen.value = true
   currentOffset.value = 0
 
-  // Load initial data
-  await refreshMemory()
+  // Load initial data - use wrapper to get Electron version
+  await refreshMemoryWrapper()
 
   // Start change detection if enabled
   if (changeDetectionEnabled.value) {
@@ -2947,8 +2950,8 @@ async function handleElectronFileRefreshed({ size }: { size: number }) {
 
   fileSize.value = size
 
-  // Reload current view
-  await refreshMemory()
+  // Reload current view - use wrapper to get Electron version
+  await refreshMemoryWrapper()
 }
 
 function handleElectronFileClosed() {

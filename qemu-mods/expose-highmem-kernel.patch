@@ -1,0 +1,132 @@
+diff --git a/system/physmem.c b/system/physmem.c
+--- a/system/physmem.c
++++ b/system/physmem.c
+@@ -60,6 +60,78 @@
+ #include "migration/vmstate.h"
+ #include "qemu/range.h"
+
++/* ===== HAYWIRE HIGH MEMORY KERNEL EXPOSURE ===== */
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <unistd.h>
++
++static int haywire_highmem_fd = -1;
++static void *haywire_highmem_map = NULL;
++static size_t haywire_highmem_size = 0;
++static void *guest_ram_host = NULL;
++static size_t guest_ram_size = 0;
++
++#define HAYWIRE_HIGHMEM_FILE "/tmp/haywire-kernel-highmem"
++#define HIGHMEM_REGION_START 0x180000000ULL  /* 6GB mark */
++#define HIGHMEM_REGION_SIZE  0x40000000ULL   /* 1GB window */
++
++static void haywire_expose_highmem(void)
++{
++    if (haywire_highmem_fd >= 0 || !guest_ram_host) {
++        return;
++    }
++
++    /* Calculate offset into guest RAM where kernel structures live */
++    /* Guest RAM starts at PA 0x40000000, kernel structures around 0x1b4dbf000 */
++    /* So offset from RAM start is 0x1b4dbf000 - 0x40000000 = 0x174dbf000 (5.95GB) */
++    size_t kernel_offset = 0x174dbf000;
++
++    /* Check if this offset is within our guest RAM */
++    if (kernel_offset + HIGHMEM_REGION_SIZE > guest_ram_size) {
++        fprintf(stderr, "Haywire: Kernel region beyond guest RAM bounds\n");
++        return;
++    }
++
++    haywire_highmem_fd = open(HAYWIRE_HIGHMEM_FILE, O_RDWR | O_CREAT | O_TRUNC, 0600);
++    if (haywire_highmem_fd < 0) {
++        fprintf(stderr, "Haywire: Failed to create %s\n", HAYWIRE_HIGHMEM_FILE);
++        return;
++    }
++
++    haywire_highmem_size = HIGHMEM_REGION_SIZE;
++    if (ftruncate(haywire_highmem_fd, haywire_highmem_size) < 0) {
++        close(haywire_highmem_fd);
++        haywire_highmem_fd = -1;
++        return;
++    }
++
++    haywire_highmem_map = mmap(NULL, haywire_highmem_size,
++                               PROT_READ | PROT_WRITE, MAP_SHARED,
++                               haywire_highmem_fd, 0);
++    if (haywire_highmem_map == MAP_FAILED) {
++        haywire_highmem_map = NULL;
++        close(haywire_highmem_fd);
++        haywire_highmem_fd = -1;
++        return;
++    }
++
++    /* Copy the high memory region containing kernel structures */
++    void *kernel_mem_start = (char *)guest_ram_host + kernel_offset;
++    memcpy(haywire_highmem_map, kernel_mem_start, haywire_highmem_size);
++    msync(haywire_highmem_map, haywire_highmem_size, MS_SYNC);
++
++    fprintf(stderr, "Haywire: Exposed kernel high memory at %s\n", HAYWIRE_HIGHMEM_FILE);
++    fprintf(stderr, "  Guest PA range: 0x%llx - 0x%llx\n",
++            (unsigned long long)(0x40000000 + kernel_offset),
++            (unsigned long long)(0x40000000 + kernel_offset + haywire_highmem_size));
++    fprintf(stderr, "  Host VA: %p - %p\n",
++            kernel_mem_start, (char *)kernel_mem_start + haywire_highmem_size);
++    fprintf(stderr, "  File size: %zu MB\n", haywire_highmem_size / (1024*1024));
++}
++
++/* ===== END HAYWIRE ===== */
++
+ //#define DEBUG_SUBPAGE
+
+ #if !defined(CONFIG_USER_ONLY)
+@@ -1980,6 +2052,17 @@ static void ram_block_add(RAMBlock *new_block, Error **errp)
+         ram_list.mru_block = NULL;
+     }
+
++    /* Haywire: Capture main guest RAM for kernel exposure */
++    if (new_block->mr && strcmp(new_block->idstr, "mem") == 0) {
++        guest_ram_host = new_block->host;
++        guest_ram_size = new_block->used_length;
++        fprintf(stderr, "Haywire: Found main guest RAM 'mem' block\n");
++        fprintf(stderr, "  Host address: %p\n", guest_ram_host);
++        fprintf(stderr, "  Size: %zu MB\n", guest_ram_size / (1024*1024));
++        /* Expose high memory immediately */
++        haywire_expose_highmem();
++    }
++
+     ram_list.mru_block = NULL;
+     /* Write list before version */
+     smp_wmb();
+@@ -2474,6 +2557,31 @@ static MemTxResult flatview_write_continue(FlatView *fv, hwaddr addr,
+             memcpy(ram_ptr, buf, l);
+             invalidate_and_set_dirty(mr, addr1, l);
+         }
++
++        /* Haywire: Mirror writes to high memory region to our file */
++        if (haywire_highmem_map && guest_ram_host) {
++            /* Check if this write is to the kernel structure region */
++            hwaddr phys_addr = mr->addr + addr1;
++
++            /* Kernel structures are around PA 0x1b4dbf000 */
++            if (phys_addr >= 0x1b00000000ULL && phys_addr < 0x1c00000000ULL) {
++                /* Calculate offset from guest RAM start */
++                size_t ram_offset = phys_addr - 0x40000000;
++                size_t kernel_offset = 0x174dbf000;  /* Where kernel structures start in RAM */
++
++                if (ram_offset >= kernel_offset &&
++                    ram_offset < kernel_offset + haywire_highmem_size) {
++                    /* Update our exposed file */
++                    size_t file_offset = ram_offset - kernel_offset;
++                    if (file_offset + l <= haywire_highmem_size) {
++                        memcpy((char *)haywire_highmem_map + file_offset, buf, l);
++                        /* Lazy sync for performance */
++                        if ((random() % 100) == 0) {
++                            msync(haywire_highmem_map, haywire_highmem_size, MS_ASYNC);
++                        }
++                    }
++                }
++            }
++        }
+
+         if (release_lock) {
+             qemu_mutex_unlock_iothread();

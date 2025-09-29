@@ -6,6 +6,8 @@
 import { PagedMemory } from './paged-memory';
 import { PagedKernelDiscovery } from './kernel-discovery-paged';
 import { KernelMem, OFFSETS as KMEM_OFFSETS } from './kernel-mem';
+import { MemoryConfig } from './kernel-discovery';
+import { PhysicalAddress } from './types/physical-address';
 
 // Kernel struct offsets - from pahole/BTF
 interface KernelOffsets {
@@ -139,7 +141,7 @@ export class PageCacheDiscovery {
         if (pa) {
             console.log(`Translated to PA 0x${pa.toString(16)}`);
             // Verify it looks like a list_head
-            const fileOffset = pa - 0x40000000;
+            const fileOffset = pa - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START);
             const data = this.memory.readBytes(fileOffset, 16);
             if (data) {
                 const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -192,11 +194,11 @@ export class PageCacheDiscovery {
                 // Allow one to be null (empty list or single element)
                 const nextValid = next === BigInt(0) ||
                     (next > BigInt('0xffff000000000000')) ||
-                    (next > BigInt('0x40000000') && next < BigInt('0x200000000'));
+                    (next > BigInt(MemoryConfig.GUEST_RAM_START) && next < BigInt(MemoryConfig.GUEST_RAM_END));
 
                 const prevValid = prev === BigInt(0) ||
                     (prev > BigInt('0xffff000000000000')) ||
-                    (prev > BigInt('0x40000000') && prev < BigInt('0x200000000'));
+                    (prev > BigInt(MemoryConfig.GUEST_RAM_START) && prev < BigInt(MemoryConfig.GUEST_RAM_END));
 
                 // At least one should be non-zero and valid
                 const looksValid = (nextValid && prevValid) && (next !== BigInt(0) || prev !== BigInt(0));
@@ -279,16 +281,17 @@ export class PageCacheDiscovery {
 
         console.log(`Walking list from 0x${headAddr.toString(16)} with offset 0x${listOffset.toString(16)}`);
 
-        // If headAddr is already a file offset (< 0x40000000), use it directly
+        // If headAddr is already a file offset (< PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START)), use it directly
         // Otherwise try to translate it
         let headFileOffset: number;
-        if (headAddr < 0x40000000) {
+        const ramStart = PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START);
+        if (headAddr < ramStart) {
             headFileOffset = headAddr;
         } else {
             // Use BigInt to preserve precision when translating kernel VAs
             const headPA = this.translateKernelVA(BigInt(headAddr));
             if (!headPA) return entries;
-            headFileOffset = headPA - 0x40000000;
+            headFileOffset = headPA - ramStart;
         }
 
         // Read first next pointer
@@ -320,18 +323,18 @@ export class PageCacheDiscovery {
             // If it's a low address, it might be a file offset already
             let currentFileOffset: number;
 
-            if (current > BigInt(0x40000000)) {
+            if (current > MemoryConfig.GUEST_RAM_START) {
                 // Looks like it needs translation - keep as BigInt!
                 const pa = this.translateKernelVA(current);  // Pass BigInt directly
                 if (!pa) {
                     // Can't translate, might be a physical address already
-                    if (current < BigInt(0x200000000)) { // Reasonable PA range
-                        currentFileOffset = Number(current - BigInt(0x40000000));
+                    if (current < MemoryConfig.GUEST_RAM_END) { // Reasonable PA range
+                        currentFileOffset = Number(current - MemoryConfig.GUEST_RAM_START);
                     } else {
                         break; // Can't handle this address
                     }
                 } else {
-                    currentFileOffset = pa - 0x40000000;
+                    currentFileOffset = pa - ramStart;
                 }
             } else {
                 // Already a file offset
@@ -416,7 +419,7 @@ export class PageCacheDiscovery {
             const typePA = this.kmem.translateVA(typeVA);
             console.log(`  s_type VA->PA: 0x${typeVA.toString(16)} -> ${typePA ? '0x' + typePA.toString(16) : 'null'}`);
             if (typePA) {
-                const typeData = this.memory.readBytes(typePA - 0x40000000, 8);
+                const typeData = this.memory.readBytes(typePA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), 8);
                 if (typeData) {
                     const typePtr = new DataView(typeData.buffer, typeData.byteOffset, typeData.byteLength).getBigUint64(0, true);
                     console.log(`  s_type pointer: 0x${typePtr.toString(16)}`);
@@ -427,7 +430,7 @@ export class PageCacheDiscovery {
                     console.log(`  file_system_type VA->PA: 0x${typePtr.toString(16)} -> ${namePA ? '0x' + namePA.toString(16) : 'null'}`);
                     if (namePA) {
                         // Read the pointer to the name string
-                        const namePtrData = this.memory.readBytes(namePA - 0x40000000, 8);
+                        const namePtrData = this.memory.readBytes(namePA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), 8);
                         if (namePtrData) {
                             const namePtr = new DataView(namePtrData.buffer, namePtrData.byteOffset, namePtrData.byteLength).getBigUint64(0, true);
                             console.log(`  name pointer: 0x${namePtr.toString(16)}`);
@@ -437,7 +440,7 @@ export class PageCacheDiscovery {
                             const nameStrPA = this.kmem.translateVA(namePtr);
                             console.log(`  name string VA->PA: 0x${namePtr.toString(16)} -> ${nameStrPA ? '0x' + nameStrPA.toString(16) : 'null'}`);
                             if (nameStrPA) {
-                                const nameData = this.memory.readBytes(nameStrPA - 0x40000000, 32);
+                                const nameData = this.memory.readBytes(nameStrPA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), 32);
                                 if (nameData) {
                                     let fsType = '';
                                     for (let i = 0; i < nameData.length && nameData[i] !== 0; i++) {
@@ -460,7 +463,7 @@ export class PageCacheDiscovery {
             const idPA = this.kmem.translateVA(idVA);
             console.log(`  s_id VA->PA: 0x${idVA.toString(16)} -> ${idPA ? '0x' + idPA.toString(16) : 'null'}`);
             if (idPA) {
-                const idData = this.memory.readBytes(idPA - 0x40000000, 32);
+                const idData = this.memory.readBytes(idPA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), 32);
                 if (idData) {
                     let id = '';
                     for (let i = 0; i < idData.length && idData[i] !== 0; i++) {
@@ -525,7 +528,7 @@ export class PageCacheDiscovery {
                     // First, let's read the i_sb_list at offset 0x110 to verify it's a valid list_head
                     const listPA = this.translateKernelVA(inodeAddr + BigInt(0x110));
                     if (listPA) {
-                        const listData = this.memory.readBytes(listPA - 0x40000000, 16);
+                        const listData = this.memory.readBytes(listPA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), 16);
                         if (listData) {
                             const next = new DataView(listData.buffer, listData.byteOffset, 8).getBigUint64(0, true);
                             const prev = new DataView(listData.buffer, listData.byteOffset + 8, 8).getBigUint64(0, true);
@@ -538,7 +541,7 @@ export class PageCacheDiscovery {
                     // i_sb at offset from our offsets
                     const sbPA = this.translateKernelVA(inodeAddr + BigInt(this.offsets['inode.i_sb']));
                     if (sbPA) {
-                        const sbData = this.memory.readBytes(sbPA - 0x40000000, 8);
+                        const sbData = this.memory.readBytes(sbPA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), 8);
                         if (sbData) {
                             const sbPtr = new DataView(sbData.buffer, sbData.byteOffset, sbData.byteLength).getBigUint64(0, true);
                             console.log(`      i_sb (offset 0x${this.offsets['inode.i_sb'].toString(16)}): 0x${sbPtr.toString(16)} (should point back to superblock at 0x${sbAddrBig.toString(16)})`);
@@ -551,7 +554,7 @@ export class PageCacheDiscovery {
                     // i_mapping at offset 48 decimal (0x30 hex)
                     const mapPA = this.translateKernelVA(inodeAddr + BigInt(0x30));
                     if (mapPA) {
-                        const mapData = this.memory.readBytes(mapPA - 0x40000000, 8);
+                        const mapData = this.memory.readBytes(mapPA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), 8);
                         if (mapData) {
                             const mapPtr = new DataView(mapData.buffer, mapData.byteOffset, mapData.byteLength).getBigUint64(0, true);
                             console.log(`      i_mapping (offset 0x30/48dec): 0x${mapPtr.toString(16)}`);
@@ -561,7 +564,7 @@ export class PageCacheDiscovery {
                     // i_ino at offset 64 decimal (0x40 hex)
                     const inoPA = this.translateKernelVA(inodeAddr + BigInt(0x40));
                     if (inoPA) {
-                        const inoData = this.memory.readBytes(inoPA - 0x40000000, 8);
+                        const inoData = this.memory.readBytes(inoPA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), 8);
                         if (inoData) {
                             const ino = new DataView(inoData.buffer, inoData.byteOffset, inoData.byteLength).getBigUint64(0, true);
                             console.log(`      i_ino (offset 0x40/64dec): ${ino} (0x${ino.toString(16)})`);
@@ -574,7 +577,7 @@ export class PageCacheDiscovery {
                     // Let's also check i_mode at offset 0x00 to see if it's a valid file mode
                     const modePA = this.translateKernelVA(inodeAddr);
                     if (modePA) {
-                        const modeData = this.memory.readBytes(modePA - 0x40000000, 2);
+                        const modeData = this.memory.readBytes(modePA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), 2);
                         if (modeData) {
                             const mode = modeData[0] | (modeData[1] << 8);
                             console.log(`      i_mode (offset 0x00): 0x${mode.toString(16)}`);
@@ -597,7 +600,7 @@ export class PageCacheDiscovery {
                 // Skip inodes with NULL i_sb as they're unallocated
                 const sbCheckPA = this.translateKernelVA(inodeAddr + BigInt(this.offsets['inode.i_sb']));
                 if (sbCheckPA) {
-                    const sbCheckData = this.memory.readBytes(sbCheckPA - 0x40000000, 8);
+                    const sbCheckData = this.memory.readBytes(sbCheckPA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), 8);
                     if (sbCheckData) {
                         const sbPtr = new DataView(sbCheckData.buffer, sbCheckData.byteOffset, sbCheckData.byteLength).getBigUint64(0, true);
                         if (sbPtr === BigInt(0)) {
@@ -614,7 +617,7 @@ export class PageCacheDiscovery {
                     continue;
                 }
 
-                const mappingData = this.memory.readBytes(mappingPA - 0x40000000, 8);
+                const mappingData = this.memory.readBytes(mappingPA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), 8);
                 if (!mappingData) {
                     skippedInodeCount++;
                     continue;
@@ -633,7 +636,7 @@ export class PageCacheDiscovery {
                 const nrpagesPA = this.translateKernelVA(mappingAddr + BigInt(this.offsets['address_space.nrpages']));
                 if (!nrpagesPA) continue;
                 
-                const nrpagesData = this.memory.readBytes(nrpagesPA - 0x40000000, 8);
+                const nrpagesData = this.memory.readBytes(nrpagesPA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), 8);
                 if (!nrpagesData) continue;
                 
                 const nrpages = new DataView(nrpagesData.buffer, nrpagesData.byteOffset, nrpagesData.byteLength).getBigUint64(0, true);
@@ -650,7 +653,7 @@ export class PageCacheDiscovery {
                     const inoPA = this.translateKernelVA(inodeAddr + BigInt(this.offsets['inode.i_ino']));
                     let ino = BigInt(0);
                     if (inoPA) {
-                        const inoData = this.memory.readBytes(inoPA - 0x40000000, 8);
+                        const inoData = this.memory.readBytes(inoPA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), 8);
                         if (inoData) {
                             ino = new DataView(inoData.buffer, inoData.byteOffset, inoData.byteLength).getBigUint64(0, true);
                             // Debug: Check if this looks like a kernel address instead of an inode number
@@ -666,7 +669,7 @@ export class PageCacheDiscovery {
                     const sizePA = this.translateKernelVA(inodeAddr + BigInt(this.offsets['inode.i_size']));
                     let fileSize = BigInt(0);
                     if (sizePA) {
-                        const sizeData = this.memory.readBytes(sizePA - 0x40000000, 8);
+                        const sizeData = this.memory.readBytes(sizePA - PhysicalAddress.toNumber(MemoryConfig.GUEST_RAM_START), 8);
                         if (sizeData) {
                             fileSize = new DataView(sizeData.buffer, sizeData.byteOffset, sizeData.byteLength).getBigUint64(0, true);
                         }
