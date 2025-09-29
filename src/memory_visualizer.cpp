@@ -99,11 +99,12 @@ void MemoryVisualizer::SetTranslator(std::shared_ptr<ViewportTranslator> transla
     }
 }
 
-void MemoryVisualizer::SetBeaconTranslator(std::shared_ptr<BeaconTranslator> beaconTranslator) {
-    if (crunchedReader) {
-        crunchedReader->SetBeaconTranslator(beaconTranslator);
-    }
-}
+// OBSOLETE: BeaconTranslator removed
+// void MemoryVisualizer::SetBeaconTranslator(std::shared_ptr<BeaconTranslator> beaconTranslator) {
+//     if (crunchedReader) {
+//         crunchedReader->SetBeaconTranslator(beaconTranslator);
+//     }
+// }
 
 void MemoryVisualizer::SetProcessPid(int pid) {
     targetPid = pid;
@@ -549,9 +550,12 @@ void MemoryVisualizer::DrawFormulaBar() {
         
         // Try to get PA if we have a translator
         if (crunchedReader) {
-            auto translator = crunchedReader->GetBeaconTranslator();
-            if (translator) {
-                uint64_t pa = translator->TranslateAddress(targetPid, va);
+            // OBSOLETE: BeaconTranslator removed
+            // auto translator = crunchedReader->GetBeaconTranslator();
+            // if (translator) {
+            //     uint64_t pa = translator->TranslateAddress(targetPid, va);
+            if (false) {  // Disabled - need to use kernel discovery
+                uint64_t pa = 0;  // translator->TranslateAddress(targetPid, va);
                 if (pa != 0) {
                     addrDisplay << " p:" << std::hex << pa;
                     
@@ -605,9 +609,10 @@ void MemoryVisualizer::DrawFormulaBar() {
         
         // Show PA if available
         if (crunchedReader && targetPid > 0) {
-            auto translator = crunchedReader->GetBeaconTranslator();
-            if (translator) {
-                uint64_t pa = translator->TranslateAddress(targetPid, currentVA);
+            // OBSOLETE: BeaconTranslator removed
+            // auto translator = crunchedReader->GetBeaconTranslator();
+            if (false) {  // Disabled - need to use kernel discovery
+                uint64_t pa = 0;  // translator->TranslateAddress(targetPid, currentVA);
                 if (pa != 0) {
                     ImGui::SameLine();
                     ImGui::Text("p:%llx", pa);
@@ -717,6 +722,7 @@ void MemoryVisualizer::DrawBitmapViewers() {
 }
 
 void MemoryVisualizer::SetBeaconReader(std::shared_ptr<BeaconReader> reader) {
+    // Still needed for bitmap viewers' memory mapping
     if (bitmapViewerManager) {
         bitmapViewerManager->SetBeaconReader(reader);
     }

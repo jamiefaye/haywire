@@ -82,6 +82,10 @@ haywire-vm-mem
 # Linux source archives
 linux-source/
 
+# Media files (video .ts files, mp4s)
+*.mp4
+test_attempts/media/
+
 # QEMU binaries (built locally)
 qemu-mods/qemu-system-aarch64-unsigned
 

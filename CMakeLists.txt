@@ -102,10 +102,10 @@ add_executable(haywire
     # New memory reader using kernel discovery
     src/kernel_memory_reader.cpp
     src/memory_file_reader.cpp
-    # TODO: Remove beacon dependencies from other files
+    # Beacon files temporarily kept for memory mapping only
     src/beacon_reader.cpp
     src/beacon_decoder.cpp
-    src/beacon_translator.cpp
+    # beacon_translator removed - using kernel discovery for VA translation
     src/kernel_discovery_backend.cpp
     src/pid_selector.cpp
     src/bitmap_viewer.cpp

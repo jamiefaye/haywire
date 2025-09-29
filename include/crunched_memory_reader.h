@@ -5,7 +5,7 @@
 #include <memory>
 #include "address_space_flattener.h"
 #include "viewport_translator.h"
-#include "beacon_translator.h"
+// #include "beacon_translator.h"  // OBSOLETE - using kernel discovery
 #include "qemu_connection.h"
 
 namespace Haywire {
@@ -24,12 +24,13 @@ public:
     void SetTranslator(std::shared_ptr<ViewportTranslator> translator) {
         this->translator = translator;
     }
-    void SetBeaconTranslator(std::shared_ptr<BeaconTranslator> beaconTranslator) {
-        this->beaconTranslator = beaconTranslator;
-    }
-    std::shared_ptr<BeaconTranslator> GetBeaconTranslator() const {
-        return beaconTranslator;
-    }
+    // OBSOLETE: BeaconTranslator methods
+    // void SetBeaconTranslator(std::shared_ptr<BeaconTranslator> beaconTranslator) {
+    //     this->beaconTranslator = beaconTranslator;
+    // }
+    // std::shared_ptr<BeaconTranslator> GetBeaconTranslator() const {
+    //     return beaconTranslator;
+    // }
     void SetConnection(QemuConnection* qemu) {
         this->qemu = qemu;
     }
@@ -69,7 +70,7 @@ public:
 private:
     AddressSpaceFlattener* flattener;
     std::shared_ptr<ViewportTranslator> translator;
-    std::shared_ptr<BeaconTranslator> beaconTranslator;
+    // std::shared_ptr<BeaconTranslator> beaconTranslator;  // OBSOLETE
     QemuConnection* qemu;
     int targetPid;
     

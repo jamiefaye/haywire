@@ -4,8 +4,8 @@
 
 namespace Haywire {
 
-CrunchedMemoryReader::CrunchedMemoryReader() 
-    : flattener(nullptr), translator(nullptr), beaconTranslator(nullptr), 
+CrunchedMemoryReader::CrunchedMemoryReader()
+    : flattener(nullptr), translator(nullptr), // beaconTranslator removed
       qemu(nullptr), targetPid(-1) {
 }
 
@@ -20,8 +20,8 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
         if (firstCall) std::cerr << "CrunchedReader: No flattener!" << std::endl;
         return 0;
     }
-    if (!translator && !beaconTranslator) {
-        if (firstCall) std::cerr << "CrunchedReader: No translator (neither viewport nor beacon)!" << std::endl;
+    if (!translator) {
+        if (firstCall) std::cerr << "CrunchedReader: No translator!" << std::endl;
         return 0;
     }
     if (!qemu) {
@@ -35,7 +35,7 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
     
     if (firstCall) {
         std::cerr << "VA Mode: Reading crunched memory for PID " << targetPid
-                  << " using " << (beaconTranslator ? "BeaconTranslator" : "ViewportTranslator") 
+                  << " using ViewportTranslator" 
                   << std::endl;
         std::cerr << "  Flattened address space size: 0x" << std::hex 
                   << flattener->GetFlatSize() << std::dec << " bytes\n";
@@ -98,9 +98,7 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
             // Translate VA to PA using beacon translator if available, otherwise viewport
             translationsNeeded++;
             uint64_t physAddr = 0;
-            if (beaconTranslator) {
-                physAddr = beaconTranslator->TranslateAddress(targetPid, chunkVA);
-            } else if (translator) {
+            if (translator) {
                 physAddr = translator->TranslateAddress(targetPid, chunkVA);
             }
             
@@ -216,7 +214,7 @@ bool CrunchedMemoryReader::TestPageNonZero(uint64_t flatAddress, size_t size) {
         return false;
     }
 
-    if (!translator && !beaconTranslator) {
+    if (!translator) {
         return false;
     }
 
@@ -246,9 +244,7 @@ bool CrunchedMemoryReader::TestPageNonZero(uint64_t flatAddress, size_t size) {
 
         // Translate VA to PA
         uint64_t physAddr = 0;
-        if (beaconTranslator) {
-            physAddr = beaconTranslator->TranslateAddress(targetPid, chunkVA);
-        } else if (translator) {
+        if (translator) {
             physAddr = translator->TranslateAddress(targetPid, chunkVA);
         }
 
