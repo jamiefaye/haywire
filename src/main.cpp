@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <unistd.h>
 #include <cstring>
+#include <cstdlib>  // For getenv
 
 #include <GLFW/glfw3.h>
 #include "imgui.h"
@@ -18,6 +19,7 @@
 #include "beacon_reader.h"
 #include "beacon_decoder.h"
 #include "beacon_translator.h"
+#include "kernel_discovery_backend.h"
 #include "pid_selector.h"
 #include "memory_mapper.h"
 #include "binary_loader.h"
@@ -78,59 +80,112 @@ int main(int argc, char** argv) {
     MemoryOverview overview;
     HexOverlay hexOverlay;
     
+    // Use kernel discovery mode by default
+    bool useKernelDiscovery = true;
+    std::cout << "Kernel discovery mode enabled\n";
+
     // Create memory mapper for address translation
     auto memoryMapper = std::make_shared<MemoryMapper>();
-    
-    // Auto-connect to QEMU first (before beacon reader)
-    bool autoConnected = qemu.AutoConnect();
-    
+
+    // Auto-connect to QEMU for memory access
+    // When using kernel discovery, skip AutoConnect to avoid QMP port conflict
+    // Kernel discovery will handle QMP connection
+    bool autoConnected = false;
+    if (!useKernelDiscovery) {
+        autoConnected = qemu.AutoConnect();
+    } else {
+        // For kernel discovery mode, just connect to memory backend directly
+        if (qemu.GetMemoryBackend() && qemu.GetMemoryBackend()->AutoDetect()) {
+            autoConnected = true;
+            std::cout << "Memory backend connected for visualization\n";
+        }
+    }
+
     // If connected, initialize memory mapper
     if (autoConnected) {
         memoryMapper->DiscoverMemoryMap("localhost", 4444);
         memoryMapper->LogRegions();
     }
-    
-    // Beacon reader and PID selector
+
+    // Beacon reader and kernel discovery backend
     auto beaconReader = std::make_shared<BeaconReader>();
+    auto kernelDiscovery = std::make_shared<KernelDiscoveryBackend>();
     std::shared_ptr<BeaconTranslator> beaconTranslator;
     PIDSelector pidSelector;
-    
-    // Initialize beacon reader
-    if (beaconReader->Initialize()) {
-        std::cout << "Beacon reader initialized successfully\n";
-        
-        // Try to refresh beacon data if not found
-        if (!beaconReader->FindDiscovery()) {
-            std::cout << "No beacon data found - attempting to refresh...\n";
-            if (qemu.IsGuestAgentConnected()) {
-                beaconReader->RefreshCompanion(qemu.GetGuestAgent());
-                // Give companion time to write beacon data
-                sleep(2);
-                beaconReader->FindDiscovery();
-            } else {
-                std::cout << "Guest agent not connected - cannot refresh beacon data\n";
-                std::cout << "Ensure QGA is running in the VM\n";
-            }
+
+    // Initialize VA translation backend
+    bool kernelDiscoveryInitialized = false;
+    if (useKernelDiscovery) {
+        std::cout << "Using kernel discovery mode for VA translation\n";
+        std::cout << "Companion process will NOT be used\n";
+
+        // Try to initialize kernel discovery with default settings
+        // Use QMP port 4445 to get correct swapper PGD
+        if (kernelDiscovery->Initialize("/tmp/haywire-vm-mem", "localhost", 4445)) {
+            std::cout << "Kernel discovery initialized successfully\n";
+            kernelDiscoveryInitialized = true;
+
+            // Get process list
+            std::vector<uint32_t> pids;
+            kernelDiscovery->GetPIDList(pids);
+            std::cout << "Found " << pids.size() << " processes via kernel discovery\n";
+        } else {
+            std::cerr << "Failed to initialize kernel discovery\n";
+            std::cerr << "Please configure memory file path and QMP connection\n";
+            // Show connection dialog to configure
+            // show_connection_window = true; // TODO: Fix variable scope
         }
-        
-        pidSelector.SetBeaconReader(beaconReader);
-        
-        // Create beacon translator using the reader
-        beaconTranslator = std::make_shared<BeaconTranslator>(beaconReader);
-        visualizer.SetBeaconTranslator(beaconTranslator);
-        visualizer.SetBeaconReader(beaconReader);  // Also set beacon reader for bitmap viewers
-        visualizer.SetQemuConnection(&qemu);  // Pass QEMU connection for VA->PA translation
-        visualizer.SetMemoryMapper(memoryMapper);  // Pass memory mapper for GPA->offset translation
-        
-        // Wire up the Select button to open the PID selector
-        visualizer.onProcessSelectorClick = [&pidSelector]() {
+    }
+
+    // Only use beacon reader if kernel discovery is not enabled or failed
+    if (!useKernelDiscovery) {
+        std::cout << "Using beacon reader mode (companion process)\n";
+
+        if (beaconReader->Initialize()) {
+            std::cout << "Beacon reader initialized successfully\n";
+
+            // Try to refresh beacon data if not found
+            if (!beaconReader->FindDiscovery()) {
+                std::cout << "No beacon data found - attempting to refresh...\n";
+                // REMOVED: Guest agent
+                // if (qemu.IsGuestAgentConnected()) {
+                //     beaconReader->RefreshCompanion(qemu.GetGuestAgent());
+                //     sleep(2);
+                //     beaconReader->FindDiscovery();
+                // } else {
+                    std::cout << "Guest agent not connected - cannot refresh beacon data\n";
+                    std::cout << "Ensure QGA is running in the VM\n";
+                // }
+            }
+
+            pidSelector.SetBeaconReader(beaconReader);
+
+            // Create beacon translator using the reader
+            beaconTranslator = std::make_shared<BeaconTranslator>(beaconReader);
+            visualizer.SetBeaconTranslator(beaconTranslator);
+            visualizer.SetBeaconReader(beaconReader);  // Also set beacon reader for bitmap viewers
+        }
+    }
+
+    // Set common connections regardless of mode
+    visualizer.SetQemuConnection(&qemu);  // Pass QEMU connection for VA->PA translation
+    visualizer.SetMemoryMapper(memoryMapper);  // Pass memory mapper for GPA->offset translation
+
+    // Wire up the Select button to open the PID selector
+    visualizer.onProcessSelectorClick = [&pidSelector, useKernelDiscovery]() {
+        if (!useKernelDiscovery) {
             pidSelector.Show();
-        };
-        
+        } else {
+            std::cout << "PID selector not yet implemented for kernel discovery mode\n";
+        }
+    };
+
+    if (!useKernelDiscovery && beaconTranslator) {
         std::cout << "Beacon translator created and connected to visualizer\n";
-        
-        // Set callback to switch to process mode when PID is selected
-        pidSelector.SetSelectionCallback([&](uint32_t pid, const std::string& processName) {
+    }
+
+    // Set callback to switch to process mode when PID is selected
+    pidSelector.SetSelectionCallback([&](uint32_t pid, const std::string& processName) {
             std::cout << "\n=== Main: PID Selection Callback ===\n";
             std::cout << "Switching to process " << pid << " (" << processName << ") mode\n";
             overview.SetProcessMode(true, pid);
@@ -139,15 +194,18 @@ int main(int argc, char** argv) {
             visualizer.SetCurrentProcessName(processName);
             
             // With companion_oneshot, we trigger a refresh with the target PID
-            if (qemu.IsGuestAgentConnected()) {
-                std::cout << "Refreshing beacon data for PID " << pid << "...\n";
-                beaconReader->RefreshCompanion(qemu.GetGuestAgent(), pid);
+            // REMOVED: Guest agent
+            if (false) { // was: !useKernelDiscovery && qemu.IsGuestAgentConnected()
+                // std::cout << "Refreshing beacon data for PID " << pid << "...\n";
+                // beaconReader->RefreshCompanion(qemu.GetGuestAgent(), pid);
 
                 // Give it a moment to complete
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
                 // Re-scan for updated beacon data
-                beaconReader->FindDiscovery();
+                if (!useKernelDiscovery) {
+                    beaconReader->FindDiscovery();
+                }
             } else {
                 // Without QGA, we can't trigger oneshot companion
                 std::cout << "Warning: Guest agent not connected, cannot refresh camera data\n";
@@ -168,7 +226,9 @@ int main(int argc, char** argv) {
                 retries--;
                 
                 // Re-scan beacon data to pick up new camera writes
-                beaconReader->FindDiscovery();
+                if (!useKernelDiscovery) {
+                    beaconReader->FindDiscovery();
+                }
             }
             
             if (gotSections) {
@@ -281,20 +341,17 @@ int main(int argc, char** argv) {
                 std::cout << "Waiting for camera data for PID " << pid << "\n";
             }
         });
-    } else {
-        std::cerr << "Failed to initialize beacon reader - PID selector disabled\n";
-    }
     
     // Create viewport translator using guest agent
     std::shared_ptr<ViewportTranslator> translator;
     
-    // If connected and guest agent available, create translator
-    if (autoConnected && qemu.IsGuestAgentConnected()) {
-        translator = std::make_shared<ViewportTranslator>(qemu.GetGuestAgentPtr());
-        visualizer.SetTranslator(translator);
-        visualizer.SetGuestAgent(qemu.GetGuestAgent());
-        std::cerr << "Viewport translator initialized with guest agent" << std::endl;
-    }
+    // REMOVED: Guest agent translator
+    // if (autoConnected && qemu.IsGuestAgentConnected()) {
+    //     translator = std::make_shared<ViewportTranslator>(qemu.GetGuestAgentPtr());
+    //     visualizer.SetTranslator(translator);
+    //     visualizer.SetGuestAgent(qemu.GetGuestAgent());
+    //     std::cerr << "Viewport translator initialized with guest agent" << std::endl;
+    // }
     
     // Connect visualizer to overview for process map display
     visualizer.onProcessMapLoaded = [&overview, &visualizer](int pid, const std::vector<GuestMemoryRegion>& regions) {
@@ -312,7 +369,9 @@ int main(int argc, char** argv) {
     bool show_help = false;  // Keyboard shortcuts help
     bool show_memory_view = true;
     bool show_overview = false;
-    bool show_connection_window = !autoConnected;  // Only show if auto-connect failed
+    // Show connection window to configure memory file and QMP port
+    // Only show connection window if not using kernel discovery AND auto-connect failed
+    bool show_connection_window = !useKernelDiscovery && !autoConnected;
     bool show_binary_loader = false;
     std::string binary_file_path;
     BinaryLoader binary_loader;
@@ -344,14 +403,19 @@ int main(int argc, char** argv) {
         if (currentTime - lastBeaconRefresh > beaconRefreshInterval) {
             lastBeaconRefresh = currentTime;
 
-            // Trigger companion_oneshot to refresh beacon data
-            if (qemu.IsGuestAgentConnected()) {
-                uint32_t focusPid = visualizer.GetTargetPID();  // Get current focus PID
-                beaconReader->RefreshCompanion(qemu.GetGuestAgent(), focusPid);
+            // Trigger companion_oneshot to refresh beacon data (only in beacon mode)
+            // REMOVED: Guest agent
+            if (false) { // was: !useKernelDiscovery && qemu.IsGuestAgentConnected()
+                // uint32_t focusPid = visualizer.GetTargetPID();
+                // beaconReader->RefreshCompanion(qemu.GetGuestAgent(), focusPid);
+            } else if (useKernelDiscovery) {
+                // In kernel discovery mode, refresh from kernel structures
+                // Commented out to avoid looping
+                // kernelDiscovery->RefreshProcessList();
             }
 
-            // Rescan beacon data
-            if (beaconReader->FindDiscovery()) {
+            // Rescan beacon data (only in beacon mode)
+            if (!useKernelDiscovery && beaconReader->FindDiscovery()) {
                 // Beacon data refreshed - process list will update automatically
                 // PIDSelector will see the new data next time it's opened
             }
@@ -467,20 +531,52 @@ int main(int argc, char** argv) {
         // QEMU Connection window (draw after main window so it appears on top)
         if (show_connection_window) {
             ImGui::SetNextWindowPos(ImVec2(400, 200), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(ImVec2(400, 150), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(400, 250), ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowFocus();  // Bring to front
-            ImGui::Begin("QEMU Connection", &show_connection_window, 
+            ImGui::Begin("QEMU Connection", &show_connection_window,
                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
-            qemu.DrawConnectionUI();
+
+            if (useKernelDiscovery) {
+                // Kernel discovery configuration UI
+                ImGui::Text("Kernel Discovery Mode");
+                ImGui::Separator();
+
+                static char memFilePath[256] = "/tmp/haywire-vm-mem";
+                static char qmpHost[256] = "localhost";
+                static int qmpPort = 4445;
+
+                ImGui::InputText("Memory File", memFilePath, sizeof(memFilePath));
+                ImGui::InputText("QMP Host", qmpHost, sizeof(qmpHost));
+                ImGui::InputInt("QMP Port", &qmpPort);
+
+                if (ImGui::Button("Connect", ImVec2(150, 0))) {
+                    // Try to initialize kernel discovery with new settings
+                    if (kernelDiscovery->Initialize(memFilePath, qmpHost, qmpPort)) {
+                        std::cout << "Kernel discovery connected successfully\n";
+                        kernelDiscoveryInitialized = true;
+                        show_connection_window = false;
+
+                        // Get process list
+                        std::vector<uint32_t> pids;
+                        kernelDiscovery->GetPIDList(pids);
+                        std::cout << "Found " << pids.size() << " processes\n";
+                    } else {
+                        std::cerr << "Failed to connect with kernel discovery\n";
+                    }
+                }
+            } else {
+                // Original QemuConnection UI
+                qemu.DrawConnectionUI();
+            }
             ImGui::End();
             
-            // Create translator when newly connected
-            if (qemu.IsConnected() && qemu.IsGuestAgentConnected() && !translator) {
-                translator = std::make_shared<ViewportTranslator>(qemu.GetGuestAgentPtr());
-                visualizer.SetTranslator(translator);
-                visualizer.SetGuestAgent(qemu.GetGuestAgent());
-                std::cerr << "Viewport translator initialized with guest agent" << std::endl;
-            }
+            // REMOVED: Guest agent translator
+            // if (qemu.IsConnected() && qemu.IsGuestAgentConnected() && !translator) {
+            //     translator = std::make_shared<ViewportTranslator>(qemu.GetGuestAgentPtr());
+            //     visualizer.SetTranslator(translator);
+            //     visualizer.SetGuestAgent(qemu.GetGuestAgent());
+            //     std::cerr << "Viewport translator initialized with guest agent" << std::endl;
+            // }
         }
         
         // Handle overview scanning when connected

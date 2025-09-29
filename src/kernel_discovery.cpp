@@ -18,6 +18,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <errno.h>
 // #include <nlohmann/json.hpp>  // Not needed for basic testing
 // using json = nlohmann::json;
 
@@ -25,10 +26,10 @@ namespace Haywire {
 
 // Kernel structure offsets (from working web version kernel-discovery.ts)
 struct KernelOffsets {
-    // task_struct offsets
-    size_t tasks_list = 0x7e0;     // TASKS_LIST_OFFSET (NOT 0x7e8!)
-    size_t tasks_next = 0x7e0;     // tasks.next
-    size_t tasks_prev = 0x7e8;     // tasks.prev (tasks_list + 8)
+    // task_struct offsets (verified with pahole)
+    size_t tasks_list = 0x680;     // struct list_head tasks at 1664
+    size_t tasks_next = 0x680;     // tasks.next
+    size_t tasks_prev = 0x688;     // tasks.prev (tasks_list + 8)
     size_t pid = 0x750;            // PID_OFFSET
     size_t comm = 0x970;           // COMM_OFFSET
     size_t mm = 0x6d0;             // MM_OFFSET
@@ -144,18 +145,22 @@ public:
     bool DiscoverKernel() {
         std::cout << "\n=== Kernel Discovery ===" << std::endl;
 
-        // Try to get kernel info from QMP first
         if (qmpSocket >= 0) {
             std::cout << "Querying QMP for kernel info..." << std::endl;
             if (QueryKernelInfo()) {
                 // Successfully got kernel info from QMP
                 std::cout << "QMP query successful" << std::endl;
+                std::cout << "Got swapper PGD from QMP: 0x" << std::hex << kernelInfo.swapper_pgd << std::dec << std::endl;
+                std::cout << "Got current_task from QMP: 0x" << std::hex << kernelInfo.current_task << std::dec << std::endl;
             } else {
-                std::cout << "QMP query failed, will use scanning" << std::endl;
+                std::cout << "QMP query failed, will use fallback" << std::endl;
+                // FALLBACK: Use known good swapper PGD for this specific VM
+                kernelInfo.swapper_pgd = 0x136deb000;
+                std::cout << "Using FALLBACK swapper PGD: 0x" << std::hex << kernelInfo.swapper_pgd << std::dec << std::endl;
             }
         }
 
-        // If no QMP, scan for swapper PGD
+        // If still no PGD, try scanning (usually won't work correctly)
         if (kernelInfo.swapper_pgd == 0) {
             std::cout << "Scanning for swapper PGD..." << std::endl;
             kernelInfo.swapper_pgd = FindSwapperPGD();
@@ -172,6 +177,19 @@ public:
 
     bool DiscoverProcesses() {
         std::cout << "\n=== Process Discovery ===" << std::endl;
+
+        // If we have current_task from QMP, try walking the list first
+        if (kernelInfo.current_task != 0) {
+            std::cout << "Walking process list from current_task: 0x"
+                      << std::hex << kernelInfo.current_task << std::dec << std::endl;
+            if (WalkProcessListFromCurrentTask()) {
+                std::cout << "Successfully walked process list, found "
+                          << processes.size() << " processes" << std::endl;
+                return true;
+            }
+            std::cout << "Failed to walk from current_task, falling back to scanning" << std::endl;
+        }
+
         std::cout << "Scanning memory for task_structs..." << std::endl;
 
         processes.clear();
@@ -507,11 +525,23 @@ private:
     }
 
     bool ConnectQMP() {
+        // Skip QMP connection if port is 0
+        if (qmpPort == 0) {
+            std::cout << "QMP port is 0, skipping QMP connection" << std::endl;
+            return false;
+        }
+
         qmpSocket = socket(AF_INET, SOCK_STREAM, 0);
         if (qmpSocket < 0) {
             std::cerr << "Failed to create socket" << std::endl;
             return false;
         }
+
+        // Set socket timeout to prevent hanging
+        struct timeval timeout;
+        timeout.tv_sec = 2;  // 2 second timeout
+        timeout.tv_usec = 0;
+        setsockopt(qmpSocket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
         struct sockaddr_in addr;
         addr.sin_family = AF_INET;
@@ -533,14 +563,40 @@ private:
         }
         std::cout << "Connected to QMP successfully" << std::endl;
 
-        // Read QMP greeting
+        // Read QMP greeting - use blocking recv with timeout already set
         char buffer[4096];
-        recv(qmpSocket, buffer, sizeof(buffer), 0);
+        std::cout << "Reading QMP greeting..." << std::endl;
 
-        // Enter command mode
+        int n = recv(qmpSocket, buffer, sizeof(buffer)-1, 0);  // Blocking recv
+        if (n <= 0) {
+            std::cerr << "Failed to receive QMP greeting: " << strerror(errno) << std::endl;
+            close(qmpSocket);
+            qmpSocket = -1;
+            return false;
+        }
+
+        buffer[n] = '\0';
+        std::cout << "QMP greeting received (" << n << " bytes)" << std::endl;
+
+        // Check if it contains QMP banner
+        if (!strstr(buffer, "\"QMP\"")) {
+            std::cerr << "Invalid QMP greeting (no QMP banner)" << std::endl;
+            close(qmpSocket);
+            qmpSocket = -1;
+            return false;
+        }
+
+        // Send capabilities
         std::string cmd = "{\"execute\": \"qmp_capabilities\"}\n";
         send(qmpSocket, cmd.c_str(), cmd.length(), 0);
-        recv(qmpSocket, buffer, sizeof(buffer), 0);
+        std::cout << "Sent qmp_capabilities command" << std::endl;
+
+        // Read capabilities response
+        n = recv(qmpSocket, buffer, sizeof(buffer)-1, 0);  // Blocking recv
+        if (n > 0) {
+            buffer[n] = '\0';
+            std::cout << "QMP capabilities response received" << std::endl;
+        }
 
         return true;
     }
@@ -553,12 +609,22 @@ private:
         std::string cmd = "{\"execute\": \"query-kernel-info\", \"arguments\": {\"cpu-index\": 0}}\n";
         send(qmpSocket, cmd.c_str(), cmd.length(), 0);
 
+        // Send the command and wait for response
+        std::cout << "Sent query-kernel-info command, waiting for response..." << std::endl;
+
+        // Receive response using blocking recv (timeout already set on socket)
         char buffer[8192];
-        int received = recv(qmpSocket, buffer, sizeof(buffer)-1, 0);
-        if (received <= 0) return false;
+        int received = recv(qmpSocket, buffer, sizeof(buffer)-1, 0);  // Blocking recv
+
+        if (received <= 0) {
+            std::cerr << "Failed to receive query-kernel-info response: " << strerror(errno) << std::endl;
+            return false;
+        }
 
         buffer[received] = '\0';
         std::string response(buffer);
+        std::cout << "QMP response received (" << received << " bytes)" << std::endl;
+        std::cout << "Response: " << response.substr(0, 200) << "..." << std::endl;
 
         // Parse ttbr1 (swapper PGD) from response manually
         size_t ttbr1Pos = response.find("\"ttbr1\":");
@@ -579,9 +645,11 @@ private:
             if (end > start) {
                 std::string numStr = response.substr(start, end - start);
                 value = std::stoull(numStr, nullptr, 0);
-                kernelInfo.swapper_pgd = value;
+                // Mask off non-address bits like Electron version does
+                kernelInfo.swapper_pgd = value & 0xFFFFFFFFF000ULL;
                 std::cout << "QMP: Found swapper PGD (TTBR1) = 0x"
-                          << std::hex << value << std::dec << std::endl;
+                          << std::hex << kernelInfo.swapper_pgd << std::dec
+                          << " (raw ttbr1=0x" << std::hex << value << std::dec << ")" << std::endl;
             }
         }
 
@@ -605,6 +673,70 @@ private:
                 kernelInfo.current_task = value;
                 std::cout << "QMP: Found current task = 0x"
                           << std::hex << value << std::dec << std::endl;
+
+                // Check if current_task points to something that looks like a task_struct
+                // First, let's see if it's a physical address that we can read directly
+                if (value >= 0x40000000 && value < 0x40000000 + memorySize) {
+                    std::cout << "  current_task looks like a physical address, examining..." << std::endl;
+                    uint64_t offset = value - 0x40000000;
+                    uint8_t* task = (uint8_t*)memBase + offset;
+
+                    // Try to read PID at offset 0x750
+                    uint32_t pid = *(uint32_t*)(task + 0x750);
+                    std::cout << "  PID at offset 0x750: " << pid << std::endl;
+
+                    // Try to read comm at offset 0x970
+                    char* comm = (char*)(task + 0x970);
+                    std::string name(comm, strnlen(comm, 16));
+                    std::cout << "  Comm at offset 0x970: '" << name << "'" << std::endl;
+
+                    // Try to read mm at offset 0x6d0
+                    uint64_t mm = *(uint64_t*)(task + 0x6d0);
+                    std::cout << "  mm at offset 0x6d0: 0x" << std::hex << mm << std::dec << std::endl;
+
+                    // Check tasks list pointers
+                    uint64_t tasks_next = *(uint64_t*)(task + 0x680);
+                    uint64_t tasks_prev = *(uint64_t*)(task + 0x688);
+                    std::cout << "  tasks.next at 0x680: 0x" << std::hex << tasks_next << std::dec << std::endl;
+                    std::cout << "  tasks.prev at 0x688: 0x" << std::hex << tasks_prev << std::dec << std::endl;
+                } else if (IsKernelPointer(value)) {
+                    std::cout << "  current_task looks like a kernel VA (0x" << std::hex << value
+                              << std::dec << "), translating..." << std::endl;
+
+                    // We have swapper_pgd, let's translate and examine
+                    if (kernelInfo.swapper_pgd != 0) {
+                        uint64_t taskPA = TranslateVA(value, kernelInfo.swapper_pgd);
+                        std::cout << "  Translated to PA: 0x" << std::hex << taskPA << std::dec << std::endl;
+
+                        if (taskPA >= 0x40000000 && taskPA < 0x40000000 + memorySize) {
+                            uint64_t offset = taskPA - 0x40000000;
+                            uint8_t* task = (uint8_t*)memBase + offset;
+
+                            // Try to read PID at offset 0x750
+                            uint32_t pid = *(uint32_t*)(task + 0x750);
+                            std::cout << "  PID at offset 0x750: " << pid << std::endl;
+
+                            // Try to read comm at offset 0x970
+                            char* comm = (char*)(task + 0x970);
+                            std::string name(comm, strnlen(comm, 16));
+                            std::cout << "  Comm at offset 0x970: '" << name << "'" << std::endl;
+
+                            // Check if it looks valid
+                            if (pid > 0 && pid < 100000 && IsPrintableString(name)) {
+                                std::cout << "  ✓ Looks like a valid task_struct!" << std::endl;
+                            } else {
+                                std::cout << "  ✗ Doesn't look like a valid task_struct" << std::endl;
+                            }
+                        } else {
+                            std::cout << "  Translation failed or PA out of range" << std::endl;
+                        }
+                    } else {
+                        std::cout << "  swapper_pgd not available yet" << std::endl;
+                    }
+                } else {
+                    std::cout << "  current_task value 0x" << std::hex << value
+                              << std::dec << " doesn't look like a valid address" << std::endl;
+                }
             }
         }
 
@@ -969,6 +1101,116 @@ private:
         }
 
         return 0;
+    }
+
+    bool WalkProcessListFromCurrentTask() {
+        if (kernelInfo.current_task == 0) return false;
+
+        processes.clear();
+        std::set<uint64_t> visitedTasks;
+
+        // current_task is a kernel VA, translate to PA
+        uint64_t currentTaskPA = TranslateVA(kernelInfo.current_task, kernelInfo.swapper_pgd);
+        if (currentTaskPA == 0) {
+            std::cerr << "Failed to translate current_task VA to PA" << std::endl;
+            return false;
+        }
+
+        // Offset to file position
+        if (currentTaskPA < 0x40000000) {
+            std::cerr << "current_task PA out of range: 0x" << std::hex << currentTaskPA << std::dec << std::endl;
+            return false;
+        }
+
+        uint64_t startOffset = currentTaskPA - 0x40000000;
+        uint64_t currentOffset = startOffset;
+        int processCount = 0;
+        const int MAX_PROCESSES = 10000;  // Safety limit
+
+        std::cout << "Starting walk from PA 0x" << std::hex << currentTaskPA << std::dec << std::endl;
+
+        do {
+            // Avoid infinite loops
+            if (processCount++ > MAX_PROCESSES) {
+                std::cerr << "Too many processes, stopping walk" << std::endl;
+                break;
+            }
+
+            // Check if we've seen this task before
+            if (visitedTasks.count(currentOffset) > 0) {
+                // We've completed the circular list
+                std::cout << "Completed circular list walk" << std::endl;
+                break;
+            }
+            visitedTasks.insert(currentOffset);
+
+            // Read task_struct at current offset
+            if (currentOffset >= memorySize) {
+                std::cerr << "Task offset out of bounds" << std::endl;
+                break;
+            }
+
+            uint8_t* task = (uint8_t*)memBase + currentOffset;
+
+            // Extract process info
+            ProcessInfo proc;
+            proc.task_addr = currentOffset + 0x40000000;  // Convert back to PA
+            proc.pid = *(uint32_t*)(task + kernelInfo.offsets.pid);
+
+            // Validate PID
+            if (proc.pid == 0 || proc.pid > 1000000) {
+                std::cerr << "Invalid PID " << proc.pid << " at offset 0x"
+                          << std::hex << currentOffset << std::dec << std::endl;
+                break;
+            }
+
+            // Extract comm (process name)
+            char* comm = (char*)(task + kernelInfo.offsets.comm);
+            proc.comm = std::string(comm, strnlen(comm, 16));
+
+            // Get mm_struct pointer
+            proc.mm_addr = *(uint64_t*)(task + kernelInfo.offsets.mm);
+            proc.has_mm = (proc.mm_addr != 0);
+            proc.is_kernel_thread = !proc.has_mm;
+
+            processes.push_back(proc);
+
+            // Get next task
+            uint64_t nextVA = *(uint64_t*)(task + kernelInfo.offsets.tasks_next);
+
+            // The next pointer points to the tasks member of the next task_struct
+            // Subtract offset to get actual task_struct address
+            if (nextVA <= kernelInfo.offsets.tasks_next) {
+                std::cerr << "Invalid next pointer" << std::endl;
+                break;
+            }
+
+            uint64_t nextTaskVA = nextVA - kernelInfo.offsets.tasks_next;
+
+            // Translate to PA
+            uint64_t nextTaskPA = TranslateVA(nextTaskVA, kernelInfo.swapper_pgd);
+            if (nextTaskPA == 0) {
+                std::cerr << "Failed to translate next task VA" << std::endl;
+                break;
+            }
+
+            if (nextTaskPA < 0x40000000) {
+                std::cerr << "Next task PA out of range" << std::endl;
+                break;
+            }
+
+            currentOffset = nextTaskPA - 0x40000000;
+
+            // Check if we're back at the start
+            if (currentOffset == startOffset) {
+                std::cout << "Completed circular list" << std::endl;
+                break;
+            }
+
+        } while (true);
+
+        std::cout << "Walk found " << processes.size() << " processes" << std::endl;
+        return processes.size() > 0;
     }
 
     // Page table walking functions (from web version)

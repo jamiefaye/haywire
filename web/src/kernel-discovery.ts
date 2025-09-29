@@ -36,8 +36,8 @@ export const KernelConstants = {
     MM_OFFSET: 0x6d0,  // Fixed: was 0x658, should be 1744 decimal
     PGD_OFFSET_IN_MM: 0x68,  // Fixed: was 0x48, should be 104 decimal
 
-    // Linked list offsets (Linux 6.x)
-    TASKS_LIST_OFFSET: 0x7e0,  // task_struct.tasks list_head
+    // Linked list offsets (Linux 6.x) - verified with pahole
+    TASKS_LIST_OFFSET: 0x680,  // task_struct.tasks list_head at offset 1664
     LIST_HEAD_SIZE: 16,  // sizeof(struct list_head) = 2 pointers
 
     PAGE_SIZE: 4096,

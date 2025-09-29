@@ -1,0 +1,288 @@
+/**
+ * Kernel Discovery Backend for Haywire
+ *
+ * Replaces beacon/companion system with host-side kernel discovery
+ * using QMP and memory scanning
+ */
+
+#include "kernel_discovery_backend.h"
+#include "beacon_decoder.h"  // For SectionEntry definition
+#include <iostream>
+#include <iomanip>
+#include <algorithm>
+#include <numeric>
+#include <cstring>  // For memset and strncpy
+
+namespace Haywire {
+
+KernelDiscoveryBackend::KernelDiscoveryBackend()
+    : initialized(false), currentPID(0) {
+    // Don't create discovery here - will be created in Initialize()
+}
+
+KernelDiscoveryBackend::~KernelDiscoveryBackend() {
+    Cleanup();
+}
+
+bool KernelDiscoveryBackend::Initialize(const std::string& memoryPath,
+                                        const std::string& qmpHost,
+                                        int qmpPort) {
+    if (initialized) {
+        return true;
+    }
+
+    std::cout << "[KernelDiscovery] Initializing with memory file: " << memoryPath << std::endl;
+    std::cout << "[KernelDiscovery] QMP connection: " << qmpHost << ":" << qmpPort << std::endl;
+
+    // Initialize kernel discovery with memory file and QMP settings
+    discovery = std::make_unique<KernelDiscovery>(memoryPath, qmpHost, qmpPort);
+
+    std::cout << "[KernelDiscovery] Calling Initialize()..." << std::endl;
+    if (!discovery->Initialize()) {
+        std::cerr << "[KernelDiscovery] Failed to initialize kernel discovery" << std::endl;
+        return false;
+    }
+
+    // Discover kernel structures (gets swapper PGD from QMP)
+    std::cout << "[KernelDiscovery] Calling DiscoverKernel() to find swapper PGD..." << std::endl;
+    if (!discovery->DiscoverKernel()) {
+        std::cerr << "[KernelDiscovery] Failed to discover kernel structures" << std::endl;
+        // Continue anyway - we might still find some processes
+    }
+
+    // Initial process discovery
+    std::cout << "[KernelDiscovery] Starting process discovery..." << std::endl;
+    if (!RefreshProcessList()) {
+        std::cerr << "[KernelDiscovery] Failed to discover processes" << std::endl;
+        return false;
+    }
+
+    initialized = true;
+    std::cout << "[KernelDiscovery] Initialized successfully" << std::endl;
+    return true;
+}
+
+void KernelDiscoveryBackend::Cleanup() {
+    pidMap.clear();
+    currentPID = 0;
+    initialized = false;
+}
+
+bool KernelDiscoveryBackend::RefreshProcessList() {
+    auto startTime = std::chrono::steady_clock::now();
+
+    // Discover processes
+    std::cout << "[KernelDiscovery] Scanning memory for processes..." << std::endl;
+    if (!discovery->DiscoverProcesses()) {
+        std::cerr << "[KernelDiscovery] DiscoverProcesses() failed" << std::endl;
+        return false;
+    }
+
+    // Extract PGDs, memory sections, and PTEs
+    std::cout << "[KernelDiscovery] Extracting PGDs and memory sections..." << std::endl;
+    discovery->ExtractProcessPGDs();
+
+    // Build PID map for quick lookup
+    pidMap.clear();
+    const auto& processes = discovery->GetProcesses();
+
+    for (const auto& proc : processes) {
+        if (!proc.is_kernel_thread) {
+            pidMap[proc.pid] = &proc;
+        }
+    }
+
+    auto endTime = std::chrono::steady_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+
+    std::cout << "[KernelDiscovery] Found " << pidMap.size() << " user processes in "
+              << duration << "ms" << std::endl;
+
+    lastRefreshTime = std::chrono::steady_clock::now();
+    return true;
+}
+
+bool KernelDiscoveryBackend::GetPIDList(std::vector<uint32_t>& pids) {
+    pids.clear();
+
+    for (const auto& [pid, proc] : pidMap) {
+        pids.push_back(pid);
+    }
+
+    std::sort(pids.begin(), pids.end());
+    return !pids.empty();
+}
+
+bool KernelDiscoveryBackend::GetProcessInfo(uint32_t pid, ProcessInfo& info) {
+    auto it = pidMap.find(pid);
+    if (it == pidMap.end()) {
+        return false;
+    }
+
+    const auto* proc = it->second;
+
+    info.pid = proc->pid;
+    info.name = proc->comm;
+    info.state = 'R';  // TODO: Extract actual state from task_struct
+    info.pgd = proc->pgd;
+    info.hasDetails = true;
+
+    // Calculate memory usage from PTEs
+    info.vsize = 0;
+    info.rss = 0;
+    for (const auto& pte : proc->ptes) {
+        info.vsize += pte.size;
+        if (pte.present) {
+            info.rss += pte.size;
+        }
+    }
+
+    // Count threads (processes with same mm_struct)
+    info.num_threads = 1;
+    for (const auto& [otherpid, otherproc] : pidMap) {
+        if (otherpid != pid && otherproc->mm_addr == proc->mm_addr) {
+            info.num_threads++;
+        }
+    }
+
+    return true;
+}
+
+std::map<uint32_t, ProcessInfo> KernelDiscoveryBackend::GetAllProcessInfo() {
+    std::map<uint32_t, ProcessInfo> result;
+
+    for (const auto& [pid, proc] : pidMap) {
+        ProcessInfo info;
+        if (GetProcessInfo(pid, info)) {
+            result[pid] = info;
+        }
+    }
+
+    return result;
+}
+
+bool KernelDiscoveryBackend::SelectProcess(uint32_t pid) {
+    auto it = pidMap.find(pid);
+    if (it == pidMap.end()) {
+        std::cerr << "[KernelDiscovery] Process PID " << pid << " not found" << std::endl;
+        return false;
+    }
+
+    currentPID = pid;
+    const auto* proc = it->second;
+
+    std::cout << "[KernelDiscovery] Selected process: PID " << pid
+              << " (" << proc->comm << ")" << std::endl;
+    std::cout << "  PGD: 0x" << std::hex << proc->pgd << std::dec << std::endl;
+    std::cout << "  Memory sections: " << proc->sections.size() << std::endl;
+    std::cout << "  Mapped pages: " << proc->ptes.size() << std::endl;
+
+    return true;
+}
+
+uint64_t KernelDiscoveryBackend::TranslateVA(uint64_t va) {
+    if (!initialized || currentPID == 0) {
+        return 0;
+    }
+
+    auto it = pidMap.find(currentPID);
+    if (it == pidMap.end()) {
+        return 0;
+    }
+
+    const auto* proc = it->second;
+
+    // First check if it's in our PTE cache
+    for (const auto& pte : proc->ptes) {
+        if (va >= pte.va && va < pte.va + pte.size) {
+            uint64_t offset = va - pte.va;
+            uint64_t pa = pte.pa + offset;
+            return pa;
+        }
+    }
+
+    // Not found in PTE cache
+    return 0;
+}
+
+bool KernelDiscoveryBackend::GetProcessSections(uint32_t pid, std::vector<SectionEntry>& sections) {
+    sections.clear();
+
+    auto it = pidMap.find(pid);
+    if (it == pidMap.end()) {
+        return false;
+    }
+
+    const auto* proc = it->second;
+
+    for (const auto& sec : proc->sections) {
+        SectionEntry entry;
+        entry.type = 2;  // ENTRY_SECTION
+        entry.pid = pid;
+        entry.va_start = sec.start;
+        entry.va_end = sec.end;
+
+        // Convert flags to permissions
+        uint32_t perms = 0;
+        if (sec.flags & 0x1) perms |= 4;  // VM_READ -> readable
+        if (sec.flags & 0x2) perms |= 2;  // VM_WRITE -> writable
+        if (sec.flags & 0x4) perms |= 1;  // VM_EXEC -> executable
+        entry.perms = perms;
+
+        // Copy name to path field (truncate if too long)
+        std::memset(entry.path, 0, sizeof(entry.path));
+        if (!sec.name.empty()) {
+            std::strncpy(entry.path, sec.name.c_str(), sizeof(entry.path) - 1);
+        }
+
+        sections.push_back(entry);
+    }
+
+    return !sections.empty();
+}
+
+bool KernelDiscoveryBackend::GetProcessPTEs(uint32_t pid, std::unordered_map<uint64_t, uint64_t>& ptes) {
+    ptes.clear();
+
+    auto it = pidMap.find(pid);
+    if (it == pidMap.end()) {
+        return false;
+    }
+
+    const auto* proc = it->second;
+
+    // Build PTE map (VA -> PA)
+    for (const auto& pte : proc->ptes) {
+        // For huge pages, we need to map all 4KB pages within
+        if (pte.size > 0x1000) {
+            for (uint64_t offset = 0; offset < pte.size; offset += 0x1000) {
+                ptes[pte.va + offset] = pte.pa + offset;
+            }
+        } else {
+            ptes[pte.va] = pte.pa;
+        }
+    }
+
+    return !ptes.empty();
+}
+
+bool KernelDiscoveryBackend::ShouldRefresh() {
+    if (!initialized) {
+        return false;
+    }
+
+    // Check if it's been more than 5 seconds since last refresh
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastRefreshTime).count();
+
+    return elapsed >= 5;
+}
+
+const KernelDiscovery::ProcessInfo* KernelDiscoveryBackend::GetCurrentProcess() const {
+    if (currentPID == 0) return nullptr;
+
+    auto it = pidMap.find(currentPID);
+    return (it != pidMap.end()) ? it->second : nullptr;
+}
+
+} // namespace Haywire

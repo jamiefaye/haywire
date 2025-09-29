@@ -5,6 +5,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Put executables in the build directory
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # Find packages
 find_package(OpenGL REQUIRED)
 find_package(Threads REQUIRED)
@@ -99,6 +102,7 @@ add_executable(haywire
     src/beacon_reader.cpp
     src/beacon_decoder.cpp
     src/beacon_translator.cpp
+    src/kernel_discovery_backend.cpp
     src/pid_selector.cpp
     src/bitmap_viewer.cpp
     src/address_parser.cpp
@@ -167,56 +171,56 @@ file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_CURRENT_BINARY_
 
 # Test executables moved to test_attempts/ directory
 
-# Test binary loader
-add_executable(test_binary_loader
-    test_binary_loader.cpp
-    src/binary_loader.cpp
-)
+# Test binary loader (disabled - file missing)
+# add_executable(test_binary_loader
+#     test_binary_loader.cpp
+#     src/binary_loader.cpp
+# )
+#
+# target_include_directories(test_binary_loader PRIVATE
+#     ${CMAKE_CURRENT_SOURCE_DIR}/include
+# )
+#
+# target_link_libraries(test_binary_loader PRIVATE
+#     Threads::Threads
+# )
 
-target_include_directories(test_binary_loader PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_link_libraries(test_binary_loader PRIVATE
-    Threads::Threads
-)
-
-# Test platform abstraction
-add_executable(test_platform
-    test_platform_abstraction.cpp
-    src/qemu_connection.cpp
-    src/memory_backend.cpp
-    src/memory_utils.cpp
-    src/guest_agent.cpp
-    src/gdb_connection.cpp
-    src/memory_mapper.cpp
-    src/crunched_memory_reader.cpp
-    src/mmap_reader.cpp
-    src/beacon_reader.cpp
-    src/beacon_decoder.cpp
-    src/beacon_translator.cpp
-    src/address_space_flattener.cpp
-    src/viewport_translator.cpp
-    src/pagemap_cache.cpp
-    src/platform/page_walker.cpp
-    src/platform/process_walker.cpp
-    src/platform/arm64/arm64_page_walker.cpp
-    src/platform/linux/linux_process_walker.cpp
-    src/platform/x86_64/x86_64_page_walker.cpp
-    ${IMGUI_SOURCES}
-)
-
-target_include_directories(test_platform PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
-    ${OPENGL_INCLUDE_DIRS}
-)
-
-target_link_libraries(test_platform PRIVATE
-    glfw
-    OpenGL::GL
-    nlohmann_json::nlohmann_json
-    Threads::Threads
-    ${PLATFORM_LIBS}
-)
+# Test platform abstraction (disabled - file missing)
+# add_executable(test_platform
+#     test_platform_abstraction.cpp
+#     src/qemu_connection.cpp
+#     src/memory_backend.cpp
+#     src/memory_utils.cpp
+#     src/guest_agent.cpp
+#     src/gdb_connection.cpp
+#     src/memory_mapper.cpp
+#     src/crunched_memory_reader.cpp
+#     src/mmap_reader.cpp
+#     src/beacon_reader.cpp
+#     src/beacon_decoder.cpp
+#     src/beacon_translator.cpp
+#     src/address_space_flattener.cpp
+#     src/viewport_translator.cpp
+#     src/pagemap_cache.cpp
+#     src/platform/page_walker.cpp
+#     src/platform/process_walker.cpp
+#     src/platform/arm64/arm64_page_walker.cpp
+#     src/platform/linux/linux_process_walker.cpp
+#     src/platform/x86_64/x86_64_page_walker.cpp
+#     ${IMGUI_SOURCES}
+# )
+#
+# target_include_directories(test_platform PRIVATE
+#     ${CMAKE_CURRENT_SOURCE_DIR}/include
+#     ${IMGUI_DIR}
+#     ${IMGUI_DIR}/backends
+#     ${OPENGL_INCLUDE_DIRS}
+# )
+#
+# target_link_libraries(test_platform PRIVATE
+#     glfw
+#     OpenGL::GL
+#     nlohmann_json::nlohmann_json
+#     Threads::Threads
+#     ${PLATFORM_LIBS}
+# )
