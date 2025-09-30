@@ -692,21 +692,43 @@ void MemoryVisualizer::DrawMemoryBitmap() {
                           ImGuiWindowFlags_NoScrollbar);
 
         // Calculate viewport size in bytes for heat map
-        uint64_t viewSize = viewport.width * viewport.height * 4;  // 4 bytes per pixel typically
+        uint64_t viewSize = viewport.width * viewport.height * viewport.format.bytesPerPixel;
+
+        // Convert physical address to file offset for change detector
+        uint64_t fileOffset = viewport.baseAddress;
+        if (!useVirtualAddresses) {
+            // In physical mode, subtract RAM base to get file offset
+            uint64_t ramBase = 0x40000000;
+            if (memoryMapper && !memoryMapper->GetRegions().empty()) {
+                ramBase = memoryMapper->GetRegions()[0].gpa_start;
+            }
+            fileOffset = viewport.baseAddress - ramBase;
+        }
 
         // Update visible range for change detector
         if (changeDetector_) {
             size_t chunk_size = 65536;  // 64KB
-            size_t visible_start = viewport.baseAddress / chunk_size;
-            size_t visible_end = (viewport.baseAddress + viewSize) / chunk_size;
+            size_t visible_start = fileOffset / chunk_size;
+            size_t visible_end = (fileOffset + viewSize) / chunk_size;
             changeDetector_->SetVisibleRange(visible_start, visible_end);
         }
 
-        // Draw heat map
-        if (heatMapWidget_->Draw(heatMapWidth, maxHeight, viewport.baseAddress, viewSize)) {
-            // User clicked - jump to clicked address
-            uint64_t clicked_offset = heatMapWidget_->GetClickedOffset();
-            NavigateToAddress(clicked_offset);
+        // Draw heat map (pass file offset, not physical address)
+        if (heatMapWidget_->Draw(heatMapWidth, maxHeight, fileOffset, viewSize)) {
+            // User clicked on heat map - convert file offset to physical address
+            uint64_t clicked_file_offset = heatMapWidget_->GetClickedOffset();
+            uint64_t clicked_address = clicked_file_offset;
+
+            if (!useVirtualAddresses) {
+                // Convert file offset back to physical address
+                uint64_t ramBase = 0x40000000;
+                if (memoryMapper && !memoryMapper->GetRegions().empty()) {
+                    ramBase = memoryMapper->GetRegions()[0].gpa_start;
+                }
+                clicked_address = clicked_file_offset + ramBase;
+            }
+
+            NavigateToAddress(clicked_address);
         }
 
         ImGui::EndChild();
