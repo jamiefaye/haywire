@@ -246,9 +246,9 @@ void ChangeDetector::PatrolLoop() {
         size_t priority3_scans = 0;
 
         // Priority 1: Visible chunks (already in cache from rendering)
-        // Scan every 10ms (100 Hz)
+        // Scan every 50ms (20 Hz)
         for (size_t i = vis_start; i < vis_end && scanned_this_cycle < MAX_CHUNKS_PER_CYCLE; i++) {
-            if (now - chunks_[i].last_scan_time > 10) {
+            if (now - chunks_[i].last_scan_time > 50) {
                 ScanChunk(i);
                 scanned_this_cycle++;
                 priority1_scans++;
@@ -256,14 +256,14 @@ void ChangeDetector::PatrolLoop() {
         }
 
         // Priority 2: Heat map visible chunks
-        // Scan every 50ms (20 Hz)
+        // Scan every 250ms (4 Hz)
         for (size_t i = heat_start; i < heat_end && scanned_this_cycle < MAX_CHUNKS_PER_CYCLE; i++) {
             // Skip if already scanned as visible
             if (i >= vis_start && i < vis_end) {
                 continue;
             }
 
-            if (now - chunks_[i].last_scan_time > 50) {
+            if (now - chunks_[i].last_scan_time > 250) {
                 ScanChunk(i);
                 scanned_this_cycle++;
                 priority2_scans++;
