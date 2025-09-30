@@ -1,12 +1,15 @@
 #include "memory_visualizer.h"
 #include "memory_renderer.h"
 #include "qemu_connection.h"
-#include "viewport_translator.h"
+#include "kernel_viewport_translator.h"
 #include "address_space_flattener.h"
 #include "crunched_memory_reader.h"
 #include "memory_data_source.h"
 #include "guest_agent.h"
 #include "font_data.h"
+#include "change_detector.h"
+#include "heat_map_widget.h"
+#include "memory_file_reader.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include <cstring>
@@ -26,11 +29,12 @@
 
 namespace Haywire {
 
-MemoryVisualizer::MemoryVisualizer() 
+MemoryVisualizer::MemoryVisualizer()
     : memoryTexture(0), needsUpdate(true), autoRefresh(false), autoRefreshInitialized(false),
       refreshRate(10.0f), showHexOverlay(false), showNavigator(true), showCorrelation(false),
       showChangeHighlight(true), showMagnifier(false),  // Magnifier off by default
       splitComponents(false),  // Split components off by default
+      showHeatMap(false),  // Heat map off by default
       columnMode(false), columnWidth(256), columnGap(0),  // Column mode defaults
       widthInput(512), heightInput(480), strideInput(512),  // Default to 512 width
       pixelFormatIndex(0), mouseX(0), mouseY(0), isDragging(false),
@@ -55,8 +59,8 @@ MemoryVisualizer::MemoryVisualizer()
         NavigateToAddress(virtualAddr);
     });
     
-    strcpy(addressInput, "p:0");  // Start at physical 0 where boot ROM lives
-    viewport.baseAddress = 0x0;  // Initialize with physical address 0
+    strcpy(addressInput, "p:40000000");  // Start at RAM beginning (guest RAM)
+    viewport.baseAddress = 0x40000000;  // Initialize with physical address at RAM start
     viewport.width = widthInput;
     viewport.height = heightInput;
     viewport.stride = strideInput;
@@ -665,21 +669,50 @@ void MemoryVisualizer::DrawMemoryBitmap() {
     
     heightInput = (int)(maxHeight / viewport.zoom);  // Visible rows
     viewport.height = std::max(1, heightInput);
-    
-    // Layout: Vertical slider on left, memory view on right
-    float sliderWidth = 200;
-    float memoryWidth = std::max(100.0f, availSize.x - sliderWidth - 10);  // -10 for spacing
-    
+
+    // Layout: Slider on left, optional heat map, then memory view on right
+    float sliderWidth = showHeatMap ? 100.0f : 180.0f;  // Shrink slider when heat map shown
+    float heatMapWidth = 128.0f;
+    float totalLeftWidth = sliderWidth + (showHeatMap ? heatMapWidth + 5 : 0);  // +5 for spacing
+    float memoryWidth = std::max(100.0f, availSize.x - totalLeftWidth - 10);  // -10 for spacing
+
     // Vertical address slider on the left - match the bitmap height
     // Account for the same overhead as the memory view
-    ImGui::BeginChild("AddressSlider", ImVec2(sliderWidth, maxHeight), false, 
-                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | 
+    ImGui::BeginChild("AddressSlider", ImVec2(sliderWidth, maxHeight), false,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
                       ImGuiWindowFlags_AlwaysUseWindowPadding);
     DrawVerticalAddressSlider();
     ImGui::EndChild();
-    
+
     ImGui::SameLine();
-    
+
+    // Optional heat map column
+    if (showHeatMap && heatMapWidget_) {
+        ImGui::BeginChild("HeatMapColumn", ImVec2(heatMapWidth, maxHeight), false,
+                          ImGuiWindowFlags_NoScrollbar);
+
+        // Calculate viewport size in bytes for heat map
+        uint64_t viewSize = viewport.width * viewport.height * 4;  // 4 bytes per pixel typically
+
+        // Update visible range for change detector
+        if (changeDetector_) {
+            size_t chunk_size = 65536;  // 64KB
+            size_t visible_start = viewport.baseAddress / chunk_size;
+            size_t visible_end = (viewport.baseAddress + viewSize) / chunk_size;
+            changeDetector_->SetVisibleRange(visible_start, visible_end);
+        }
+
+        // Draw heat map
+        if (heatMapWidget_->Draw(heatMapWidth, maxHeight, viewport.baseAddress, viewSize)) {
+            // User clicked - jump to clicked address
+            uint64_t clicked_offset = heatMapWidget_->GetClickedOffset();
+            NavigateToAddress(clicked_offset);
+        }
+
+        ImGui::EndChild();
+        ImGui::SameLine();
+    }
+
     // Memory view on the right - same height as scrollbar container
     ImGui::BeginChild("BitmapView", ImVec2(memoryWidth, maxHeight), false);
     DrawMemoryView();
@@ -721,10 +754,17 @@ void MemoryVisualizer::DrawBitmapViewers() {
     }
 }
 
-void MemoryVisualizer::SetBeaconReader(std::shared_ptr<BeaconReader> reader) {
-    // Still needed for bitmap viewers' memory mapping
+void MemoryVisualizer::SetMemoryFileReader(std::shared_ptr<MemoryFileReader> reader) {
+    // Needed for bitmap viewers' direct memory access
     if (bitmapViewerManager) {
-        bitmapViewerManager->SetBeaconReader(reader);
+        bitmapViewerManager->SetMemoryFileReader(reader);
+    }
+
+    // Initialize change detector if not already done
+    if (reader && !changeDetector_) {
+        changeDetector_ = std::make_unique<ChangeDetector>(reader.get());
+        heatMapWidget_ = std::make_unique<HeatMapWidget>(changeDetector_.get());
+        // Don't auto-start - user can enable via checkbox
     }
 }
 
@@ -902,7 +942,22 @@ void MemoryVisualizer::DrawControls() {
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Highlight memory changes with yellow boxes");
     }
-    
+
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Heat Map", &showHeatMap)) {
+        // Start/stop change detector based on checkbox
+        if (changeDetector_) {
+            if (showHeatMap) {
+                changeDetector_->Start();
+            } else {
+                changeDetector_->Stop();
+            }
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Show change detection heat map (memory bandwidth: ~256 MB/sec)");
+    }
+
     ImGui::SameLine();
     ImGui::Checkbox("Inspector", &showMagnifier);
     if (ImGui::IsItemHovered()) {
@@ -1083,10 +1138,23 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
             viewport.baseAddress = currentPos;
         }
     } else {
-        // Physical mode - original behavior
+        // Physical mode - use memory mapper to get actual RAM range
         sliderUnit = 65536;  // 64K units
-        maxAddress = 0x200000000ULL;  // 8GB physical range
-        currentPos = viewport.baseAddress;
+
+        // Get RAM region from memory mapper
+        uint64_t ramBase = 0x40000000;  // Default ARM64 RAM base
+        uint64_t ramSize = 6ULL * 1024 * 1024 * 1024;  // Default 6GB
+
+        if (memoryMapper && !memoryMapper->GetRegions().empty()) {
+            const auto& regions = memoryMapper->GetRegions();
+            ramBase = regions[0].gpa_start;
+            ramSize = regions[0].size;
+        }
+
+        // Slider represents file offsets (0 to ramSize)
+        // viewport.baseAddress is physical address (ramBase to ramBase+ramSize)
+        maxAddress = ramSize;  // File size, not physical address
+        currentPos = viewport.baseAddress - ramBase;  // Convert PA to file offset
     }
     
     // Vertical slider
@@ -1317,19 +1385,23 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     
     // Vertical slider (draw on top of memory map)
     uint64_t minSliderValue = 0;
-    if (ImGui::VSliderScalar("##VAddr", ImVec2(180, sliderHeight), 
+    if (ImGui::VSliderScalar("##VAddr", ImVec2(180, sliderHeight),
                             ImGuiDataType_U64, &sliderValue,
                             &maxSliderValue, &minSliderValue,  // Max at top, 0 at bottom
                             "0x%llx")) {
-        viewport.baseAddress = sliderValue * sliderUnit;
-        
-        // Update address field
+
         if (useVirtualAddresses && addressFlattener) {
-            // Show the VA that corresponds to this flat position
+            // VA mode - slider value is crunched/flat offset
+            viewport.baseAddress = sliderValue * sliderUnit;
             uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
             strcpy(addressInput, AddressParser::Format(virtualAddr, AddressSpace::VIRTUAL).c_str());
         } else {
-            // Physical mode - viewport.baseAddress is a physical address
+            // Physical mode - slider value is file offset, convert to physical address
+            uint64_t ramBase = 0x40000000;
+            if (memoryMapper && !memoryMapper->GetRegions().empty()) {
+                ramBase = memoryMapper->GetRegions()[0].gpa_start;
+            }
+            viewport.baseAddress = sliderValue * sliderUnit + ramBase;
             strcpy(addressInput, AddressParser::Format(viewport.baseAddress, AddressSpace::PHYSICAL).c_str());
         }
         
@@ -1359,10 +1431,15 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
             }
         } else {
             // Physical mode - show address
-            uint64_t physAddr = sliderValue * sliderUnit;
+            uint64_t ramBase = 0x40000000;
+            if (memoryMapper && !memoryMapper->GetRegions().empty()) {
+                ramBase = memoryMapper->GetRegions()[0].gpa_start;
+            }
+            uint64_t fileOffset = sliderValue * sliderUnit;
+            uint64_t physAddr = fileOffset + ramBase;
             ImGui::BeginTooltip();
             ImGui::Text("PA: 0x%llx", physAddr);
-            ImGui::Text("Offset: %.1f GB", physAddr / (1024.0 * 1024.0 * 1024.0));
+            ImGui::Text("File Offset: %.1f GB", fileOffset / (1024.0 * 1024.0 * 1024.0));
             ImGui::EndTooltip();
         }
     }
