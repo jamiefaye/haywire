@@ -41,8 +41,8 @@ bool MemoryFileReader::Initialize(const std::string& memoryFilePath) {
     memorySize = st.st_size;
     std::cout << "Memory file size: " << (memorySize / (1024*1024)) << " MB\n";
 
-    // Memory map the file
-    memoryBase = (uint8_t*)mmap(nullptr, memorySize, PROT_READ, MAP_PRIVATE, memoryFd, 0);
+    // Memory map the file (MAP_SHARED to see live updates from QEMU)
+    memoryBase = (uint8_t*)mmap(nullptr, memorySize, PROT_READ, MAP_SHARED, memoryFd, 0);
     if (memoryBase == MAP_FAILED) {
         std::cerr << "Failed to mmap memory file\n";
         close(memoryFd);

@@ -3,6 +3,7 @@
 #include "imgui.h"
 #include <cmath>
 #include <algorithm>
+#include <iostream>
 
 namespace Haywire {
 
@@ -116,26 +117,41 @@ bool HeatMapWidget::Draw(float width, float height, uint64_t current_offset, uin
         chunk_size = 65536;  // Default fallback
     }
 
-    // Calculate visible window based on current viewport
+    // Calculate heat map display range - show ENTIRE heat map canvas, not just near viewport
+    // The viewport spans from current_offset to current_offset + view_size (for indicator position)
     size_t viewport_start_chunk = current_offset / chunk_size;
+    size_t viewport_end_chunk = (current_offset + view_size) / chunk_size;
+
     int chunks_per_row = std::max(1, (int)(width / pixel_size_));
     int max_rows = std::max(1, (int)(height / pixel_size_));
     int total_visible_chunks = chunks_per_row * max_rows;
+
+    // Debug: Log the dimensions (once)
+    static int debug_count = 0;
+    if (debug_count == 0) {
+        std::cout << "HeatMap dimensions: width=" << width << "px height=" << height << "px\n";
+        std::cout << "  pixel_size=" << pixel_size_ << "px\n";
+        std::cout << "  chunks_per_row=" << chunks_per_row << " max_rows=" << max_rows << "\n";
+        std::cout << "  total_visible_chunks=" << total_visible_chunks << "\n";
+    }
+    debug_count++;
+
+    // Smart centering: center viewport in heat map display
+    size_t viewport_center_chunk = (viewport_start_chunk + viewport_end_chunk) / 2;
     int half_window = total_visible_chunks / 2;
 
-    // Smart positioning: top when at start, centered in middle, bottom when at end
     size_t start_chunk;
-    if (viewport_start_chunk < half_window) {
+    if (viewport_center_chunk < half_window) {
         // Near start - align to top (indicator will be at top)
         start_chunk = 0;
-    } else if (viewport_start_chunk + half_window >= chunk_count) {
-        // Near end - align to bottom (indicator will move up)
+    } else if (viewport_center_chunk + half_window >= chunk_count) {
+        // Near end - align to bottom (indicator will be at bottom)
         start_chunk = chunk_count > total_visible_chunks
                      ? chunk_count - total_visible_chunks
                      : 0;
     } else {
-        // In middle - keep centered (indicator stays in middle)
-        start_chunk = viewport_start_chunk - half_window;
+        // In middle - center the viewport in the heat map display
+        start_chunk = viewport_center_chunk - half_window;
     }
 
     size_t end_chunk = std::min(start_chunk + total_visible_chunks, chunk_count);
