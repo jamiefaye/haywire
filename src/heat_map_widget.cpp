@@ -193,20 +193,39 @@ bool HeatMapWidget::Draw(float width, float height, uint64_t current_offset, uin
         int end_row = display_end / chunks_per_row;
         int end_col = display_end % chunks_per_row;
 
-        float start_x = canvas_pos.x + start_col * pixel_size_;
-        float start_y = canvas_pos.y + start_row * pixel_size_;
-        float end_x = canvas_pos.x + (end_col + 1) * pixel_size_;
-        float end_y = canvas_pos.y + (end_row + 1) * pixel_size_;
+        // Draw the indicator properly handling multi-row spans
+        if (start_row == end_row) {
+            // Single row - simple rectangle
+            float start_x = canvas_pos.x + start_col * pixel_size_;
+            float start_y = canvas_pos.y + start_row * pixel_size_;
+            float end_x = canvas_pos.x + (end_col + 1) * pixel_size_;
+            float end_y = canvas_pos.y + (end_row + 1) * pixel_size_;
 
-        // Draw as outline (not filled)
-        draw_list->AddRect(
-            ImVec2(start_x, start_y),
-            ImVec2(end_x, end_y),
-            IM_COL32(255, 255, 0, 255),
-            0.0f,
-            0,
-            2.0f
-        );
+            draw_list->AddRect(
+                ImVec2(start_x, start_y),
+                ImVec2(end_x, end_y),
+                IM_COL32(255, 255, 0, 255),
+                0.0f, 0, 2.0f
+            );
+        } else {
+            // Multiple rows - draw each row segment
+            for (int row = start_row; row <= end_row; row++) {
+                int col_start = (row == start_row) ? start_col : 0;
+                int col_end = (row == end_row) ? end_col : chunks_per_row - 1;
+
+                float x1 = canvas_pos.x + col_start * pixel_size_;
+                float y1 = canvas_pos.y + row * pixel_size_;
+                float x2 = canvas_pos.x + (col_end + 1) * pixel_size_;
+                float y2 = canvas_pos.y + (row + 1) * pixel_size_;
+
+                draw_list->AddRect(
+                    ImVec2(x1, y1),
+                    ImVec2(x2, y2),
+                    IM_COL32(255, 255, 0, 255),
+                    0.0f, 0, 2.0f
+                );
+            }
+        }
     }
 
     // Make canvas interactive
