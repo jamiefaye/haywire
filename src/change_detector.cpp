@@ -231,19 +231,15 @@ void ChangeDetector::PatrolLoop() {
         size_t heat_map_size = (heat_end > heat_start) ? (heat_end - heat_start) : 0;
         size_t MAX_CHUNKS_PER_CYCLE = std::max((size_t)1000, heat_map_size + 100);
 
-        // Debug output every 100 cycles
-        static int cycle_count = 0;
-        if (++cycle_count % 100 == 0) {
-            std::cout << "ChangeDetector: Scanned " << total_scans_.load()
-                      << " chunks, detected " << changes_detected_.load() << " changes\n";
-            std::cout << "  Ranges: vis[" << vis_start << "-" << vis_end << "] "
-                      << "heat[" << heat_start << "-" << heat_end << "] "
-                      << "(span=" << (heat_end - heat_start) << " chunks)\n";
-        }
-
-        size_t priority1_scans = 0;
-        size_t priority2_scans = 0;
-        size_t priority3_scans = 0;
+        // Debug output every 100 cycles (disabled for production)
+        // static int cycle_count = 0;
+        // if (++cycle_count % 100 == 0) {
+        //     std::cout << "ChangeDetector: Scanned " << total_scans_.load()
+        //               << " chunks, detected " << changes_detected_.load() << " changes\n";
+        //     std::cout << "  Ranges: vis[" << vis_start << "-" << vis_end << "] "
+        //               << "heat[" << heat_start << "-" << heat_end << "] "
+        //               << "(span=" << (heat_end - heat_start) << " chunks)\n";
+        // }
 
         // Priority 1: Visible chunks (already in cache from rendering)
         // Scan every 50ms (20 Hz)
@@ -251,7 +247,6 @@ void ChangeDetector::PatrolLoop() {
             if (now - chunks_[i].last_scan_time > 50) {
                 ScanChunk(i);
                 scanned_this_cycle++;
-                priority1_scans++;
             }
         }
 
@@ -266,7 +261,6 @@ void ChangeDetector::PatrolLoop() {
             if (now - chunks_[i].last_scan_time > 250) {
                 ScanChunk(i);
                 scanned_this_cycle++;
-                priority2_scans++;
             }
         }
 
@@ -278,17 +272,16 @@ void ChangeDetector::PatrolLoop() {
                 size_t random_idx = (background_scan_pos_ * 6133 + i * 997) % chunks_.size();
                 ScanChunk(random_idx);
                 scanned_this_cycle++;
-                priority3_scans++;
             }
             background_scan_pos_++;
         }
 
-        // Debug: show scan breakdown occasionally
-        if (cycle_count % 100 == 0) {
-            std::cout << "  This cycle: P1=" << priority1_scans
-                      << " P2=" << priority2_scans
-                      << " P3=" << priority3_scans << "\n";
-        }
+        // Debug: show scan breakdown occasionally (disabled for production)
+        // if (cycle_count % 100 == 0) {
+        //     std::cout << "  This cycle: P1=" << priority1_scans
+        //               << " P2=" << priority2_scans
+        //               << " P3=" << priority3_scans << "\n";
+        // }
 
         // Sleep for configured interval
         std::this_thread::sleep_for(std::chrono::milliseconds(scan_interval_ms_.load()));
