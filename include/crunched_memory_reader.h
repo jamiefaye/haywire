@@ -59,7 +59,12 @@ public:
     uint64_t GetCrunchedSize() const {
         return flattener ? flattener->GetFlatSize() : 0;
     }
-    
+
+    // Get flattener for region queries
+    AddressSpaceFlattener* GetFlattener() const {
+        return flattener;
+    }
+
     // Get info about current position
     struct PositionInfo {
         uint64_t flatAddr;      // Position in crunched space

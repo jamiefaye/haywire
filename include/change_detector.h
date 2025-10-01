@@ -12,6 +12,7 @@ namespace Haywire {
 
 class MemoryFileReader;
 class CrunchedMemoryReader;
+class AddressSpaceFlattener;
 
 // Information about a single chunk's state
 struct ChunkInfo {

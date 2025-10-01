@@ -1,6 +1,7 @@
 #include "change_detector.h"
 #include "memory_file_reader.h"
 #include "crunched_memory_reader.h"
+#include "address_space_flattener.h"
 #include <algorithm>
 #include <thread>
 #include <chrono>
@@ -236,6 +237,17 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
         // Bounds check
         if (flat_address >= crunched_size) {
             return;  // Beyond crunched space
+        }
+
+        // OPTIMIZATION: Skip unmapped regions entirely
+        // Check if this flat address actually corresponds to a mapped region
+        auto* flattener = crunched_reader_->GetFlattener();
+        if (flattener) {
+            const auto* region = flattener->GetRegionForFlat(flat_address);
+            if (!region) {
+                // This chunk is in an unmapped gap - skip it entirely
+                return;
+            }
         }
 
         size = std::min(chunk_size_, (size_t)(crunched_size - flat_address));
