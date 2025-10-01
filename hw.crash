@@ -1,0 +1,330 @@
+-------------------------------------
+Translated Report (Full Report Below)
+-------------------------------------
+
+Process:               haywire [49692]
+Path:                  /Users/USER/*/haywire
+Identifier:            haywire
+Version:               ???
+Code Type:             ARM-64 (Native)
+Parent Process:        launchd [1]
+Responsible:           Electron [32465]
+User ID:               501
+
+Date/Time:             2025-09-30 21:33:43.2192 -0500
+OS Version:            macOS 14.5 (23F79)
+Report Version:        12
+Anonymous UUID:        FE0AC24F-6C20-FC8C-A7B5-A905F52C866D
+
+Sleep/Wake UUID:       77BA369A-6009-4DC4-BBE5-F1E147844207
+
+Time Awake Since Boot: 78000 seconds
+Time Since Wake:       8489 seconds
+
+System Integrity Protection: enabled
+
+Crashed Thread:        0  Dispatch queue: com.apple.main-thread
+
+Exception Type:        EXC_BAD_ACCESS (SIGSEGV)
+Exception Codes:       KERN_INVALID_ADDRESS at 0x0000000000000004
+Exception Codes:       0x0000000000000001, 0x0000000000000004
+
+Termination Reason:    Namespace SIGNAL, Code 11 Segmentation fault: 11
+Terminating Process:   exc handler [49692]
+
+VM Region Info: 0x4 is not in any region.  Bytes before following region: 4303060988
+      REGION TYPE                    START - END         [ VSIZE] PRT/MAX SHRMOD  REGION DETAIL
+      UNUSED SPACE AT START
+--->  
+      __TEXT                      1007b8000-100a60000    [ 2720K] r-x/r-x SM=COW  /Users/USER/*/haywire
+
+Thread 0 Crashed::  Dispatch queue: com.apple.main-thread
+0   haywire                       	       0x10084da20 void std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__do_rehash<true>(unsigned long) + 568 (__hash_table:2296)
+1   haywire                       	       0x10084d6dc void std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__rehash<true>(unsigned long) + 156 (__hash_table:2235)
+2   haywire                       	       0x10084d078 std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__rehash_unique[abi:v160006](unsigned long) + 32 (__hash_table:1155)
+3   haywire                       	       0x10084ccb8 std::__1::pair<std::__1::__hash_iterator<std::__1::__hash_node<std::__1::__hash_value_type<unsigned long long, unsigned long long>, void*>*>, bool> std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__emplace_unique_key_args<unsigned long long, std::__1::piecewise_construct_t const&, std::__1::tuple<unsigned long long const&>, std::__1::tuple<>>(unsigned long long const&, std::__1::piecewise_construct_t const&, std::__1::tuple<unsigned long long const&>&&, std::__1::tuple<>&&) + 668 (__hash_table:2021)
+4   haywire                       	       0x100849974 std::__1::unordered_map<unsigned long long, unsigned long long, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::allocator<std::__1::pair<unsigned long long const, unsigned long long>>>::operator[](unsigned long long const&) + 88 (unordered_map:1804)
+5   haywire                       	       0x10084979c Haywire::KernelViewportTranslator::TranslateAddress(int, unsigned long long) + 504 (kernel_viewport_translator.cpp:67)
+6   haywire                       	       0x10086117c Haywire::CrunchedMemoryReader::ReadCrunchedMemory(unsigned long long, unsigned long, std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&) + 1400 (crunched_memory_reader.cpp:105)
+7   haywire                       	       0x100869404 Haywire::MemoryVisualizer::DrawControlBar(Haywire::QemuConnection&) + 1320 (memory_visualizer.cpp:228)
+8   haywire                       	       0x1007bdf2c main + 3552 (main.cpp:464)
+9   dyld                          	       0x1944860e0 start + 2360
+
+Thread 1:: com.apple.NSEventThread
+0   libsystem_kernel.dylib        	       0x1947ce1f4 mach_msg2_trap + 8
+1   libsystem_kernel.dylib        	       0x1947e0b24 mach_msg2_internal + 80
+2   libsystem_kernel.dylib        	       0x1947d6e34 mach_msg_overwrite + 476
+3   libsystem_kernel.dylib        	       0x1947ce578 mach_msg + 24
+4   CoreFoundation                	       0x1948ee680 __CFRunLoopServiceMachPort + 160
+5   CoreFoundation                	       0x1948ecf44 __CFRunLoopRun + 1208
+6   CoreFoundation                	       0x1948ec434 CFRunLoopRunSpecific + 608
+7   AppKit                        	       0x198276188 _NSEventThread + 144
+8   libsystem_pthread.dylib       	       0x19480ef94 _pthread_start + 136
+9   libsystem_pthread.dylib       	       0x194809d34 thread_start + 8
+
+Thread 2:
+0   libsystem_pthread.dylib       	       0x194809d20 start_wqthread + 0
+
+Thread 3:
+0   haywire                       	       0x10084c398 std::__1::__compressed_pair_elem<std::__1::__hash_node_base<std::__1::__hash_node<std::__1::__hash_value_type<unsigned long long, unsigned long long>, void*>*>**, 0, false>::__get[abi:v160006]() const + 8 (compressed_pair.h:61)
+1   haywire                       	       0x10084c384 std::__1::__compressed_pair<std::__1::__hash_node_base<std::__1::__hash_node<std::__1::__hash_value_type<unsigned long long, unsigned long long>, void*>*>**, std::__1::__bucket_list_deallocator<std::__1::allocator<std::__1::__hash_node_base<std::__1::__hash_node<std::__1::__hash_value_type<unsigned long long, unsigned long long>, void*>*>*>>>::first[abi:v160006]() const + 24 (compressed_pair.h:137)
+2   haywire                       	       0x10084c284 std::__1::unique_ptr<std::__1::__hash_node_base<std::__1::__hash_node<std::__1::__hash_value_type<unsigned long long, unsigned long long>, void*>*>* [], std::__1::__bucket_list_deallocator<std::__1::allocator<std::__1::__hash_node_base<std::__1::__hash_node<std::__1::__hash_value_type<unsigned long long, unsigned long long>, void*>*>*>>>::operator[][abi:v160006](unsigned long) const + 28 (unique_ptr.h:469)
+3   haywire                       	       0x10084d8b4 void std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__do_rehash<true>(unsigned long) + 204 (__hash_table:2262)
+4   haywire                       	       0x10084d6dc void std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__rehash<true>(unsigned long) + 156 (__hash_table:2235)
+5   haywire                       	       0x10084d078 std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__rehash_unique[abi:v160006](unsigned long) + 32 (__hash_table:1155)
+6   haywire                       	       0x10084ccb8 std::__1::pair<std::__1::__hash_iterator<std::__1::__hash_node<std::__1::__hash_value_type<unsigned long long, unsigned long long>, void*>*>, bool> std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__emplace_unique_key_args<unsigned long long, std::__1::piecewise_construct_t const&, std::__1::tuple<unsigned long long const&>, std::__1::tuple<>>(unsigned long long const&, std::__1::piecewise_construct_t const&, std::__1::tuple<unsigned long long const&>&&, std::__1::tuple<>&&) + 668 (__hash_table:2021)
+7   haywire                       	       0x100849974 std::__1::unordered_map<unsigned long long, unsigned long long, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::allocator<std::__1::pair<unsigned long long const, unsigned long long>>>::operator[](unsigned long long const&) + 88 (unordered_map:1804)
+8   haywire                       	       0x10084979c Haywire::KernelViewportTranslator::TranslateAddress(int, unsigned long long) + 504 (kernel_viewport_translator.cpp:67)
+9   haywire                       	       0x10086117c Haywire::CrunchedMemoryReader::ReadCrunchedMemory(unsigned long long, unsigned long, std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&) + 1400 (crunched_memory_reader.cpp:105)
+10  haywire                       	       0x1008b92e4 Haywire::ChangeDetector::ScanChunk(unsigned long) + 364 (change_detector.cpp:247)
+11  haywire                       	       0x1008b86d8 Haywire::ChangeDetector::PatrolLoop() + 888 (change_detector.cpp:358)
+12  haywire                       	       0x1008bab44 decltype(*std::declval<Haywire::ChangeDetector*>().*std::declval<void (Haywire::ChangeDetector::*)()>()()) std::__1::__invoke[abi:v160006]<void (Haywire::ChangeDetector::*)(), Haywire::ChangeDetector*, void>(void (Haywire::ChangeDetector::*&&)(), Haywire::ChangeDetector*&&) + 116 (invoke.h:359)
+13  haywire                       	       0x1008baa84 void std::__1::__thread_execute[abi:v160006]<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (Haywire::ChangeDetector::*)(), Haywire::ChangeDetector*, 2ul>(std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (Haywire::ChangeDetector::*)(), Haywire::ChangeDetector*>&, std::__1::__tuple_indices<2ul>) + 48 (thread:288)
+14  haywire                       	       0x1008ba380 void* std::__1::__thread_proxy[abi:v160006]<std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (Haywire::ChangeDetector::*)(), Haywire::ChangeDetector*>>(void*) + 84 (thread:299)
+15  libsystem_pthread.dylib       	       0x19480ef94 _pthread_start + 136
+16  libsystem_pthread.dylib       	       0x194809d34 thread_start + 8
+
+
+Thread 0 crashed with ARM Thread State (64-bit):
+    x0: 0x000000016b1690f8   x1: 0x0000000000003741   x2: 0x0000000150018000   x3: 0x000000000000006d
+    x4: 0x0000000101264900   x5: 0x0000000000000000   x6: 0x0000000000003fff   x7: 0x0000000000000001
+    x8: 0x0000000000000004   x9: 0x0000000000003741  x10: 0x00000000000191dd  x11: 0x0000000007f58000
+   x12: 0x0000000000000000  x13: 0x0000000150000028  x14: 0x00000000ffff806d  x15: 0x0000000000000002
+   x16: 0x00000000ffff7fff  x17: 0x00000002069fde28  x18: 0x0000000000000000  x19: 0x0000000101211bd0
+   x20: 0x00000001007bd14c  x21: 0x000000016f646ff0  x22: 0x0000000101211910  x23: 0x000000016f647070
+   x24: 0x000000016f6470b0  x25: 0x00000001944fa31b  x26: 0x0000000000000000  x27: 0x0000000000000000
+   x28: 0x0000000000000000   fp: 0x000000016f645300   lr: 0x000000010084da14
+    sp: 0x000000016f645280   pc: 0x000000010084da20 cpsr: 0x20001000
+   far: 0x0000000000000004  esr: 0x92000006 (Data Abort) byte read Translation fault
+
+Binary Images:
+       0x113d38000 -        0x113da3fff com.apple.AppleMetalOpenGLRenderer (1.0) <c032830a-fbed-356d-a4a7-acd24492f336> /System/Library/Extensions/AppleMetalOpenGLRenderer.bundle/Contents/MacOS/AppleMetalOpenGLRenderer
+       0x101680000 -        0x10168bfff libobjc-trampolines.dylib (*) <9381bd6d-84a5-3c72-b3b8-88428afa4782> /usr/lib/libobjc-trampolines.dylib
+       0x101298000 -        0x1012bffff libglfw.3.4.dylib (*) <8417d8b4-8670-3c85-85ca-4fc6135383a1> /opt/homebrew/*/libglfw.3.4.dylib
+       0x1007b8000 -        0x100a5ffff haywire (*) <fbe0fe92-3f5b-354e-b455-8db832591b62> /Users/USER/*/haywire
+       0x194480000 -        0x194508a17 dyld (*) <37bbc384-0755-31c7-a808-0ed49e44dd8e> /usr/lib/dyld
+               0x0 - 0xffffffffffffffff ??? (*) <00000000-0000-0000-0000-000000000000> ???
+       0x1947cd000 -        0x194807ffb libsystem_kernel.dylib (*) <9b8b53f9-e2b6-36df-98e9-28d8fca732f2> /usr/lib/system/libsystem_kernel.dylib
+       0x194870000 -        0x194d48fff com.apple.CoreFoundation (6.9) <84b539d5-22c9-3f8c-84c8-903e9c7b8d29> /System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation
+       0x198112000 -        0x19944efff com.apple.AppKit (6.9) <61f710be-9132-3cc2-883d-066365fba1ad> /System/Library/Frameworks/AppKit.framework/Versions/C/AppKit
+       0x194808000 -        0x194814fff libsystem_pthread.dylib (*) <386b0fc1-7873-3328-8e71-43269fd1b2c7> /usr/lib/system/libsystem_pthread.dylib
+
+External Modification Summary:
+  Calls made by other processes targeting this process:
+    task_for_pid: 0
+    thread_create: 0
+    thread_set_state: 0
+  Calls made by this process:
+    task_for_pid: 0
+    thread_create: 0
+    thread_set_state: 0
+  Calls made by all processes on this machine:
+    task_for_pid: 1
+    thread_create: 0
+    thread_set_state: 26
+
+
+-----------
+Full Report
+-----------
+
+{"app_name":"haywire","timestamp":"2025-09-30 21:33:43.00 -0500","app_version":"","slice_uuid":"fbe0fe92-3f5b-354e-b455-8db832591b62","build_version":"","platform":1,"share_with_app_devs":0,"is_first_party":1,"bug_type":"309","os_version":"macOS 14.5 (23F79)","roots_installed":0,"incident_id":"0923444B-21E6-40CF-B5B9-D1C951C600A4","name":"haywire"}
+{
+  "uptime" : 78000,
+  "procRole" : "Background",
+  "version" : 2,
+  "userID" : 501,
+  "deployVersion" : 210,
+  "modelCode" : "Mac15,9",
+  "coalitionID" : 7333,
+  "osVersion" : {
+    "train" : "macOS 14.5",
+    "build" : "23F79",
+    "releaseType" : "User"
+  },
+  "captureTime" : "2025-09-30 21:33:43.2192 -0500",
+  "codeSigningMonitor" : 1,
+  "incident" : "0923444B-21E6-40CF-B5B9-D1C951C600A4",
+  "pid" : 49692,
+  "translated" : false,
+  "cpuType" : "ARM-64",
+  "roots_installed" : 0,
+  "bug_type" : "309",
+  "procLaunch" : "2025-09-30 21:32:01.6746 -0500",
+  "procStartAbsTime" : 1886710916960,
+  "procExitAbsTime" : 1889147801032,
+  "procName" : "haywire",
+  "procPath" : "\/Users\/USER\/*\/haywire",
+  "parentProc" : "launchd",
+  "parentPid" : 1,
+  "coalitionName" : "com.microsoft.VSCode",
+  "crashReporterKey" : "FE0AC24F-6C20-FC8C-A7B5-A905F52C866D",
+  "responsiblePid" : 32465,
+  "responsibleProc" : "Electron",
+  "codeSigningID" : "haywire-55554944fbe0fe923f5b354eb4558db832591b62",
+  "codeSigningTeamID" : "",
+  "codeSigningFlags" : 570425861,
+  "codeSigningValidationCategory" : 10,
+  "codeSigningTrustLevel" : 4294967295,
+  "instructionByteStream" : {"beforePC":"6B8A+egfQPkIAUD5qYNd+CgBAPmhg1z4Fvr\/l+gDAKrgG0D5CAFA+Q==","atPC":"CAFA+ekfQPkoAQD5qANd+OgHAPmhg1z4DPr\/l+gHQPkJAED5KAEA+Q=="},
+  "wakeTime" : 8489,
+  "sleepWakeUUID" : "77BA369A-6009-4DC4-BBE5-F1E147844207",
+  "sip" : "enabled",
+  "vmRegionInfo" : "0x4 is not in any region.  Bytes before following region: 4303060988\n      REGION TYPE                    START - END         [ VSIZE] PRT\/MAX SHRMOD  REGION DETAIL\n      UNUSED SPACE AT START\n--->  \n      __TEXT                      1007b8000-100a60000    [ 2720K] r-x\/r-x SM=COW  \/Users\/USER\/*\/haywire",
+  "exception" : {"codes":"0x0000000000000001, 0x0000000000000004","rawCodes":[1,4],"type":"EXC_BAD_ACCESS","signal":"SIGSEGV","subtype":"KERN_INVALID_ADDRESS at 0x0000000000000004"},
+  "termination" : {"flags":0,"code":11,"namespace":"SIGNAL","indicator":"Segmentation fault: 11","byProc":"exc handler","byPid":49692},
+  "vmregioninfo" : "0x4 is not in any region.  Bytes before following region: 4303060988\n      REGION TYPE                    START - END         [ VSIZE] PRT\/MAX SHRMOD  REGION DETAIL\n      UNUSED SPACE AT START\n--->  \n      __TEXT                      1007b8000-100a60000    [ 2720K] r-x\/r-x SM=COW  \/Users\/USER\/*\/haywire",
+  "extMods" : {"caller":{"thread_create":0,"thread_set_state":0,"task_for_pid":0},"system":{"thread_create":0,"thread_set_state":26,"task_for_pid":1},"targeted":{"thread_create":0,"thread_set_state":0,"task_for_pid":0},"warnings":0},
+  "faultingThread" : 0,
+  "threads" : [{"triggered":true,"id":713788,"threadState":{"x":[{"value":6091608312},{"value":14145},{"value":5637242880},{"value":109},{"value":4314253568},{"value":0},{"value":16383},{"value":1},{"value":4},{"value":14145},{"value":102877},{"value":133529600},{"value":0},{"value":5637144616},{"value":4294934637},{"value":2},{"value":4294934527},{"value":8701074984},{"value":0},{"value":4313914320},{"sourceLine":38,"value":4303081804,"sourceFile":"main.cpp","symbol":"main","symbolLocation":0},{"value":6163820528},{"value":4313913616},{"value":6163820656},{"value":6163820720},{"value":6783214363},{"value":0},{"value":0},{"value":0}],"flavor":"ARM_THREAD_STATE64","lr":{"value":4303673876},"cpsr":{"value":536875008},"fp":{"value":6163813120},"sp":{"value":6163812992},"esr":{"value":2449473542,"description":"(Data Abort) byte read Translation fault"},"pc":{"value":4303673888,"matchesCrashFrame":1},"far":{"value":4}},"queue":"com.apple.main-thread","frames":[{"imageOffset":612896,"sourceLine":2296,"sourceFile":"__hash_table","symbol":"void std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__do_rehash<true>(unsigned long)","imageIndex":3,"symbolLocation":568},{"imageOffset":612060,"sourceLine":2235,"sourceFile":"__hash_table","symbol":"void std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__rehash<true>(unsigned long)","imageIndex":3,"symbolLocation":156},{"imageOffset":610424,"sourceLine":1155,"sourceFile":"__hash_table","symbol":"std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__rehash_unique[abi:v160006](unsigned long)","imageIndex":3,"symbolLocation":32},{"imageOffset":609464,"sourceLine":2021,"sourceFile":"__hash_table","symbol":"std::__1::pair<std::__1::__hash_iterator<std::__1::__hash_node<std::__1::__hash_value_type<unsigned long long, unsigned long long>, void*>*>, bool> std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__emplace_unique_key_args<unsigned long long, std::__1::piecewise_construct_t const&, std::__1::tuple<unsigned long long const&>, std::__1::tuple<>>(unsigned long long const&, std::__1::piecewise_construct_t const&, std::__1::tuple<unsigned long long const&>&&, std::__1::tuple<>&&)","imageIndex":3,"symbolLocation":668},{"imageOffset":596340,"sourceLine":1804,"sourceFile":"unordered_map","symbol":"std::__1::unordered_map<unsigned long long, unsigned long long, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::allocator<std::__1::pair<unsigned long long const, unsigned long long>>>::operator[](unsigned long long const&)","imageIndex":3,"symbolLocation":88},{"imageOffset":595868,"sourceLine":67,"sourceFile":"kernel_viewport_translator.cpp","symbol":"Haywire::KernelViewportTranslator::TranslateAddress(int, unsigned long long)","imageIndex":3,"symbolLocation":504},{"imageOffset":692604,"sourceLine":105,"sourceFile":"crunched_memory_reader.cpp","symbol":"Haywire::CrunchedMemoryReader::ReadCrunchedMemory(unsigned long long, unsigned long, std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&)","imageIndex":3,"symbolLocation":1400},{"imageOffset":726020,"sourceLine":228,"sourceFile":"memory_visualizer.cpp","symbol":"Haywire::MemoryVisualizer::DrawControlBar(Haywire::QemuConnection&)","imageIndex":3,"symbolLocation":1320},{"imageOffset":24364,"sourceLine":464,"sourceFile":"main.cpp","symbol":"main","imageIndex":3,"symbolLocation":3552},{"imageOffset":24800,"symbol":"start","symbolLocation":2360,"imageIndex":4}]},{"id":713838,"name":"com.apple.NSEventThread","threadState":{"x":[{"value":268451845},{"value":21592279046},{"value":8589934592},{"value":140750373257216},{"value":0},{"value":140750373257216},{"value":2},{"value":4294967295},{"value":18446744073709550527},{"value":32771},{"value":0},{"value":1},{"value":32771},{"value":1488278},{"value":0},{"value":0},{"value":18446744073709551569},{"value":8701057792},{"value":0},{"value":4294967295},{"value":2},{"value":140750373257216},{"value":0},{"value":140750373257216},{"value":6165520488},{"value":8589934592},{"value":21592279046},{"value":21592279046},{"value":4412409862}],"flavor":"ARM_THREAD_STATE64","lr":{"value":6786255652},"cpsr":{"value":4096},"fp":{"value":6165520336},"sp":{"value":6165520256},"esr":{"value":1442840704,"description":" Address size fault"},"pc":{"value":6786179572},"far":{"value":0}},"frames":[{"imageOffset":4596,"symbol":"mach_msg2_trap","symbolLocation":8,"imageIndex":6},{"imageOffset":80676,"symbol":"mach_msg2_internal","symbolLocation":80,"imageIndex":6},{"imageOffset":40500,"symbol":"mach_msg_overwrite","symbolLocation":476,"imageIndex":6},{"imageOffset":5496,"symbol":"mach_msg","symbolLocation":24,"imageIndex":6},{"imageOffset":517760,"symbol":"__CFRunLoopServiceMachPort","symbolLocation":160,"imageIndex":7},{"imageOffset":511812,"symbol":"__CFRunLoopRun","symbolLocation":1208,"imageIndex":7},{"imageOffset":508980,"symbol":"CFRunLoopRunSpecific","symbolLocation":608,"imageIndex":7},{"imageOffset":1458568,"symbol":"_NSEventThread","symbolLocation":144,"imageIndex":8},{"imageOffset":28564,"symbol":"_pthread_start","symbolLocation":136,"imageIndex":9},{"imageOffset":7476,"symbol":"thread_start","symbolLocation":8,"imageIndex":9}]},{"id":713840,"frames":[{"imageOffset":7456,"symbol":"start_wqthread","symbolLocation":0,"imageIndex":9}],"threadState":{"x":[{"value":6166671360},{"value":45827},{"value":6166134784},{"value":0},{"value":409604},{"value":18446744073709551615},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0}],"flavor":"ARM_THREAD_STATE64","lr":{"value":0},"cpsr":{"value":4096},"fp":{"value":0},"sp":{"value":6166671360},"esr":{"value":1442840704,"description":" Address size fault"},"pc":{"value":6786424096},"far":{"value":0}}},{"id":714021,"frames":[{"imageOffset":607128,"sourceLine":61,"sourceFile":"compressed_pair.h","symbol":"std::__1::__compressed_pair_elem<std::__1::__hash_node_base<std::__1::__hash_node<std::__1::__hash_value_type<unsigned long long, unsigned long long>, void*>*>**, 0, false>::__get[abi:v160006]() const","imageIndex":3,"symbolLocation":8},{"imageOffset":607108,"sourceLine":137,"sourceFile":"compressed_pair.h","symbol":"std::__1::__compressed_pair<std::__1::__hash_node_base<std::__1::__hash_node<std::__1::__hash_value_type<unsigned long long, unsigned long long>, void*>*>**, std::__1::__bucket_list_deallocator<std::__1::allocator<std::__1::__hash_node_base<std::__1::__hash_node<std::__1::__hash_value_type<unsigned long long, unsigned long long>, void*>*>*>>>::first[abi:v160006]() const","imageIndex":3,"symbolLocation":24},{"imageOffset":606852,"sourceLine":469,"sourceFile":"unique_ptr.h","symbol":"std::__1::unique_ptr<std::__1::__hash_node_base<std::__1::__hash_node<std::__1::__hash_value_type<unsigned long long, unsigned long long>, void*>*>* [], std::__1::__bucket_list_deallocator<std::__1::allocator<std::__1::__hash_node_base<std::__1::__hash_node<std::__1::__hash_value_type<unsigned long long, unsigned long long>, void*>*>*>>>::operator[][abi:v160006](unsigned long) const","imageIndex":3,"symbolLocation":28},{"imageOffset":612532,"sourceLine":2262,"sourceFile":"__hash_table","symbol":"void std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__do_rehash<true>(unsigned long)","imageIndex":3,"symbolLocation":204},{"imageOffset":612060,"sourceLine":2235,"sourceFile":"__hash_table","symbol":"void std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__rehash<true>(unsigned long)","imageIndex":3,"symbolLocation":156},{"imageOffset":610424,"sourceLine":1155,"sourceFile":"__hash_table","symbol":"std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__rehash_unique[abi:v160006](unsigned long)","imageIndex":3,"symbolLocation":32},{"imageOffset":609464,"sourceLine":2021,"sourceFile":"__hash_table","symbol":"std::__1::pair<std::__1::__hash_iterator<std::__1::__hash_node<std::__1::__hash_value_type<unsigned long long, unsigned long long>, void*>*>, bool> std::__1::__hash_table<std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::__unordered_map_hasher<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, true>, std::__1::__unordered_map_equal<unsigned long long, std::__1::__hash_value_type<unsigned long long, unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::hash<unsigned long long>, true>, std::__1::allocator<std::__1::__hash_value_type<unsigned long long, unsigned long long>>>::__emplace_unique_key_args<unsigned long long, std::__1::piecewise_construct_t const&, std::__1::tuple<unsigned long long const&>, std::__1::tuple<>>(unsigned long long const&, std::__1::piecewise_construct_t const&, std::__1::tuple<unsigned long long const&>&&, std::__1::tuple<>&&)","imageIndex":3,"symbolLocation":668},{"imageOffset":596340,"sourceLine":1804,"sourceFile":"unordered_map","symbol":"std::__1::unordered_map<unsigned long long, unsigned long long, std::__1::hash<unsigned long long>, std::__1::equal_to<unsigned long long>, std::__1::allocator<std::__1::pair<unsigned long long const, unsigned long long>>>::operator[](unsigned long long const&)","imageIndex":3,"symbolLocation":88},{"imageOffset":595868,"sourceLine":67,"sourceFile":"kernel_viewport_translator.cpp","symbol":"Haywire::KernelViewportTranslator::TranslateAddress(int, unsigned long long)","imageIndex":3,"symbolLocation":504},{"imageOffset":692604,"sourceLine":105,"sourceFile":"crunched_memory_reader.cpp","symbol":"Haywire::CrunchedMemoryReader::ReadCrunchedMemory(unsigned long long, unsigned long, std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&)","imageIndex":3,"symbolLocation":1400},{"imageOffset":1053412,"sourceLine":247,"sourceFile":"change_detector.cpp","symbol":"Haywire::ChangeDetector::ScanChunk(unsigned long)","imageIndex":3,"symbolLocation":364},{"imageOffset":1050328,"sourceLine":358,"sourceFile":"change_detector.cpp","symbol":"Haywire::ChangeDetector::PatrolLoop()","imageIndex":3,"symbolLocation":888},{"imageOffset":1059652,"sourceLine":359,"sourceFile":"invoke.h","symbol":"decltype(*std::declval<Haywire::ChangeDetector*>().*std::declval<void (Haywire::ChangeDetector::*)()>()()) std::__1::__invoke[abi:v160006]<void (Haywire::ChangeDetector::*)(), Haywire::ChangeDetector*, void>(void (Haywire::ChangeDetector::*&&)(), Haywire::ChangeDetector*&&)","imageIndex":3,"symbolLocation":116},{"imageOffset":1059460,"sourceLine":288,"sourceFile":"thread","symbol":"void std::__1::__thread_execute[abi:v160006]<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (Haywire::ChangeDetector::*)(), Haywire::ChangeDetector*, 2ul>(std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (Haywire::ChangeDetector::*)(), Haywire::ChangeDetector*>&, std::__1::__tuple_indices<2ul>)","imageIndex":3,"symbolLocation":48},{"imageOffset":1057664,"sourceLine":299,"sourceFile":"thread","symbol":"void* std::__1::__thread_proxy[abi:v160006]<std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, void (Haywire::ChangeDetector::*)(), Haywire::ChangeDetector*>>(void*)","imageIndex":3,"symbolLocation":84},{"imageOffset":28564,"symbol":"_pthread_start","symbolLocation":136,"imageIndex":9},{"imageOffset":7476,"symbol":"thread_start","symbolLocation":8,"imageIndex":9}],"threadState":{"x":[{"value":6091608312},{"value":24522},{"value":0},{"value":37},{"value":36},{"value":39},{"value":16383},{"value":0},{"value":0},{"value":205759},{"value":201277441},{"value":130285568},{"value":39},{"value":0},{"value":0},{"value":2},{"value":0},{"value":0},{"value":0},{"value":6167244800},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0},{"value":0}],"flavor":"ARM_THREAD_STATE64","lr":{"value":4303668100},"cpsr":{"value":2147487744},"fp":{"value":6167242560},"sp":{"value":6167242528},"esr":{"value":2449473611,"description":"(Data Abort) byte write Access flag fault"},"pc":{"value":4303668120},"far":{"value":0}}}],
+  "usedImages" : [
+  {
+    "source" : "P",
+    "arch" : "arm64e",
+    "base" : 4627595264,
+    "CFBundleShortVersionString" : "1.0",
+    "CFBundleIdentifier" : "com.apple.AppleMetalOpenGLRenderer",
+    "size" : 442368,
+    "uuid" : "c032830a-fbed-356d-a4a7-acd24492f336",
+    "path" : "\/System\/Library\/Extensions\/AppleMetalOpenGLRenderer.bundle\/Contents\/MacOS\/AppleMetalOpenGLRenderer",
+    "name" : "AppleMetalOpenGLRenderer",
+    "CFBundleVersion" : "1"
+  },
+  {
+    "source" : "P",
+    "arch" : "arm64e",
+    "base" : 4318560256,
+    "size" : 49152,
+    "uuid" : "9381bd6d-84a5-3c72-b3b8-88428afa4782",
+    "path" : "\/usr\/lib\/libobjc-trampolines.dylib",
+    "name" : "libobjc-trampolines.dylib"
+  },
+  {
+    "source" : "P",
+    "arch" : "arm64",
+    "base" : 4314464256,
+    "size" : 163840,
+    "uuid" : "8417d8b4-8670-3c85-85ca-4fc6135383a1",
+    "path" : "\/opt\/homebrew\/*\/libglfw.3.4.dylib",
+    "name" : "libglfw.3.4.dylib"
+  },
+  {
+    "source" : "P",
+    "arch" : "arm64",
+    "base" : 4303060992,
+    "size" : 2785280,
+    "uuid" : "fbe0fe92-3f5b-354e-b455-8db832591b62",
+    "path" : "\/Users\/USER\/*\/haywire",
+    "name" : "haywire"
+  },
+  {
+    "source" : "P",
+    "arch" : "arm64e",
+    "base" : 6782713856,
+    "size" : 559640,
+    "uuid" : "37bbc384-0755-31c7-a808-0ed49e44dd8e",
+    "path" : "\/usr\/lib\/dyld",
+    "name" : "dyld"
+  },
+  {
+    "size" : 0,
+    "source" : "A",
+    "base" : 0,
+    "uuid" : "00000000-0000-0000-0000-000000000000"
+  },
+  {
+    "source" : "P",
+    "arch" : "arm64e",
+    "base" : 6786174976,
+    "size" : 241660,
+    "uuid" : "9b8b53f9-e2b6-36df-98e9-28d8fca732f2",
+    "path" : "\/usr\/lib\/system\/libsystem_kernel.dylib",
+    "name" : "libsystem_kernel.dylib"
+  },
+  {
+    "source" : "P",
+    "arch" : "arm64e",
+    "base" : 6786842624,
+    "CFBundleShortVersionString" : "6.9",
+    "CFBundleIdentifier" : "com.apple.CoreFoundation",
+    "size" : 5083136,
+    "uuid" : "84b539d5-22c9-3f8c-84c8-903e9c7b8d29",
+    "path" : "\/System\/Library\/Frameworks\/CoreFoundation.framework\/Versions\/A\/CoreFoundation",
+    "name" : "CoreFoundation",
+    "CFBundleVersion" : "2503.1"
+  },
+  {
+    "source" : "P",
+    "arch" : "arm64e",
+    "base" : 6846226432,
+    "CFBundleShortVersionString" : "6.9",
+    "CFBundleIdentifier" : "com.apple.AppKit",
+    "size" : 20172800,
+    "uuid" : "61f710be-9132-3cc2-883d-066365fba1ad",
+    "path" : "\/System\/Library\/Frameworks\/AppKit.framework\/Versions\/C\/AppKit",
+    "name" : "AppKit",
+    "CFBundleVersion" : "2487.60.105"
+  },
+  {
+    "source" : "P",
+    "arch" : "arm64e",
+    "base" : 6786416640,
+    "size" : 53248,
+    "uuid" : "386b0fc1-7873-3328-8e71-43269fd1b2c7",
+    "path" : "\/usr\/lib\/system\/libsystem_pthread.dylib",
+    "name" : "libsystem_pthread.dylib"
+  }
+],
+  "sharedCache" : {
+  "base" : 6781960192,
+  "size" : 4220698624,
+  "uuid" : "3406ad1b-2469-30eb-9863-5dce861e6dea"
+},
+  "legacyInfo" : {
+  "threadTriggered" : {
+    "queue" : "com.apple.main-thread"
+  }
+},
+  "logWritingSignature" : "d4f716c34ea793df38c14299296366c27e7ad7de",
+  "trialInfo" : {
+  "rollouts" : [
+    {
+      "rolloutId" : "645197bf528fbf3c3af54105",
+      "factorPackIds" : {
+        "SIRI_VALUE_INFERENCE_PERVASIVE_ENTITY_RESOLUTION" : "663e65b4a1526e1ca0e288a1"
+      },
+      "deploymentId" : 240000002
+    },
+    {
+      "rolloutId" : "661464ecda55e5192b100804",
+      "factorPackIds" : {
+
+      },
+      "deploymentId" : 240000005
+    }
+  ],
+  "experiments" : [
+
+  ]
+}
+}
+
+Model: Mac15,9, BootROM 10151.121.1, proc 16:12:4 processors, 64 GB, SMC 
+Graphics: Apple M3 Max, Apple M3 Max, Built-In
+Display: Color LCD, 3456 x 2234 Retina, Main, MirrorOff, Online
+Display: DELL S3221QS, 3840 x 2160 (2160p/4K UHD 1 - Ultra High Definition), MirrorOff, Online
+Memory Module: LPDDR5, Micron
+AirPort: spairport_wireless_card_type_wifi (0x14E4, 0x4388), wl0: Apr  4 2024 20:57:11 version 23.30.58.0.41.51.138 FWID 01-baea9d27
+AirPort: 
+Bluetooth: Version (null), 0 services, 0 devices, 0 incoming serial ports
+Network Service: Wi-Fi, AirPort, en0
+USB Device: USB31Bus
+USB Device: USB31Bus
+USB Device: USB3.0 Hub
+USB Device: USB 10/100/1000 LAN
+USB Device: USB2.0 Hub
+USB Device: USB Billboard Device
+USB Device: USB31Bus
+Thunderbolt Bus: MacBook Pro, Apple Inc.
+Thunderbolt Bus: MacBook Pro, Apple Inc.
+Thunderbolt Bus: MacBook Pro, Apple Inc.

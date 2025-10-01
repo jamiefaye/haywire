@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
+#include <mutex>
 #include "kernel_discovery_backend.h"
 
 namespace Haywire {
@@ -31,8 +32,9 @@ private:
     uint64_t viewportCenter;
     size_t viewportSize;
 
-    // Simple cache: [pid][va_page] -> pa
+    // Simple cache: [pid][va_page] -> pa (protected by mutex for thread safety)
     std::unordered_map<int, std::unordered_map<uint64_t, uint64_t>> cache;
+    mutable std::mutex cacheMutex;
 
     // Constants
     static constexpr uint64_t PAGE_SIZE = 4096;

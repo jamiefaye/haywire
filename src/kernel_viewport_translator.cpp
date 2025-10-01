@@ -13,8 +13,11 @@ KernelViewportTranslator::~KernelViewportTranslator() {
 void KernelViewportTranslator::SetViewport(int pid, uint64_t centerVA, size_t viewSize) {
     // Check if we switched processes
     if (pid != currentPid && pid > 0) {
-        // Clear cache when switching processes
-        cache[pid].clear();
+        // Clear cache when switching processes (with lock)
+        {
+            std::lock_guard<std::mutex> lock(cacheMutex);
+            cache[pid].clear();
+        }
 
         // Make sure kernel discovery has this PID selected
         if (kernelDiscovery) {
@@ -36,16 +39,19 @@ uint64_t KernelViewportTranslator::TranslateAddress(int pid, uint64_t virtualAdd
     uint64_t pageAddr = AlignToPage(virtualAddr);
     uint64_t pageOffset = virtualAddr & PAGE_MASK;
 
-    // Check cache first
-    auto pidIt = cache.find(pid);
-    if (pidIt != cache.end()) {
-        auto pageIt = pidIt->second.find(pageAddr);
-        if (pageIt != pidIt->second.end()) {
-            // Cache hit - add offset within page
-            if (pageIt->second != 0) {
-                return pageIt->second + pageOffset;
+    // Check cache first (with lock)
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        auto pidIt = cache.find(pid);
+        if (pidIt != cache.end()) {
+            auto pageIt = pidIt->second.find(pageAddr);
+            if (pageIt != pidIt->second.end()) {
+                // Cache hit - add offset within page
+                if (pageIt->second != 0) {
+                    return pageIt->second + pageOffset;
+                }
+                return 0; // Cached as not present
             }
-            return 0; // Cached as not present
         }
     }
 
@@ -58,19 +64,23 @@ uint64_t KernelViewportTranslator::TranslateAddress(int pid, uint64_t virtualAdd
     // Translate using kernel discovery
     uint64_t physAddr = kernelDiscovery->TranslateVA(virtualAddr);
 
-    // Cache the page translation (store page base address)
-    if (physAddr != 0) {
-        uint64_t physPageAddr = physAddr & ~PAGE_MASK;
-        cache[pid][pageAddr] = physPageAddr;
-    } else {
-        // Cache negative result too
-        cache[pid][pageAddr] = 0;
+    // Cache the page translation (store page base address) with lock
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        if (physAddr != 0) {
+            uint64_t physPageAddr = physAddr & ~PAGE_MASK;
+            cache[pid][pageAddr] = physPageAddr;
+        } else {
+            // Cache negative result too
+            cache[pid][pageAddr] = 0;
+        }
     }
 
     return physAddr;
 }
 
 void KernelViewportTranslator::ClearCache(int pid) {
+    std::lock_guard<std::mutex> lock(cacheMutex);
     if (pid == -1) {
         cache.clear();
     } else {
