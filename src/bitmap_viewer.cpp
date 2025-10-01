@@ -1,7 +1,7 @@
 #include "bitmap_viewer.h"
 #include "memory_renderer.h"
 #include "memory_visualizer.h"
-#include "beacon_reader.h"
+#include "memory_file_reader.h"
 #include "memory_mapper.h"
 #include "qemu_connection.h"
 #include "crunched_memory_reader.h"
@@ -835,9 +835,9 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
                viewer.memoryAddress.value, currentPid, totalBytes);
     }
     
-    // For shared memory addresses - use beacon reader directly
-    if (!beaconReader) {
-        printf("No beacon reader available for memory extraction\n");
+    // For shared memory addresses - use memory file reader directly
+    if (!memoryFileReader) {
+        printf("No memory file reader available for memory extraction\n");
         // Fill with test pattern
         FillTestPattern(viewer);
         return;
@@ -883,10 +883,10 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
         return;
     }
     
-    // Validate the offset is within beacon reader's range
-    if (beaconReader) {
-        // Get the memory size from beacon reader (this is the mmap'd file size)
-        size_t memSize = beaconReader->GetMemorySize();
+    // Validate the offset is within memory file reader's range
+    if (memoryFileReader) {
+        // Get the memory size from memory file reader (this is the mmap'd file size)
+        size_t memSize = memoryFileReader->GetMemorySize();
         if (fileOffset >= memSize) {
             printf("File offset 0x%llx exceeds memory size 0x%llx for %s:0x%llx\n",
                    fileOffset, memSize,
@@ -897,8 +897,8 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
         }
     }
     
-    // Get direct memory pointer from beacon reader
-    const uint8_t* memPtr = beaconReader->GetMemoryPointer(fileOffset);
+    // Get direct memory pointer from memory file reader
+    const uint8_t* memPtr = memoryFileReader->GetMemoryPointer(fileOffset);
     if (!memPtr) {
         const char* spaceStr = "";
         switch (viewer.memoryAddress.space) {
@@ -908,8 +908,8 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
             case AddressSpace::CRUNCHED: spaceStr = "c:"; break;
             default: break;
         }
-        printf("Failed to get memory pointer for address %s0x%llx (offset: 0x%llx, beacon=%p)\n", 
-               spaceStr, viewer.memoryAddress.value, fileOffset, beaconReader.get());
+        printf("Failed to get memory pointer for address %s0x%llx (offset: 0x%llx, reader=%p)\n",
+               spaceStr, viewer.memoryAddress.value, fileOffset, memoryFileReader.get());
         // Fill with test pattern instead
         FillTestPattern(viewer);
         return;

@@ -99,7 +99,17 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
             translationsNeeded++;
             uint64_t physAddr = 0;
             if (translator) {
-                physAddr = translator->TranslateAddress(targetPid, chunkVA);
+                // Validate VA before translation to prevent crashes
+                // ARM64 userspace VA max is 0x0001000000000000 (48-bit address space)
+                if (chunkVA < 0x0001000000000000ULL) {
+                    physAddr = translator->TranslateAddress(targetPid, chunkVA);
+                } else {
+                    static int invalidVACount = 0;
+                    if (++invalidVACount <= 3) {
+                        std::cerr << "CrunchedReader: Invalid VA 0x" << std::hex << chunkVA
+                                  << " exceeds userspace limit" << std::dec << std::endl;
+                    }
+                }
             }
             
             static int translationCount = 0;

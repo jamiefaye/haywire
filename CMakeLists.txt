@@ -88,7 +88,7 @@ add_executable(haywire
     src/memory_mapper.cpp
     src/memory_utils.cpp
     src/guest_agent.cpp
-    src/viewport_translator.cpp
+    src/kernel_viewport_translator.cpp
     src/process_memory_map.cpp
     src/address_space_flattener.cpp
     src/pagemap_cache.cpp
@@ -102,11 +102,11 @@ add_executable(haywire
     # New memory reader using kernel discovery
     src/kernel_memory_reader.cpp
     src/memory_file_reader.cpp
-    # Beacon files temporarily kept for memory mapping only
-    src/beacon_reader.cpp
-    src/beacon_decoder.cpp
-    # beacon_translator removed - using kernel discovery for VA translation
+    # beacon files completely removed - using memory_file_reader instead
     src/kernel_discovery_backend.cpp
+    # Change detection and heat map
+    src/change_detector.cpp
+    src/heat_map_widget.cpp
     src/pid_selector.cpp
     src/bitmap_viewer.cpp
     src/address_parser.cpp

@@ -864,10 +864,27 @@ export class PagedKernelDiscovery {
             }
         }
 
-        // Must have PGD[0] and sparse structure
+        // Must have PGD[0]
         if (!pgd0Entry) return null;
-        const totalEntries = analysis.userEntries + analysis.kernelEntries.length;
-        if (totalEntries < 2 || totalEntries > 20) return null;
+
+        // CRITICAL: Swapper has VERY FEW user entries (typically just 1)
+        if (analysis.userEntries === 1) {
+            analysis.score += 100;  // Huge weight for single user entry
+            analysis.reasons.push('Single user entry (swapper signature!)');
+        } else if (analysis.userEntries === 2) {
+            analysis.score += 50;
+            analysis.reasons.push('Two user entries');
+        } else if (analysis.userEntries <= 4) {
+            analysis.score += 20;
+            analysis.reasons.push(`${analysis.userEntries} user entries`);
+        } else if (analysis.userEntries <= 16) {
+            analysis.score += 5;
+            analysis.reasons.push(`${analysis.userEntries} user entries (ok)`);
+        } else {
+            // Many user entries = likely a process PGD, not swapper
+            analysis.score -= 50;
+            analysis.reasons.push(`${analysis.userEntries} user entries (too many!)`);
+        }
 
         // Check PUD count if PGD[0] is a TABLE
         if (pgd0Entry.type === 'TABLE') {
@@ -895,12 +912,12 @@ export class PagedKernelDiscovery {
                 // Estimate memory size based on PUD count
                 if (pudCount > 0 && consecutivePuds) {
                     analysis.memSizeEstimate = pudCount; // GB
-                    analysis.score += 2;
+                    analysis.score += 20;  // Increased weight
                     analysis.reasons.push(`Linear mapping for ${pudCount}GB RAM`);
 
                     // Common RAM sizes get bonus points
                     if ([1, 2, 4, 6, 8, 16, 32].includes(pudCount)) {
-                        analysis.score += 1;
+                        analysis.score += 10;  // Increased weight
                         analysis.reasons.push('Common RAM size');
                     }
                 }
@@ -908,7 +925,7 @@ export class PagedKernelDiscovery {
         } else if (pgd0Entry.type === 'BLOCK') {
             // 1GB huge page for small memory systems
             analysis.memSizeEstimate = 1;
-            analysis.score += 1;
+            analysis.score += 10;  // Increased weight
             analysis.reasons.push('1GB block mapping');
         }
 
@@ -917,8 +934,20 @@ export class PagedKernelDiscovery {
         const hasHighKernel = analysis.kernelEntries.some(idx => idx >= 500);
 
         if (hasKernelStart) {
-            analysis.score += 1;
+            analysis.score += 15;  // Must have kernel text
             analysis.reasons.push('Has kernel text mapping (PGD[256])');
+        } else {
+            analysis.score -= 20;  // Missing PGD[256] is suspicious
+            analysis.reasons.push('Missing PGD[256]!');
+        }
+
+        // Kernel entries - swapper should have some but not all
+        if (analysis.kernelEntries.length >= 2 && analysis.kernelEntries.length <= 20) {
+            analysis.score += 20;
+            analysis.reasons.push(`${analysis.kernelEntries.length} kernel entries (good range)`);
+        } else if (analysis.kernelEntries.length > 100) {
+            analysis.score -= 10;
+            analysis.reasons.push(`${analysis.kernelEntries.length} kernel entries (suspicious)`);
         }
 
         if (hasHighKernel) {

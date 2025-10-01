@@ -11,6 +11,7 @@
 namespace Haywire {
 
 class MemoryFileReader;
+class CrunchedMemoryReader;
 
 // Information about a single chunk's state
 struct ChunkInfo {
@@ -42,6 +43,10 @@ public:
     void SetVisibleRange(size_t start_chunk, size_t end_chunk);
     void SetHeatMapRange(size_t start_chunk, size_t end_chunk);
 
+    // VA mode support
+    void SetVAMode(bool enabled, CrunchedMemoryReader* crunchedReader = nullptr);
+    bool IsVAMode() const { return va_mode_enabled_; }
+
     // Query chunk state (thread-safe reads, no lock needed)
     size_t GetChunkCount() const { return chunks_.size(); }
     const ChunkInfo& GetChunk(size_t chunk_idx) const;
@@ -54,6 +59,8 @@ public:
 private:
     // Memory access
     MemoryFileReader* memory_reader_;
+    CrunchedMemoryReader* crunched_reader_;
+    std::atomic<bool> va_mode_enabled_;
     size_t chunk_size_;
     std::vector<ChunkInfo> chunks_;
 
@@ -79,6 +86,7 @@ private:
     // Internal methods
     void PatrolLoop();
     void ScanChunk(size_t chunk_idx);
+    void RebuildChunkArray();  // Rebuild when switching PA/VA mode
     uint32_t CalculateChecksum(const uint8_t* data, size_t size);
     bool TestChunkZero(const uint8_t* data, size_t size);
     uint64_t GetMilliseconds() const;

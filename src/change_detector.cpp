@@ -1,5 +1,6 @@
 #include "change_detector.h"
 #include "memory_file_reader.h"
+#include "crunched_memory_reader.h"
 #include <algorithm>
 #include <thread>
 #include <chrono>
@@ -13,7 +14,8 @@
 namespace Haywire {
 
 ChangeDetector::ChangeDetector(MemoryFileReader* reader, size_t chunk_size)
-    : memory_reader_(reader), chunk_size_(chunk_size), running_(false),
+    : memory_reader_(reader), crunched_reader_(nullptr), va_mode_enabled_(false),
+      chunk_size_(chunk_size), running_(false),
       scan_interval_ms_(10), visible_start_(0), visible_end_(0),
       heatmap_start_(0), heatmap_end_(0), total_scans_(0), changes_detected_(0),
       background_scan_pos_(0) {
@@ -22,14 +24,7 @@ ChangeDetector::ChangeDetector(MemoryFileReader* reader, size_t chunk_size)
         return;
     }
 
-    size_t file_size = reader->GetMemorySize();
-    size_t num_chunks = (file_size + chunk_size - 1) / chunk_size;
-
-    // Pre-allocate chunk info array
-    chunks_.resize(num_chunks);
-    for (size_t i = 0; i < num_chunks; i++) {
-        chunks_[i].offset = i * chunk_size;
-    }
+    RebuildChunkArray();
 }
 
 ChangeDetector::~ChangeDetector() {
@@ -67,6 +62,62 @@ void ChangeDetector::SetHeatMapRange(size_t start_chunk, size_t end_chunk) {
     std::lock_guard<std::mutex> lock(range_mutex_);
     heatmap_start_ = start_chunk;
     heatmap_end_ = std::min(end_chunk, chunks_.size());
+}
+
+void ChangeDetector::SetVAMode(bool enabled, CrunchedMemoryReader* crunchedReader) {
+    bool was_running = running_;
+    if (was_running) {
+        Stop();
+    }
+
+    va_mode_enabled_ = enabled;
+    crunched_reader_ = enabled ? crunchedReader : nullptr;
+
+    // Rebuild chunk array for new address space
+    RebuildChunkArray();
+
+    if (was_running) {
+        Start();
+    }
+
+    std::cout << "ChangeDetector: Switched to " << (enabled ? "VA" : "PA") << " mode\n";
+    std::cout << "  Chunk count: " << chunks_.size() << "\n";
+}
+
+void ChangeDetector::RebuildChunkArray() {
+    size_t memory_size;
+
+    if (va_mode_enabled_ && crunched_reader_) {
+        // Use crunched address space size
+        memory_size = crunched_reader_->GetCrunchedSize();
+        std::cout << "ChangeDetector: Building chunks for VA mode (crunched size: "
+                  << (memory_size / 1024 / 1024) << " MB)\n";
+    } else if (memory_reader_) {
+        // Use physical memory file size
+        memory_size = memory_reader_->GetMemorySize();
+        std::cout << "ChangeDetector: Building chunks for PA mode (file size: "
+                  << (memory_size / 1024 / 1024) << " MB)\n";
+    } else {
+        chunks_.clear();
+        return;
+    }
+
+    size_t num_chunks = (memory_size + chunk_size_ - 1) / chunk_size_;
+
+    // Pre-allocate chunk info array
+    chunks_.resize(num_chunks);
+    for (size_t i = 0; i < num_chunks; i++) {
+        chunks_[i].offset = i * chunk_size_;
+        chunks_[i].checksum = 0;
+        chunks_[i].last_change_time = 0;
+        chunks_[i].last_scan_time = 0;
+        chunks_[i].scan_count = 0;
+        chunks_[i].is_zero = false;
+        chunks_[i].scanned = false;
+    }
+
+    // Reset scan position
+    background_scan_pos_ = 0;
 }
 
 const ChunkInfo& ChangeDetector::GetChunk(size_t chunk_idx) const {
@@ -166,19 +217,55 @@ bool ChangeDetector::TestChunkZero(const uint8_t* data, size_t size) {
 }
 
 void ChangeDetector::ScanChunk(size_t chunk_idx) {
-    if (chunk_idx >= chunks_.size() || !memory_reader_) {
+    if (chunk_idx >= chunks_.size()) {
         return;
     }
 
     ChunkInfo& chunk = chunks_[chunk_idx];
     uint64_t now = GetMilliseconds();
 
-    // Read chunk data
-    size_t size = std::min(chunk_size_, (size_t)(memory_reader_->GetMemorySize() - chunk.offset));
-    const uint8_t* data = memory_reader_->GetMemoryPointer(chunk.offset);
+    const uint8_t* data = nullptr;
+    size_t size = 0;
+    std::vector<uint8_t> buffer;  // For VA mode
 
-    if (!data) {
-        return;  // Invalid offset
+    if (va_mode_enabled_ && crunched_reader_) {
+        // VA mode: Read from crunched address space
+        uint64_t flat_address = chunk.offset;
+        uint64_t crunched_size = crunched_reader_->GetCrunchedSize();
+
+        // Bounds check
+        if (flat_address >= crunched_size) {
+            return;  // Beyond crunched space
+        }
+
+        size = std::min(chunk_size_, (size_t)(crunched_size - flat_address));
+
+        buffer.resize(size);
+
+        // Protect against crashes in translation
+        try {
+            size_t bytes_read = crunched_reader_->ReadCrunchedMemory(flat_address, size, buffer);
+
+            if (bytes_read == 0) {
+                return;  // Invalid or unmapped region
+            }
+
+            data = buffer.data();
+            size = bytes_read;
+        } catch (...) {
+            // Translation or read failed - skip this chunk
+            return;
+        }
+    } else if (memory_reader_) {
+        // PA mode: Read from physical memory file
+        size = std::min(chunk_size_, (size_t)(memory_reader_->GetMemorySize() - chunk.offset));
+        data = memory_reader_->GetMemoryPointer(chunk.offset);
+
+        if (!data) {
+            return;  // Invalid offset
+        }
+    } else {
+        return;  // No reader available
     }
 
     // Check if zero
@@ -192,8 +279,6 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
     bool checksum_changed = !is_first_scan && chunk.checksum != checksum;
     bool zero_changed = !is_first_scan && chunk.is_zero != is_zero;
     bool has_changed = checksum_changed || zero_changed;
-
-    // Changes are being detected successfully
 
     // Update chunk info
     chunk.checksum = checksum;

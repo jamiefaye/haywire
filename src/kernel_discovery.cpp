@@ -560,10 +560,138 @@ private:
         }
     }
 
+    struct SwapperCandidate {
+        uint64_t pa;
+        int score;
+        int userEntries;
+        int kernelEntries;
+        std::string reasons;
+    };
+
     uint64_t FindSwapperPGD() {
-        // Just return the known correct value for now
-        // Scanning doesn't work reliably
-        return 0x136deb000;
+        std::cout << "Searching for swapper PGD with improved scoring..." << std::endl;
+
+        std::vector<SwapperCandidate> candidates;
+
+        // Scan ranges where swapper is typically found
+        const std::vector<std::pair<uint64_t, uint64_t>> ranges = {
+            {0xf0000000, 0x100000000},    // 3.75-4GB
+            {0x130000000, 0x140000000},   // 4.75-5GB (highmem)
+            {0x70000000, 0x80000000}      // 1.75-2GB (highmem=off)
+        };
+
+        for (const auto& [start, end] : ranges) {
+            if (start >= memorySize || end > memorySize) continue;
+
+            for (uint64_t offset = start; offset < std::min(end, (uint64_t)memorySize); offset += 0x1000) {
+                if (offset + 0x1000 > memorySize) continue;
+
+                // Quick pre-filter
+                uint64_t first = *(uint64_t*)((uint8_t*)memBase + offset);
+                if (first == 0 || (first & 3) == 0) continue;
+
+                SwapperCandidate cand = AnalyzeSwapperCandidate(offset);
+                if (cand.score > 0) {
+                    candidates.push_back(cand);
+                }
+            }
+        }
+
+        if (candidates.empty()) {
+            std::cout << "No swapper candidates found, returning hardcoded value" << std::endl;
+            return 0x136deb000;  // Fallback
+        }
+
+        // Sort by score
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const SwapperCandidate& a, const SwapperCandidate& b) {
+                      return a.score > b.score;
+                  });
+
+        std::cout << "Top swapper candidates:" << std::endl;
+        for (int i = 0; i < std::min(5, (int)candidates.size()); i++) {
+            const auto& c = candidates[i];
+            std::cout << "  " << (i+1) << ". PA 0x" << std::hex << c.pa
+                      << " - Score: " << std::dec << c.score
+                      << ", User: " << c.userEntries
+                      << ", Kernel: " << c.kernelEntries
+                      << " (" << c.reasons << ")" << std::endl;
+        }
+
+        uint64_t best = candidates[0].pa;
+        std::cout << "Selected swapper PGD: 0x" << std::hex << best << std::dec << std::endl;
+        return best;
+    }
+
+    SwapperCandidate AnalyzeSwapperCandidate(uint64_t offset) {
+        SwapperCandidate result;
+        result.pa = offset + 0x40000000;
+        result.score = 0;
+        result.userEntries = 0;
+        result.kernelEntries = 0;
+        result.reasons = "";
+
+        // Count user and kernel entries
+        for (int i = 0; i < 512; i++) {
+            uint64_t entryOffset = offset + (i * 8);
+            if (entryOffset + 8 > memorySize) break;
+
+            uint64_t entry = *(uint64_t*)((uint8_t*)memBase + entryOffset);
+            if (entry == 0) continue;
+
+            uint32_t entryType = entry & 3;
+            if (entryType != 1 && entryType != 3) continue;
+
+            if (i < 256) {
+                result.userEntries++;
+            } else {
+                result.kernelEntries++;
+            }
+        }
+
+        // CRITICAL: Swapper has VERY FEW user entries (typically just 1)
+        if (result.userEntries == 1) {
+            result.score += 100;  // Huge weight for single user entry
+            result.reasons += "Single user entry (swapper signature!)";
+        } else if (result.userEntries == 2) {
+            result.score += 50;
+            result.reasons += "Two user entries";
+        } else if (result.userEntries <= 4) {
+            result.score += 20;
+            result.reasons += std::to_string(result.userEntries) + " user entries";
+        } else if (result.userEntries <= 16) {
+            result.score += 5;
+            result.reasons += std::to_string(result.userEntries) + " user entries";
+        } else {
+            // Many user entries = likely a process PGD
+            result.score -= 50;
+            result.reasons += "Too many user entries!";
+        }
+
+        // Check PGD[256] for kernel text mapping
+        uint64_t pgd256 = *(uint64_t*)((uint8_t*)memBase + offset + (256 * 8));
+        if (pgd256 != 0 && (pgd256 & 3) != 0) {
+            result.score += 15;
+            if (!result.reasons.empty()) result.reasons += ", ";
+            result.reasons += "Has PGD[256]";
+        } else {
+            result.score -= 20;
+            if (!result.reasons.empty()) result.reasons += ", ";
+            result.reasons += "Missing PGD[256]!";
+        }
+
+        // Kernel entries - swapper should have some but not all
+        if (result.kernelEntries >= 2 && result.kernelEntries <= 20) {
+            result.score += 20;
+            if (!result.reasons.empty()) result.reasons += ", ";
+            result.reasons += std::to_string(result.kernelEntries) + " kernel entries";
+        } else if (result.kernelEntries > 100) {
+            result.score -= 10;
+            if (!result.reasons.empty()) result.reasons += ", ";
+            result.reasons += "Suspicious kernel count";
+        }
+
+        return result;
     }
 
     bool IsKernelPointer(uint64_t ptr) {

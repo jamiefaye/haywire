@@ -22,13 +22,16 @@
 namespace Haywire {
 
 class QemuConnection;
-class ViewportTranslator;
+class KernelViewportTranslator;
+using ViewportTranslator = KernelViewportTranslator;
 // class BeaconTranslator;  // OBSOLETE
 class AddressSpaceFlattener;
 class CrunchedRangeNavigator;
 class CrunchedMemoryReader;
 class GuestAgent;
 class MemoryDataSource;
+class ChangeDetector;
+class HeatMapWidget;
 
 class MemoryVisualizer {
 public:
@@ -84,7 +87,7 @@ public:
     void DrawBitmapViewers();
     
     // Set beacon reader for bitmap viewers
-    void SetBeaconReader(std::shared_ptr<class BeaconReader> reader);
+    void SetMemoryFileReader(std::shared_ptr<class MemoryFileReader> reader);
     
     // Set QEMU connection for bitmap viewers
     void SetQemuConnection(class QemuConnection* qemu);
@@ -136,6 +139,7 @@ private:
     bool showChangeHighlight;
     bool showMagnifier;
     bool splitComponents;  // Whether to split RGB/RGBA into separate channels
+    bool showHeatMap;      // Whether to show the heat map column
     
     // Column mode settings
     bool columnMode;        // Enable column layout
@@ -255,6 +259,10 @@ private:
 
     // Memory data source
     std::shared_ptr<MemoryDataSource> memoryDataSource_;
+
+    // Change detection and heat map
+    std::unique_ptr<ChangeDetector> changeDetector_;
+    std::unique_ptr<HeatMapWidget> heatMapWidget_;
 };
 
 }

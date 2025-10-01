@@ -74,10 +74,15 @@ public:
     BitmapViewerManager();
     ~BitmapViewerManager();
     
-    // Set the beacon reader for memory access
-    void SetBeaconReader(std::shared_ptr<class BeaconReader> reader) { 
-        beaconReader = reader; 
+    // Set the memory file reader for direct memory access
+    void SetMemoryFileReader(std::shared_ptr<class MemoryFileReader> reader) {
+        memoryFileReader = reader;
     }
+
+    // OBSOLETE: beacon reader
+    // void SetBeaconReader(std::shared_ptr<class BeaconReader> reader) {
+    //     beaconReader = reader;
+    // }
     
     // Set QemuConnection for VA->PA translation
     void SetQemuConnection(class QemuConnection* qemu) {
@@ -187,8 +192,8 @@ private:
     ImVec2 MemoryToScreen(uint64_t address);
     TypedAddress ScreenToMemoryAddress(ImVec2 screenPos);
     
-    // Beacon reader for memory access
-    std::shared_ptr<class BeaconReader> beaconReader;
+    // Memory file reader for direct memory access
+    std::shared_ptr<class MemoryFileReader> memoryFileReader;
     class MemoryVisualizer* memoryVisualizer = nullptr;
     
     // Additional dependencies for proper memory access

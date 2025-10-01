@@ -15,11 +15,10 @@
 #include "memory_visualizer.h"
 #include "memory_overview.h"
 #include "hex_overlay.h"
-#include "viewport_translator.h"
-// Beacon headers - keeping beacon_reader for memory mapping only
-#include "beacon_reader.h"  // Still needed for bitmap viewers' memory access
-// #include "beacon_decoder.h"  // OBSOLETE
-// #include "beacon_translator.h"  // OBSOLETE
+#include "kernel_viewport_translator.h"
+
+// Memory access headers
+#include "memory_file_reader.h"  // For bitmap viewers' memory access
 #include "memory_types.h"  // For SectionEntry
 #include "kernel_discovery_backend.h"
 #include "pid_selector.h"
@@ -103,13 +102,12 @@ int main(int argc, char** argv) {
     // Kernel discovery backend (replacing beacon data reading)
     auto kernelDiscovery = std::make_shared<KernelDiscoveryBackend>();
 
-    // Create beacon reader for memory mapping (still needed by bitmap viewers)
-    // This is only used for direct memory access, not beacon data
-    auto beaconReader = std::make_shared<BeaconReader>();
+    // Create memory file reader for bitmap viewers' memory access
+    auto memoryFileReader = std::make_shared<MemoryFileReader>();
     // Initialize it with the memory file for direct memory access
-    if (beaconReader->Initialize("/tmp/haywire-vm-mem")) {
+    if (memoryFileReader->Initialize("/tmp/haywire-vm-mem")) {
         std::cout << "Memory file mapped for bitmap viewers\n";
-        visualizer.SetBeaconReader(beaconReader);  // For bitmap viewers only
+        visualizer.SetMemoryFileReader(memoryFileReader);  // For bitmap viewers
     } else {
         std::cerr << "Warning: Could not map memory file for bitmap viewers\n";
     }
@@ -177,12 +175,8 @@ int main(int argc, char** argv) {
     visualizer.SetMemoryMapper(memoryMapper);  // Pass memory mapper for GPA->offset translation
 
     // Wire up the Select button to open the PID selector
-    visualizer.onProcessSelectorClick = [&pidSelector, useKernelDiscovery]() {
-        if (!useKernelDiscovery) {
-            pidSelector.Show();
-        } else {
-            std::cout << "PID selector not yet implemented for kernel discovery mode\n";
-        }
+    visualizer.onProcessSelectorClick = [&pidSelector]() {
+        pidSelector.Show();
     };
 
     // Beacon translator check - OBSOLETE
@@ -336,16 +330,14 @@ int main(int argc, char** argv) {
             }
         });
     
-    // Create viewport translator using guest agent
+    // Create viewport translator using kernel discovery
     std::shared_ptr<ViewportTranslator> translator;
-    
-    // REMOVED: Guest agent translator
-    // if (autoConnected && qemu.IsGuestAgentConnected()) {
-    //     translator = std::make_shared<ViewportTranslator>(qemu.GetGuestAgentPtr());
-    //     visualizer.SetTranslator(translator);
-    //     visualizer.SetGuestAgent(qemu.GetGuestAgent());
-    //     std::cerr << "Viewport translator initialized with guest agent" << std::endl;
-    // }
+
+    if (useKernelDiscovery && kernelDiscoveryInitialized) {
+        translator = std::make_shared<ViewportTranslator>(kernelDiscovery);
+        visualizer.SetTranslator(translator);
+        std::cerr << "Viewport translator initialized with kernel discovery" << std::endl;
+    }
     
     // Connect visualizer to overview for process map display
     visualizer.onProcessMapLoaded = [&overview, &visualizer](int pid, const std::vector<GuestMemoryRegion>& regions) {

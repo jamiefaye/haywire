@@ -130,6 +130,10 @@ void MemoryVisualizer::SetProcessPid(int pid) {
         if (bitmapViewerManager) {
             bitmapViewerManager->SetVAMode(true);
         }
+        // Update change detector to use VA mode
+        if (changeDetector_) {
+            changeDetector_->SetVAMode(true, crunchedReader.get());
+        }
         std::cerr << "Automatically enabled VA mode for PID " << pid << std::endl;
     }
 }
@@ -2715,6 +2719,12 @@ void MemoryVisualizer::HandleInput() {
     // V - toggle VA/PA mode
     if (ImGui::IsKeyPressed(ImGuiKey_V) && !shiftPressed && !ctrlPressed && !altPressed) {
         useVirtualAddresses = !useVirtualAddresses;
+
+        // Update change detector to match VA/PA mode
+        if (changeDetector_) {
+            changeDetector_->SetVAMode(useVirtualAddresses, crunchedReader.get());
+        }
+
         needsUpdate = true;
     }
     

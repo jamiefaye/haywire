@@ -1,0 +1,74 @@
+--- a/web/src/kernel-discovery-paged.ts
++++ b/web/src/kernel-discovery-paged.ts
+@@ -2589,29 +2589,44 @@ export class KernelDiscoveryPaged implements KernelDiscoveryInterface {
+         // The QMP query was moved to the beginning of discover() to get ground truth first
+
+         // Always run signature search to either confirm or as backup
++        console.log('\n=== Swapper PGD Discovery Comparison ===');
+         const signatureDiscoveredPgd = this.findSwapperPgdByAdaptiveSignature();
+
+         // this.swapperPgDir was already set in discover() from QMP or heuristic
+         if (this.swapperPgDir && signatureDiscoveredPgd) {
+             // We have both - check if they match
+             if (Number(signatureDiscoveredPgd) === Number(this.swapperPgDir)) {
+-//                 console.log(`  ✅ Signature search confirmed kernel PGD!`);
++                console.log(`  ✅ SUCCESS: Signature search MATCHED QMP ground truth!`);
++                console.log(`     Both report swapper_pg_dir at PA 0x${this.swapperPgDir.toString(16)}`);
+             } else {
+-//                 console.log(`  ⚠️ Signature search found different candidate: 0x${signatureDiscoveredPgd.toString(16)}`);
+-//                 console.log(`     Using already set value: 0x${this.swapperPgDir.toString(16)}`);
++                const diff = Math.abs(Number(signatureDiscoveredPgd) - Number(this.swapperPgDir));
++                console.log(`  ❌ MISMATCH: Signature search disagrees with QMP!`);
++                console.log(`     QMP (ground truth):  0x${this.swapperPgDir.toString(16)}`);
++                console.log(`     Signature search:    0x${signatureDiscoveredPgd.toString(16)}`);
++                console.log(`     Difference:          0x${diff.toString(16)} (${diff / 0x1000} pages)`);
++                console.log(`     Using QMP value as it's more reliable`);
+             }
+             // Keep the already set value (from QMP or earlier discovery)
+         } else if (!this.swapperPgDir && signatureDiscoveredPgd) {
+             // No earlier result, but signature search found something
+-//             console.log(`  Using signature-discovered swapper_pg_dir at PA 0x${signatureDiscoveredPgd.toString(16)}`);
++            console.log(`  📍 No QMP available - using signature-discovered swapper_pg_dir`);
++            console.log(`     Found at PA 0x${signatureDiscoveredPgd.toString(16)}`);
+             this.swapperPgDir = PA(signatureDiscoveredPgd);
+             this.kmem.setKernelPgd(signatureDiscoveredPgd);
++        } else if (this.swapperPgDir && !signatureDiscoveredPgd) {
++            console.log(`  ⚠️ Signature search failed, but QMP provided value`);
++            console.log(`     Using QMP value: 0x${this.swapperPgDir.toString(16)}`);
+         } else if (!this.swapperPgDir) {
+             // Nothing found - will try to discover below through validation
+-//             console.log('No kernel PGD found - will discover through validation');
++            console.log('  ❓ Neither QMP nor signature search found swapper_pg_dir');
++            console.log('     Will attempt discovery through validation');
+         }
++        console.log('========================================\n');
+
+         // Configuration: Enable PGD scanning for forensics or when QMP unavailable
+-        const ENABLE_PGD_SCAN = false;  // Set to true for forensic analysis or QMP fallback
++        // CHANGED: Enable PGD scan to validate our signature search
++        const ENABLE_PGD_SCAN = true;  // Enable for validation and forensics
++        const ENABLE_PGD_SCAN_LOGGING = true;  // Show scan results
+
+         // Initialize array even if scan is disabled
+         const validationPGDs: Array<{addr: PhysicalAddress, score: number, kernelEntries: number, userEntries: number}> = [];
+@@ -2624,7 +2639,19 @@ export class KernelDiscoveryPaged implements KernelDiscoveryInterface {
+             );
+
+             if (validationPGDs.length > 0) {
+-//                 console.log(`Found ${validationPGDs.length} potential PGDs`);
++                if (ENABLE_PGD_SCAN_LOGGING) {
++                    console.log(`\n=== PGD Validation Scan Results ===`);
++                    console.log(`Found ${validationPGDs.length} potential PGDs`);
++                    console.log(`Top 5 candidates:`);
++                    validationPGDs.slice(0, 5).forEach((pgd, i) => {
++                        const isQMP = pgd.addr === Number(this.swapperPgDir) ? ' [QMP MATCH]' : '';
++                        const isSig = pgd.addr === signatureDiscoveredPgd ? ' [SIG MATCH]' : '';
++                        console.log(`  ${i+1}. PA 0x${pgd.addr.toString(16)} - Score: ${pgd.score}, ` +
++                                  `User: ${pgd.userEntries}, Kernel: ${pgd.kernelEntries}${isQMP}${isSig}`);
++                    });
++                    console.log('====================================\n');
++                }
++
+                 // If we don't have swapper PGD yet, use the best scoring one
+                 if (!this.swapperPgDir && validationPGDs.length > 0) {
+                     this.swapperPgDir = PA(validationPGDs[0].addr);

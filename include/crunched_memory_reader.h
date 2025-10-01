@@ -4,11 +4,14 @@
 #include <cstdint>
 #include <memory>
 #include "address_space_flattener.h"
-#include "viewport_translator.h"
+#include "kernel_viewport_translator.h"
 // #include "beacon_translator.h"  // OBSOLETE - using kernel discovery
 #include "qemu_connection.h"
 
 namespace Haywire {
+
+// Use ViewportTranslator as alias for KernelViewportTranslator
+using ViewportTranslator = KernelViewportTranslator;
 
 // Reads memory from flattened/crunched address space
 // Transparently handles VA->PA translation and concatenates regions

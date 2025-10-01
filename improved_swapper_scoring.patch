@@ -1,0 +1,140 @@
+--- a/web/src/kernel-discovery-paged.ts
++++ b/web/src/kernel-discovery-paged.ts
+@@ -831,7 +831,7 @@ private analyzeSwapperCandidate(offset: number, physAddr: number): any {
+
+     const analysis = {
+         physAddr,
+-        score: 0,
++        score: 0,
+         reasons: [] as string[],
+         pgd0PudCount: 0,
+         memSizeEstimate: 0,
+@@ -840,6 +840,31 @@ private analyzeSwapperCandidate(offset: number, physAddr: number): any {
+         kernelEntries: [] as number[]
+     };
+
++    // Count user and kernel entries first
++    for (let i = 0; i < 512; i++) {
++        const entryOffset = offset + (i * 8);
++        if (entryOffset + 8 > this.fileData.byteLength) break;
++
++        const entry = this.fileData.getBigUint64(entryOffset, true);
++        if (entry === 0n) continue;
++
++        const entryType = Number(entry) & 0x3;
++        if (entryType !== 0x1 && entryType !== 0x3) continue;
++
++        if (i < 256) {
++            analysis.userEntries++;
++        } else {
++            analysis.kernelEntries.push(i);
++        }
++    }
++
++    // CRITICAL: Swapper has VERY FEW user entries (typically just 1)
++    if (analysis.userEntries === 1) {
++        analysis.score += 100;  // Huge weight for single user entry
++        analysis.reasons.push('Single user entry (swapper signature!)');
++    } else if (analysis.userEntries === 2) {
++        analysis.score += 50;
++        analysis.reasons.push('Two user entries');
++    } else if (analysis.userEntries <= 4) {
++        analysis.score += 20;
++        analysis.reasons.push(`${analysis.userEntries} user entries`);
++    } else if (analysis.userEntries <= 16) {
++        analysis.score += 5;
++        analysis.reasons.push(`${analysis.userEntries} user entries (ok)`);
++    } else {
++        // Many user entries = likely a process PGD, not swapper
++        analysis.score -= 50;
++        analysis.reasons.push(`${analysis.userEntries} user entries (too many!)`);
++    }
++
+     // Check PGD[0] for linear mapping
+     const pgd0Offset = offset;
+     const pgd0 = this.fileData.getBigUint64(pgd0Offset, true);
+@@ -893,55 +918,37 @@ private analyzeSwapperCandidate(offset: number, physAddr: number): any {
+
+             if (pudCount > 0 && consecutivePuds) {
+                 analysis.memSizeEstimate = pudCount; // GB
+-                analysis.score += 2;
++                analysis.score += 20;  // Increased weight
+                 analysis.reasons.push(`Linear mapping for ${pudCount}GB RAM`);
+
+                 // Common RAM sizes get bonus points
+                 if ([1, 2, 4, 6, 8, 16, 32].includes(pudCount)) {
+-                    analysis.score += 1;
++                    analysis.score += 10;  // Increased weight
+                     analysis.reasons.push('Common RAM size');
+                 }
+             }
+         }
+     } else if (Number(pgd0 & 0x3n) === 0x1) {
+         // 1GB huge page for small memory systems
+         analysis.memSizeEstimate = 1;
+-        analysis.score += 1;
++        analysis.score += 10;  // Increased weight
+         analysis.reasons.push('1GB block mapping');
+     }
+
+-    // Count user entries (PGD[0-255])
+-    for (let i = 0; i < 256; i++) {
+-        const entryOffset = offset + (i * 8);
+-        const entry = this.fileData.getBigUint64(entryOffset, true);
+-        if (entry !== 0n && (Number(entry) & 0x3) !== 0) {
+-            analysis.userEntries++;
+-        }
+-    }
+-
+     // Check kernel entries (PGD[256-511])
+-    const kernelEntries = [];
+     const hasKernelStart = this.fileData.getBigUint64(offset + (256 * 8), true) !== 0n;
+-    let hasHighKernel = false;
+-
+-    for (let i = 256; i < 512; i++) {
+-        const entryOffset = offset + (i * 8);
+-        const entry = this.fileData.getBigUint64(entryOffset, true);
+-        if (entry !== 0n && (Number(entry) & 0x3) !== 0) {
+-            kernelEntries.push(i);
+-            if (i >= 504) hasHighKernel = true;
+-        }
+-    }
+-
+-    analysis.kernelEntries = kernelEntries;
+-
++
+     if (hasKernelStart) {
+-        analysis.score += 1;
++        analysis.score += 15;  // Must have kernel text
+         analysis.reasons.push('Has kernel text mapping (PGD[256])');
++    } else {
++        analysis.score -= 20;  // Missing PGD[256] is bad
++        analysis.reasons.push('Missing PGD[256]!');
+     }
+
+-    if (hasHighKernel) {
+-        analysis.score += 1;
+-        analysis.reasons.push(`Has high kernel mappings`);
++    // Kernel entries - swapper should have some but not all
++    if (analysis.kernelEntries.length >= 2 && analysis.kernelEntries.length <= 20) {
++        analysis.score += 20;
++        analysis.reasons.push(`${analysis.kernelEntries.length} kernel entries (good range)`);
++    } else if (analysis.kernelEntries.length > 100) {
++        analysis.score -= 10;
++        analysis.reasons.push(`${analysis.kernelEntries.length} kernel entries (suspicious)`);
+     }
+
+-    // Prefer single user entry (just PGD[0])
+-    if (analysis.userEntries === 1) {
+-        analysis.score += 1;
+-        analysis.reasons.push('Single user entry (expected)');
+-    }
+-
+-    // Multiple kernel entries indicate complete kernel mapping
+-    if (analysis.kernelEntries.length >= 2) {
+-        analysis.score += 1;
+-        analysis.reasons.push(`${analysis.kernelEntries.length} kernel entries`);
+-    }
+-
+     return analysis;
+ }
