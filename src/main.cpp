@@ -262,11 +262,7 @@ int main(int argc, char** argv) {
                     std::cout << "\n=== Page Table Entries for PID " << pid << " ===\n";
                     std::cout << "Found " << ptes.size() << " PTEs\n";
                     
-                    // Show all PTEs
-                    for (const auto& [va, pa] : ptes) {
-                        std::cout << "  VA: 0x" << std::hex << va 
-                                  << " -> PA: 0x" << pa << std::dec << "\n";
-                    }
+                    // VA->PA logging removed (too verbose)
                     std::cout << "------------------------------------------------\n";
                 }
                 

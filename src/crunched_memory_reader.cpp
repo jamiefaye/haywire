@@ -112,66 +112,29 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
                 }
             }
             
-            static int translationCount = 0;
-            if (++translationCount <= 5) {
-                std::cerr << "VA->PA: 0x" << std::hex << chunkVA << " -> ";
-                if (physAddr != 0) {
-                    std::cerr << "0x" << physAddr << std::dec << " (success)" << std::endl;
-                } else {
-                    std::cerr << "not mapped" << std::dec << std::endl;
-                }
-            }
+            // Debug: VA->PA translation (disabled for production)
+            // static int translationCount = 0;
+            // if (++translationCount <= 5) {
+            //     std::cerr << "VA->PA: 0x" << std::hex << chunkVA << " -> ";
+            //     if (physAddr != 0) {
+            //         std::cerr << "0x" << physAddr << std::dec << " (success)" << std::endl;
+            //     } else {
+            //         std::cerr << "not mapped" << std::dec << std::endl;
+            //     }
+            // }
             
             if (physAddr == 0) {
                 // Page not present - fill with zeros but remember it's unmapped
                 buffer.resize(buffer.size() + chunkSize, 0);
-                static int notPresentCount = 0;
-                if (++notPresentCount <= 3) {
-                    std::cerr << "Page not present at VA 0x" << std::hex << chunkVA 
-                              << " in region " << region->name
-                              << " (occurrence " << std::dec << notPresentCount << ")" << std::endl;
-                }
             } else {
                 // Read from physical memory
                 std::vector<uint8_t> tempBuffer;
-                
-                // Debug: Check if PA is in valid range and test offset
-                static int readCount = 0;
-                if (++readCount <= 10) {
-                    std::cerr << "Reading from PA 0x" << std::hex << physAddr;
-                    if (physAddr >= 0x40000000) {
-                        uint64_t testOffset = physAddr - 0x40000000;
-                        std::cerr << " (file offset would be 0x" << std::hex << testOffset << ")";
-                    } else {
-                        std::cerr << " (below guest RAM start 0x40000000!)";
-                    }
-                    std::cerr << std::dec << std::endl;
-                }
-                
+
                 if (qemu->ReadMemory(physAddr, chunkSize, tempBuffer)) {
                     buffer.insert(buffer.end(), tempBuffer.begin(), tempBuffer.end());
-                    
-                    // Debug: Check if we're getting non-zero data
-                    if (readCount <= 10) {
-                        bool hasNonZero = false;
-                        for (size_t i = 0; i < std::min<size_t>(16, tempBuffer.size()); i++) {
-                            if (tempBuffer[i] != 0) {
-                                hasNonZero = true;
-                                break;
-                            }
-                        }
-                        std::cerr << "  Got " << tempBuffer.size() << " bytes" 
-                                  << (hasNonZero ? " (has data)" : " (all zeros)") 
-                                  << std::endl;
-                    }
                 } else {
                     // Read failed - fill with zeros
                     buffer.resize(buffer.size() + chunkSize, 0);
-                    static int readFailCount = 0;
-                    if (++readFailCount <= 10) {
-                        std::cerr << "Physical read failed at PA 0x" << std::hex << physAddr 
-                                  << " from VA 0x" << chunkVA << std::dec << std::endl;
-                    }
                 }
             }
             

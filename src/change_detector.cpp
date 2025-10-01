@@ -328,15 +328,16 @@ void ChangeDetector::PatrolLoop() {
         size_t heat_map_size = (heat_end > heat_start) ? (heat_end - heat_start) : 0;
         size_t MAX_CHUNKS_PER_CYCLE = std::max((size_t)1000, heat_map_size + 100);
 
-        // Debug output every 100 cycles (disabled for production)
-        // static int cycle_count = 0;
-        // if (++cycle_count % 100 == 0) {
-        //     std::cout << "ChangeDetector: Scanned " << total_scans_.load()
-        //               << " chunks, detected " << changes_detected_.load() << " changes\n";
-        //     std::cout << "  Ranges: vis[" << vis_start << "-" << vis_end << "] "
-        //               << "heat[" << heat_start << "-" << heat_end << "] "
-        //               << "(span=" << (heat_end - heat_start) << " chunks)\n";
-        // }
+        // Debug output every 100 cycles
+        static int cycle_count = 0;
+        if (++cycle_count % 100 == 0) {
+            std::cout << "ChangeDetector: Scanned " << total_scans_.load()
+                      << " chunks, detected " << changes_detected_.load() << " changes\n";
+            std::cout << "  Ranges: vis[" << vis_start << "-" << vis_end << "] "
+                      << "heat[" << heat_start << "-" << heat_end << "] "
+                      << "(span=" << (heat_end - heat_start) << " chunks)\n";
+            std::cout << "  MAX_CHUNKS_PER_CYCLE: " << MAX_CHUNKS_PER_CYCLE << "\n";
+        }
 
         // Priority 1: Visible chunks (already in cache from rendering)
         // Scan every 50ms (20 Hz)
