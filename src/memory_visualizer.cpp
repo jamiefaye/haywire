@@ -44,7 +44,8 @@ MemoryVisualizer::MemoryVisualizer()
       magnifierSize(32), magnifierLockPos(0, 0), memoryViewPos(0, 0), memoryViewSize(0, 0),
       targetPid(-1), useVirtualAddresses(false), guestAgent(nullptr),
       searchType(SEARCH_ASCII), currentSearchResult(0), searchActive(false), searchFromCurrent(false),
-      searchFullRange(true), memFd(-1), memBase(nullptr), memSize(0), qemuConn(nullptr) {
+      searchFullRange(true), memFd(-1), memBase(nullptr), memSize(0), qemuConn(nullptr),
+      fftStartRelativePos(0.5f, 0.5f), fftStartEnabled(false) {
     
     memset(searchPattern, 0, sizeof(searchPattern));
     
@@ -1852,7 +1853,28 @@ void MemoryVisualizer::DrawMemoryView() {
         // This will be used to offset the memory view
         // For now just track it, actual implementation would update base address
     }
-    
+
+    // Draw FFT start point anchor if enabled
+    if (fftStartEnabled && showCorrelation) {
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+        // Calculate screen position from relative position
+        float screenX = memoryViewPos.x + fftStartRelativePos.x * memoryViewSize.x;
+        float screenY = memoryViewPos.y + fftStartRelativePos.y * memoryViewSize.y;
+
+        // Draw anchor with distinctive color (orange/yellow for FFT)
+        ImVec2 center(screenX, screenY);
+        float radius = 8.0f;
+
+        // Orange circle with black outline
+        drawList->AddCircleFilled(center, radius, IM_COL32(255, 165, 0, 200));
+        drawList->AddCircle(center, radius, IM_COL32(0, 0, 0, 255), 0, 2.0f);
+
+        // Draw "FFT" label
+        drawList->AddText(ImVec2(screenX + 12, screenY - 8),
+                        IM_COL32(255, 165, 0, 255), "FFT");
+    }
+
     // Handle right-click context menu for creating bitmap viewers
     if (ImGui::IsMouseClicked(1) && ImGui::IsWindowHovered()) {
         ImVec2 mousePos = ImGui::GetMousePos();
@@ -1895,9 +1917,32 @@ void MemoryVisualizer::DrawMemoryView() {
                 printf("ERROR: bitmapViewerManager is null!\n");
             }
         }
+
+        // FFT start point option (only when correlation is enabled)
+        if (showCorrelation) {
+            if (ImGui::MenuItem("Set FFT Start Point Here")) {
+                // Store relative position (0.0-1.0) within the viewport
+                fftStartRelativePos.x = (contextMenuPos.x - memoryViewPos.x) / memoryViewSize.x;
+                fftStartRelativePos.y = (contextMenuPos.y - memoryViewPos.y) / memoryViewSize.y;
+
+                // Clamp to valid range
+                fftStartRelativePos.x = std::max(0.0f, std::min(1.0f, fftStartRelativePos.x));
+                fftStartRelativePos.y = std::max(0.0f, std::min(1.0f, fftStartRelativePos.y));
+
+                fftStartEnabled = true;
+                printf("FFT start point set at relative pos (%.3f, %.3f)\n",
+                       fftStartRelativePos.x, fftStartRelativePos.y);
+            }
+
+            if (fftStartEnabled && ImGui::MenuItem("Clear FFT Start Point")) {
+                fftStartEnabled = false;
+                printf("FFT start point cleared\n");
+            }
+        }
+
         ImGui::EndPopup();
     }
-    
+
     ImGui::EndChild();
     
     // Draw correlation stripe at bottom if enabled
@@ -2543,9 +2588,30 @@ void MemoryVisualizer::DrawCorrelationStripe() {
     
     // Compute correlation if we have memory
     if (!currentMemory.data.empty()) {
-        auto correlation = correlator.Correlate(currentMemory.data.data(), 
-                                               currentMemory.data.size(), 
-                                               pixelFormatIndex);
+        // Determine starting point for correlation
+        const uint8_t* dataStart = currentMemory.data.data();
+        size_t dataSize = currentMemory.data.size();
+
+        if (fftStartEnabled) {
+            // Convert relative screen position to pixel coordinates
+            int pixX = (int)(fftStartRelativePos.x * viewport.width);
+            int pixY = (int)(fftStartRelativePos.y * viewport.height);
+
+            // Clamp to viewport bounds
+            pixX = std::max(0, std::min(pixX, (int)(viewport.width - 1)));
+            pixY = std::max(0, std::min(pixY, (int)(viewport.height - 1)));
+
+            // Convert pixel coordinates to byte offset
+            size_t offset = PixelCoordToByteOffset(pixX, pixY);
+
+            if (offset != SIZE_MAX && offset < currentMemory.data.size()) {
+                // Start correlation from FFT start point
+                dataStart = currentMemory.data.data() + offset;
+                dataSize = currentMemory.data.size() - offset;
+            }
+        }
+
+        auto correlation = correlator.Correlate(dataStart, dataSize, pixelFormatIndex);
         
         if (!correlation.empty()) {
             // Draw correlation graph

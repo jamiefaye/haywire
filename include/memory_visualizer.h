@@ -227,6 +227,10 @@ private:
     std::shared_ptr<ViewportTranslator> viewportTranslator;
     int targetPid;
     bool useVirtualAddresses;  // Toggle between VA and PA
+
+    // FFT/Autocorrelation start point (relative to viewport, not absolute address)
+    ImVec2 fftStartRelativePos;  // 0.0-1.0 relative to viewport size
+    bool fftStartEnabled;
     
     // Address space flattening for navigation
     std::unique_ptr<AddressSpaceFlattener> addressFlattener;
