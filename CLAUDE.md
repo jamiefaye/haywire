@@ -4,7 +4,7 @@
 
 Haywire is a VM memory introspection tool that bypasses QEMU's memory isolation to inspect kernel structures and process memory without guest cooperation.
 
-**Current Status**: Transitioning from C++ implementation to web/JavaScript-based version for future development. The web version provides better visualization, cross-platform support, and easier deployment.
+**Current Status**: Both C++ and web implementations are actively maintained. C++ version provides native performance with live change detection and heat map visualization. Web version offers cross-platform support and easier deployment.
 
 ## Key Technical Context
 
@@ -13,6 +13,15 @@ Haywire is a VM memory introspection tool that bypasses QEMU's memory isolation 
 - Kernel page tables and task_structs are allocated beyond memory-backend-file boundaries
 - This is a security feature, not a bug - it prevents casual host-level kernel inspection
 - We bypass this using QMP commands with cpu_physical_memory_read()
+
+### Memory Access Methods
+- **Primary**: Memory-mapped file with MAP_SHARED (`/tmp/haywire-vm-mem`)
+  - Provides instant access to live QEMU memory updates
+  - Critical: Must use MAP_SHARED, not MAP_PRIVATE (which creates static snapshot)
+  - Used for display, change detection, and all performance-critical paths
+- **Secondary**: QMP commands for kernel structures outside RAM bounds
+  - Only needed for memory beyond memory-backend-file boundaries
+  - Used sparingly due to performance overhead
 
 ### Important Memory Addresses (ARM64 Ubuntu)
 - Guest RAM: 0x40000000 to configured size (2GB/4GB/6GB)
@@ -29,9 +38,13 @@ Haywire is a VM memory introspection tool that bypasses QEMU's memory isolation 
 - `web/src/components/` - Vue.js UI components
 - `web/src/electron/` - Electron-specific functionality (QMP access)
 
-### Legacy C++ Implementation (DEPRECATED)
-- `companion-oneshot` - Current companion process (replaces beacon scheme)
-- Previous beacon-based companions are obsolete
+### C++ Implementation (Native)
+- Direct memory-mapped file access via `MemoryFileReader` with MAP_SHARED
+- `KernelViewportTranslator` - VA→PA translation using kernel discovery
+- `KernelDiscoveryBackend` - Process discovery and PGD extraction
+- `ChangeDetector` - Background patrol thread for change detection
+- `HeatMapWidget` - Real-time memory change visualization
+- No companion process needed - all discovery done internally
 
 ### Test Scripts
 - `test_*.mjs` - Node.js test scripts for validation
@@ -248,14 +261,67 @@ response = json.loads(sock.recv(4096).decode())
 - PGD index = bits [47:39] of virtual address
 - Example: 0xc3048ea20000 >> 39 = 390 (PGD index)
 
-## Recent Progress (September 25, 2025)
+## Recent Progress (September 29-30, 2025)
 
-### Swapper PGD Discovery
-- **Dual approach**: QMP ground truth + adaptive signature search
-- **Scoring algorithm**: Detects RAM size from PUD count, validates structure
-- **100% accuracy**: Signature search confirms QMP ground truth
-- **Memory efficient**: Optimized scanning prevents OOM errors
-- **Works everywhere**: Electron (with QMP), browser mode, memory snapshots
+### Critical Memory Mapping Fix - MAP_SHARED
+- **Problem**: Memory was mapped with `MAP_PRIVATE`, creating a copy-on-write snapshot
+- **Impact**: Heat map couldn't see live QEMU updates, required slow QMP calls for fresh data
+- **Solution**: Changed `MemoryFileReader` to use `MAP_SHARED` in `memory_file_reader.cpp`
+- **Results**:
+  - Instant access to live memory updates from QEMU
+  - Heat map now sees real-time changes automatically
+  - Dramatically improved refresh performance (matches web version speed)
+  - All memory access now uses fast mmap instead of slow QMP calls
+
+### Heat Map Implementation
+- **Change Detection**: Background patrol thread scans memory for changes
+  - Priority 1: Visible chunks at 20 Hz (50ms interval)
+  - Priority 2: Heat map area at 4 Hz (250ms interval)
+  - Priority 3: Background random sampling (10 chunks/cycle)
+  - Dynamic scan limits based on heat map size
+- **Color Coding**:
+  - Green: just changed
+  - Yellow: recent changes
+  - Orange: older changes
+  - Red: very old changes
+  - Blue: stable (no changes)
+  - Dark gray: zero pages
+  - Black: unscanned
+- **Smart Positioning**: Heat map centers on viewport (top/middle/bottom depending on scroll position)
+- **Yellow Indicator**: Shows current viewport location within heat map context
+
+### Slider Range Mapping Fix
+- **Problem**: Slider covered 0-8GB physical space, but RAM starts at 0x40000000 (1GB offset)
+- **Solution**:
+  - Slider now represents file offsets (0 to RAM size)
+  - Converts to/from physical addresses (file_offset + 0x40000000)
+  - Uses `MemoryMapper` to get actual RAM region from QEMU
+- **Result**: Slider position 0 shows RAM start, not empty boot ROM area
+
+### Performance Improvements
+- No more QMP calls for memory display (all via mmap)
+- Smooth real-time updates without lag
+- CPU-friendly scan rates (20Hz visible, 4Hz heat map)
+- Full heat map coverage without throttling
+
+## Recent Progress (September 25-29, 2025)
+
+### Swapper PGD Discovery - IMPROVED SCORING ALGORITHM
+- **Problem identified**: Original scoring often selected wrong PGD candidate
+- **Root cause**: Swapper has only 1 user entry (PGD[0]), processes have many
+- **Solution**: Heavily weight single user entry as swapper signature (100 points)
+- **Improved scoring**:
+  - 1 user entry = +100 points (swapper signature!)
+  - 2 user entries = +50 points
+  - 4+ user entries = +20 points
+  - 16+ user entries = -50 points (likely process PGD)
+  - Must have PGD[256] for kernel text (+15/-20 points)
+  - Kernel entries should be 2-20 (+20 points)
+- **Implementation**: Both TypeScript (kernel-discovery-paged.ts) and C++ (kernel_discovery.cpp)
+- **Testing status**: Implementations complete, testing pending VM restart
+- **Files modified**:
+  - `web/src/kernel-discovery-paged.ts`: analyzeSwapperCandidate() function
+  - `src/kernel_discovery.cpp`: FindSwapperPGD() and AnalyzeSwapperCandidate() functions
 
 ## Recent Optimizations (September 14, 2025)
 
@@ -271,6 +337,18 @@ response = json.loads(sock.recv(4096).decode())
 - Unified memory access through QemuConnection for display and scanning
 - CrunchedMemoryReader now supports zero-copy TestPageNonZero
 - Smart region skipping in PA mode to avoid unmapped memory
+
+## Recent Progress (September 28-29, 2025)
+
+### Complete Beacon/Companion Removal
+- **Removed beacon architecture**: No more beacon_reader, beacon_decoder
+- **Replaced with kernel discovery**: Direct PTE extraction from discovered processes
+- **New components**:
+  - `MemoryFileReader`: Simple mmap wrapper for memory file access
+  - `KernelViewportTranslator`: Uses kernel discovery for VA→PA translation
+  - `KernelDiscoveryBackend`: Manages process discovery and PGD extraction
+- **Benefits**: No guest cooperation needed, works with snapshots, more reliable
+- **Status**: Migration complete, all bitmap viewers and crunched reader working
 
 ## Recent Progress (September 26, 2025)
 
