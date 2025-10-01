@@ -93,12 +93,19 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
         
         while (regionBytesRead < toRead) {
             size_t chunkSize = std::min<size_t>(pageSize, toRead - regionBytesRead);
-            uint64_t chunkVA = virtualAddr + regionBytesRead;
-            
-            // Translate VA to PA using beacon translator if available, otherwise viewport
-            translationsNeeded++;
+            uint64_t chunkFlatAddr = currentFlat + totalRead + regionBytesRead;
+
+            // Try PA lookup table first (fast path)
             uint64_t physAddr = 0;
-            if (translator) {
+            if (flattener) {
+                physAddr = flattener->GetPhysicalAddress(chunkFlatAddr);
+            }
+
+            // Fallback to translation if lookup failed
+            if (physAddr == 0 && translator) {
+                translationsNeeded++;
+                uint64_t chunkVA = virtualAddr + regionBytesRead;
+
                 // Validate VA before translation to prevent crashes
                 // ARM64 userspace VA max is 0x0001000000000000 (48-bit address space)
                 if (chunkVA < 0x0001000000000000ULL) {
@@ -152,6 +159,26 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
     }
     
     return totalRead;
+}
+
+const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
+    if (!flattener || !qemu) {
+        return nullptr;
+    }
+
+    // Use PA lookup table for instant translation
+    uint64_t physAddr = flattener->GetPhysicalAddress(flatAddress);
+    if (physAddr == 0) {
+        return nullptr;  // Not mapped
+    }
+
+    // Get memory backend and return direct pointer
+    auto* backend = qemu->GetMemoryBackend();
+    if (!backend || !backend->IsAvailable()) {
+        return nullptr;
+    }
+
+    return backend->GetDirectPointer(physAddr);
 }
 
 CrunchedMemoryReader::PositionInfo CrunchedMemoryReader::GetPositionInfo(uint64_t flatAddress) const {

@@ -116,6 +116,7 @@ private:
     void DrawFormulaBar();
     void HandleInput();
     uint64_t ScanForNonZeroPage(bool forward);
+    size_t PixelCoordToByteOffset(int pixelX, int pixelY) const;
     
     void CreateTexture();
     void UpdateTexture();

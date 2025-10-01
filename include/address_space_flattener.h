@@ -49,7 +49,15 @@ public:
     
     // Get all regions for visualization
     const std::vector<MappedRegion>& GetRegions() const { return regions; }
-    
+
+    // Physical address lookup (flat -> PA translation without page table walks)
+    // Returns 0 if address not mapped
+    // Lazily translates on first access if not already cached
+    uint64_t GetPhysicalAddress(uint64_t flatAddr) const;
+
+    // Enable lazy PA lookup (allocates table but doesn't translate upfront)
+    void EnableLazyPALookup(class KernelViewportTranslator* translator, int pid);
+
     // Generate navigation hints
     struct NavHint {
         uint64_t flatAddr;
@@ -62,7 +70,16 @@ private:
     std::vector<MappedRegion> regions;
     uint64_t totalFlatSize;
     uint64_t totalMappedSize;
-    
+
+    // PA lookup table: indexed by (flatAddr / 4096), contains physical address
+    // Lazily populated on first access (0 = not yet translated)
+    mutable std::vector<uint64_t> paLookup;
+    static constexpr size_t PAGE_SIZE = 4096;
+
+    // Lazy translation support
+    mutable class KernelViewportTranslator* lazyTranslator;
+    mutable int lazyPid;
+
     // Binary search helper
     const MappedRegion* FindRegion(uint64_t addr, bool useFlat) const;
 };

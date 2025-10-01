@@ -240,6 +240,52 @@ response = json.loads(sock.recv(4096).decode())
 - Specific optimized versions for common sizes (4KB, 64KB, 1MB)
 - Compiled with Emscripten `-msimd128` flag for SIMD support
 
+## Recent Progress (September 30, 2025)
+
+### VA Mode Heat Map Performance Optimization
+**Problem**: Heat map patrol in VA mode was extremely slow (10+ seconds to scan 2037 chunks vs instant in PA mode)
+
+**Root Cause Discovered**:
+- VA mode was doing ~32,000 page table walks per heat map scan (16 walks per 64KB chunk)
+- Each chunk took 6-7ms average (vs <1us in PA mode)
+- Unmapped pages were going through expensive `ReadCrunchedMemory()` path unnecessarily
+
+**Solution Implemented**:
+1. **Lazy PA Lookup Table**:
+   - Allocates 5MB lookup table instantly (no 30-second startup delay)
+   - Translates VA→PA on first access only, caches result
+   - Subsequent accesses use cached PA (instant array lookup)
+
+2. **Zero-Copy Direct Pointer**:
+   - Added `GetDirectPointer(flatAddr)` to `CrunchedMemoryReader`
+   - Uses PA lookup → returns pointer to MAP_SHARED mmap'd memory
+   - Eliminates memcpy overhead (was copying 64KB per chunk)
+
+3. **Fast Unmapped Page Handling** (KEY FIX):
+   - Detects unmapped pages via PA lookup returning 0
+   - Treats them as all-zeros instantly instead of expensive translation attempts
+   - This fixed 84% of chunks that were unmapped and going through 6-7ms slow path
+
+**Results**:
+- Heat map patrol now completes in **1-2 seconds** (vs 10+ seconds before)
+- Nearly matches PA mode performance
+- Startup is instant (no pre-translation of 655K pages)
+- Pages translated lazily as accessed, cached for subsequent scans
+
+**Implementation Details**:
+- `AddressSpaceFlattener::EnableLazyPALookup()` - allocates table without translating
+- `AddressSpaceFlattener::GetPhysicalAddress()` - lazy translation on cache miss
+- `CrunchedMemoryReader::GetDirectPointer()` - zero-copy access via PA lookup
+- `ChangeDetector::ScanChunk()` - fast path for unmapped pages (treat as zeros)
+
+**Files Modified**:
+- `include/address_space_flattener.h` - added PA lookup table and lazy translation
+- `src/address_space_flattener.cpp` - implemented lazy lookup and GetPhysicalAddress()
+- `include/crunched_memory_reader.h` - added GetDirectPointer()
+- `src/crunched_memory_reader.cpp` - implemented zero-copy pointer access
+- `src/change_detector.cpp` - fast unmapped page detection
+- `src/memory_visualizer.cpp` - wired up lazy PA lookup on process selection
+
 ## Recent Progress (December 2025)
 
 ### Important Discovery: ARM64 + ASLR Memory Layout

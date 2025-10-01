@@ -136,6 +136,11 @@ void MemoryVisualizer::SetProcessPid(int pid) {
         }
         std::cerr << "Automatically enabled VA mode for PID " << pid << std::endl;
     }
+
+    // Build PA lookup table for fast flat->PA translation
+    if (pid > 0 && addressFlattener && viewportTranslator) {
+        addressFlattener->EnableLazyPALookup(viewportTranslator.get(), pid);
+    }
 }
 
 void MemoryVisualizer::CreateTexture() {
@@ -1908,6 +1913,25 @@ void MemoryVisualizer::DrawMemoryView() {
     // Note: Search is now integrated into magnifier window
 }
 
+// Helper: Convert pixel coordinates (x,y) to byte offset in currentMemory.data
+// This uses the same logic as GetAddressAt() but returns offset instead of absolute address
+size_t MemoryVisualizer::PixelCoordToByteOffset(int pixelX, int pixelY) const {
+    // Reuse GetAddressAt which handles all the complex cases (split components, column mode, etc.)
+    uint64_t addr = GetAddressAt(pixelX, pixelY);
+
+    // Convert absolute address to offset in currentMemory.data
+    if (addr < viewport.baseAddress) {
+        return SIZE_MAX;  // Before current viewport
+    }
+
+    size_t offset = addr - viewport.baseAddress;
+    if (offset >= currentMemory.data.size()) {
+        return SIZE_MAX;  // Beyond current viewport
+    }
+
+    return offset;
+}
+
 void MemoryVisualizer::DrawMagnifier() {
     // Create a floating window for the magnifier - resizable
     // Always use NoNavInputs to prevent arrow key focus issues
@@ -2141,21 +2165,31 @@ void MemoryVisualizer::DrawMagnifier() {
         uint64_t resultAddr = searchResults[currentSearchResult];
         
         // Calculate the offset of this result within the current memory buffer
-        if (resultAddr >= viewport.baseAddress && 
+        if (resultAddr >= viewport.baseAddress &&
             resultAddr < viewport.baseAddress + currentMemory.data.size()) {
-            
+
             // Result is within current view
             size_t resultOffset = resultAddr - viewport.baseAddress;
-            
-            // For search results, we want to center on the BYTE position, not pixel position
-            // Calculate the exact byte position in the viewport
-            int byteX = resultOffset % viewport.stride;
-            int byteY = resultOffset / viewport.stride;
-            
-            // Convert byte position to pixel position
-            // This centers on the start of the found pattern
-            srcX = byteX / viewport.format.bytesPerPixel;
-            srcY = byteY;
+
+            // Convert byte offset to pixel coordinates
+            // Account for column mode, split components, etc.
+            if (columnMode) {
+                // Column mode
+                int bytesPerPixel = viewport.format.bytesPerPixel;
+                size_t bytesPerColumn = viewport.height * columnWidth * bytesPerPixel;
+
+                int col = resultOffset / bytesPerColumn;
+                size_t posInColumn = resultOffset % bytesPerColumn;
+
+                srcY = posInColumn / (columnWidth * bytesPerPixel);
+                int xInColumn = (posInColumn % (columnWidth * bytesPerPixel)) / bytesPerPixel;
+                srcX = col * (columnWidth + columnGap) + xInColumn;
+            } else {
+                // Linear mode
+                size_t strideBytes = viewport.stride * viewport.format.bytesPerPixel;
+                srcX = (resultOffset % strideBytes) / viewport.format.bytesPerPixel;
+                srcY = resultOffset / strideBytes;
+            }
             
             // Also update magnifierLockPos to match the search result position
             // This ensures arrow keys start from the correct position
@@ -2163,10 +2197,10 @@ void MemoryVisualizer::DrawMagnifier() {
             magnifierLockPos.y = srcY;
             
             // Add indicator that we're showing search result
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Showing search result %zu of %zu", 
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Showing search result %zu of %zu",
                               currentSearchResult + 1, searchResults.size());
             ImGui::Text("Address: 0x%llx", resultAddr);
-            ImGui::Text("Pattern starts at byte offset %d in line", byteX);
+            ImGui::Text("Pixel: (%d, %d)", srcX, srcY);
         } else {
             // Result is not in current view - should navigate to it
             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Result not in current view");
@@ -2312,22 +2346,26 @@ void MemoryVisualizer::DrawMagnifier() {
         // Display 16 bytes per line, centered on current position
         const int bytesToShow = 16;
         const int halfBytes = bytesToShow / 2;
-        
-        // Calculate the actual byte position we're looking at
-        int centerByteX;
+
+        // Calculate the center byte offset we're looking at
+        size_t centerByteOffset;
         if (magnifierLocked && searchActive && !searchResults.empty() && currentSearchResult < searchResults.size() && !userNavigated) {
             // For search results (when not manually navigated), use the exact byte position
-            size_t resultOffset = searchResults[currentSearchResult];
-            centerByteX = resultOffset % viewport.stride;
+            centerByteOffset = searchResults[currentSearchResult] - viewport.baseAddress;
         } else {
-            // For mouse position or manual navigation, use pixel-based calculation
-            centerByteX = srcX * viewport.format.bytesPerPixel;
+            // For mouse position or manual navigation, convert pixel coords to byte offset
+            centerByteOffset = PixelCoordToByteOffset(srcX, srcY);
         }
-        
+
         for (int lineOffset = -1; lineOffset <= 1; lineOffset++) {
             int y = srcY + lineOffset;
             if (y >= 0 && y < viewport.height) {
-                size_t lineStart = y * viewport.stride + std::max(0, centerByteX - halfBytes);
+                // Calculate byte offset for this line
+                size_t lineByteOffset = PixelCoordToByteOffset(srcX, y);
+                if (lineByteOffset == SIZE_MAX) continue;  // Invalid position (e.g., in column gap)
+
+                // Calculate range of bytes to show around center
+                size_t lineStart = (lineByteOffset >= halfBytes) ? lineByteOffset - halfBytes : 0;
                 
                 // Line label
                 if (lineOffset == -1) ImGui::Text("Above: ");
@@ -2344,18 +2382,15 @@ void MemoryVisualizer::DrawMagnifier() {
                         bool isCenter = false;
                         if (magnifierLocked && searchActive && !searchResults.empty() && lineOffset == 0 && !userNavigated) {
                             // For search results (when not manually navigated), highlight the actual pattern
-                            uint64_t resultAddr = searchResults[currentSearchResult];
-                            size_t patternLen = (searchType == SEARCH_ASCII) ? 
-                                strlen(searchPattern) : 
+                            size_t patternLen = (searchType == SEARCH_ASCII) ?
+                                strlen(searchPattern) :
                                 (strlen(searchPattern) + 1) / 2;  // Hex pattern length
-                            
+
                             // Check if this byte is part of the pattern
-                            // byteOffset is relative to current viewport, need to convert to absolute
-                            uint64_t absoluteByteAddr = viewport.baseAddress + byteOffset;
-                            isCenter = (absoluteByteAddr >= resultAddr && absoluteByteAddr < resultAddr + patternLen);
+                            isCenter = (byteOffset >= centerByteOffset && byteOffset < centerByteOffset + patternLen);
                         } else if (lineOffset == 0) {
-                            // For manual navigation or mouse position, highlight the center bytes
-                            isCenter = (b >= halfBytes && b < halfBytes + viewport.format.bytesPerPixel);
+                            // For manual navigation or mouse position, highlight the center pixel's bytes
+                            isCenter = (byteOffset >= centerByteOffset && byteOffset < centerByteOffset + viewport.format.bytesPerPixel);
                         }
                         
                         if (isCenter) {
@@ -2388,16 +2423,13 @@ void MemoryVisualizer::DrawMagnifier() {
                         bool isCenter = false;
                         if (magnifierLocked && searchActive && !searchResults.empty() && lineOffset == 0) {
                             // For search results, highlight the actual pattern
-                            uint64_t resultAddr = searchResults[currentSearchResult];
-                            size_t patternLen = (searchType == SEARCH_ASCII) ? 
-                                strlen(searchPattern) : 
+                            size_t patternLen = (searchType == SEARCH_ASCII) ?
+                                strlen(searchPattern) :
                                 (strlen(searchPattern) + 1) / 2;
-                            // byteOffset is relative to current viewport, need to convert to absolute
-                            uint64_t absoluteByteAddr = viewport.baseAddress + byteOffset;
-                            isCenter = (absoluteByteAddr >= resultAddr && absoluteByteAddr < resultAddr + patternLen);
-                        } else if (!magnifierLocked && lineOffset == 0) {
-                            // For mouse position, highlight the pixel's bytes
-                            isCenter = (b >= halfBytes && b < halfBytes + viewport.format.bytesPerPixel);
+                            isCenter = (byteOffset >= centerByteOffset && byteOffset < centerByteOffset + patternLen);
+                        } else if (lineOffset == 0) {
+                            // For mouse position or manual navigation, highlight the pixel's bytes
+                            isCenter = (byteOffset >= centerByteOffset && byteOffset < centerByteOffset + viewport.format.bytesPerPixel);
                         }
                         
                         if (ch >= 32 && ch < 127) {
@@ -3090,6 +3122,11 @@ void MemoryVisualizer::LoadMemoryMap(const std::vector<GuestMemoryRegion>& regio
     if (addressFlattener) {
         addressFlattener->BuildFromRegions(regions);
         std::cerr << "Loaded memory map with " << regions.size() << " regions\n";
+
+        // Build PA lookup table for fast flat->PA translation
+        if (viewportTranslator && targetPid > 0) {
+            addressFlattener->EnableLazyPALookup(viewportTranslator.get(), targetPid);
+        }
     }
 }
 
@@ -3212,14 +3249,14 @@ void MemoryVisualizer::PerformSearch() {
 
 void MemoryVisualizer::ScrollToResult(uint64_t resultAddr) {
     // Calculate the viewport boundaries
+    int bytesPerLine = viewport.stride * viewport.format.bytesPerPixel;
     uint64_t viewStart = viewport.baseAddress;
-    uint64_t viewEnd = viewport.baseAddress + (viewport.height * viewport.stride);
-    
+    uint64_t viewEnd = viewport.baseAddress + (viewport.height * bytesPerLine);
+
     // Check if result is already visible
     if (resultAddr >= viewStart && resultAddr < viewEnd) {
         // Result is visible - no need to scroll
         // Just ensure it's not too close to edges (keep at least 2 lines of context)
-        int bytesPerLine = viewport.stride;
         uint64_t resultLine = (resultAddr - viewStart) / bytesPerLine;
         
         if (resultLine < 2) {
@@ -3239,7 +3276,6 @@ void MemoryVisualizer::ScrollToResult(uint64_t resultAddr) {
         // Otherwise result is nicely visible - don't scroll
     } else {
         // Result is off-screen - need to scroll
-        int bytesPerLine = viewport.stride;
         uint64_t lineAlignedAddr = (resultAddr / bytesPerLine) * bytesPerLine;
         
         // Position result at about 1/3 from top for good context
@@ -3393,9 +3429,21 @@ void MemoryVisualizer::PerformFullRangeSearch() {
             break;  // No more matches
         }
         
-        // Calculate absolute position
+        // Calculate absolute position in file
         size_t foundPos = (uint8_t*)found - memBytes;
-        searchResults.push_back(foundPos);
+
+        // Convert file offset to address
+        // In PA mode: file offset 0 corresponds to physical address 0x40000000
+        // In VA mode: we're searching crunched flat space, so offset = flat address
+        uint64_t resultAddress;
+        if (useVirtualAddresses && addressFlattener && targetPid > 0) {
+            // VA mode - offset is flat address
+            resultAddress = foundPos;
+        } else {
+            // PA mode - add RAM base offset
+            resultAddress = foundPos + 0x40000000;
+        }
+        searchResults.push_back(resultAddress);
         
         if (searchResults.size() >= MAX_SEARCH_RESULTS) {
             hitLimit = true;

@@ -55,6 +55,11 @@ public:
     // Returns true if any non-zero bytes found
     bool TestPageNonZero(uint64_t flatAddress, size_t size = 4096);
 
+    // Get direct pointer to memory at flat address (zero-copy, uses PA lookup table)
+    // Returns nullptr if address not mapped or lookup table not available
+    // WARNING: Pointer is only valid while memory backend remains mapped
+    const uint8_t* GetDirectPointer(uint64_t flatAddress);
+
     // Get total size of crunched space
     uint64_t GetCrunchedSize() const {
         return flattener ? flattener->GetFlatSize() : 0;

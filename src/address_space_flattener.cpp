@@ -1,4 +1,5 @@
 #include "address_space_flattener.h"
+#include "kernel_viewport_translator.h"
 #include "imgui.h"
 #include <sstream>
 #include <iomanip>
@@ -6,8 +7,8 @@
 
 namespace Haywire {
 
-AddressSpaceFlattener::AddressSpaceFlattener() 
-    : totalFlatSize(0), totalMappedSize(0) {
+AddressSpaceFlattener::AddressSpaceFlattener()
+    : totalFlatSize(0), totalMappedSize(0), lazyTranslator(nullptr), lazyPid(0) {
 }
 
 void AddressSpaceFlattener::BuildFromRegions(const std::vector<GuestMemoryRegion>& inputRegions) {
@@ -138,6 +139,66 @@ AddressSpaceFlattener::FindRegion(uint64_t addr, bool useFlat) const {
     }
     
     return nullptr;
+}
+
+void AddressSpaceFlattener::EnableLazyPALookup(KernelViewportTranslator* translator, int pid) {
+    if (!translator || totalFlatSize == 0) {
+        std::cerr << "Cannot enable lazy PA lookup: invalid translator or empty flat space\n";
+        return;
+    }
+
+    lazyTranslator = translator;
+    lazyPid = pid;
+
+    // Allocate lookup table but don't populate it yet
+    size_t numPages = (totalFlatSize + PAGE_SIZE - 1) / PAGE_SIZE;
+    paLookup.clear();
+    paLookup.resize(numPages, 0);  // 0 = not yet translated
+
+    std::cout << "***** Enabled lazy PA lookup: " << numPages << " pages ("
+              << (numPages * sizeof(uint64_t) / (1024.0 * 1024.0)) << " MB allocated)\n";
+    std::cout << "***** Pages will be translated on first access\n";
+}
+
+uint64_t AddressSpaceFlattener::GetPhysicalAddress(uint64_t flatAddr) const {
+    if (paLookup.empty()) {
+        return 0;  // Lookup not enabled
+    }
+
+    size_t pageIdx = flatAddr / PAGE_SIZE;
+    if (pageIdx >= paLookup.size()) {
+        return 0;  // Out of bounds
+    }
+
+    uint64_t pagePA = paLookup[pageIdx];
+
+    // Lazy translation: translate on first access
+    if (pagePA == 0 && lazyTranslator && lazyPid > 0) {
+        // Find which region this flat address belongs to
+        const auto* region = GetRegionForFlat(flatAddr);
+        if (region) {
+            // Calculate VA from flat address
+            uint64_t offsetInRegion = flatAddr - region->flatStart;
+            uint64_t va = region->virtualStart + offsetInRegion;
+
+            // Translate VA to PA (page-aligned)
+            uint64_t pageVA = (va / PAGE_SIZE) * PAGE_SIZE;
+            pagePA = lazyTranslator->TranslateAddress(lazyPid, pageVA);
+
+            // Cache it
+            if (pagePA != 0) {
+                paLookup[pageIdx] = pagePA;
+            }
+        }
+    }
+
+    if (pagePA == 0) {
+        return 0;  // Page not mapped
+    }
+
+    // Add offset within page
+    uint64_t offset = flatAddr % PAGE_SIZE;
+    return pagePA + offset;
 }
 
 std::vector<AddressSpaceFlattener::NavHint> 

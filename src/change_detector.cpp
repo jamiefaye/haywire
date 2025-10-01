@@ -229,8 +229,11 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
     size_t size = 0;
     std::vector<uint8_t> buffer;  // For VA mode
 
+    // Timing: measure read time
+    auto read_start = std::chrono::high_resolution_clock::now();
+
     if (va_mode_enabled_ && crunched_reader_) {
-        // VA mode: Read from crunched address space
+        // VA mode: Use direct pointer via PA lookup table (zero-copy!)
         uint64_t flat_address = chunk.offset;
         uint64_t crunched_size = crunched_reader_->GetCrunchedSize();
 
@@ -239,34 +242,52 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
             return;  // Beyond crunched space
         }
 
-        // OPTIMIZATION: Skip unmapped regions entirely
-        // Check if this flat address actually corresponds to a mapped region
-        auto* flattener = crunched_reader_->GetFlattener();
-        if (flattener) {
-            const auto* region = flattener->GetRegionForFlat(flat_address);
-            if (!region) {
-                // This chunk is in an unmapped gap - skip it entirely
-                return;
-            }
-        }
-
         size = std::min(chunk_size_, (size_t)(crunched_size - flat_address));
 
-        buffer.resize(size);
+        // Try direct pointer first (fast path using PA lookup)
+        data = crunched_reader_->GetDirectPointer(flat_address);
 
-        // Protect against crashes in translation
-        try {
-            size_t bytes_read = crunched_reader_->ReadCrunchedMemory(flat_address, size, buffer);
+        static int direct_ptr_success = 0;
+        static int direct_ptr_fail = 0;
 
-            if (bytes_read == 0) {
-                return;  // Invalid or unmapped region
+        if (!data) {
+            direct_ptr_fail++;
+            if (direct_ptr_fail <= 10 || direct_ptr_fail % 1000 == 0) {
+                std::cout << "***** GetDirectPointer failed at flat 0x" << std::hex << flat_address << std::dec
+                          << " (success: " << direct_ptr_success << ", fail: " << direct_ptr_fail << ")\n";
             }
 
-            data = buffer.data();
-            size = bytes_read;
-        } catch (...) {
-            // Translation or read failed - skip this chunk
-            return;
+            // Quick check: if PA lookup returns 0, page is unmapped - treat as zero and skip slow path
+            auto* flattener = crunched_reader_->GetFlattener();
+            if (flattener) {
+                uint64_t testPA = flattener->GetPhysicalAddress(flat_address);
+                if (testPA == 0) {
+                    // Page not mapped - treat entire chunk as zeros
+                    static std::vector<uint8_t> zero_buffer;
+                    if (zero_buffer.size() < size) {
+                        zero_buffer.resize(size, 0);
+                    }
+                    data = zero_buffer.data();
+                } else {
+                    // PA exists but GetDirectPointer failed (probably outside memory backend range)
+                    // Fall back to slow copy path
+                    buffer.resize(size);
+                    try {
+                        size_t bytes_read = crunched_reader_->ReadCrunchedMemory(flat_address, size, buffer);
+                        if (bytes_read == 0) {
+                            return;
+                        }
+                        data = buffer.data();
+                        size = bytes_read;
+                    } catch (...) {
+                        return;
+                    }
+                }
+            } else {
+                return;  // No flattener available
+            }
+        } else {
+            direct_ptr_success++;
         }
     } else if (memory_reader_) {
         // PA mode: Read from physical memory file
@@ -278,6 +299,19 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
         }
     } else {
         return;  // No reader available
+    }
+
+    auto read_end = std::chrono::high_resolution_clock::now();
+    auto read_us = std::chrono::duration_cast<std::chrono::microseconds>(read_end - read_start).count();
+
+    // Log slow reads (> 1ms)
+    static uint64_t total_read_us = 0;
+    static int read_count = 0;
+    total_read_us += read_us;
+    read_count++;
+    if (read_us > 1000 || read_count % 1000 == 0) {
+        std::cout << "***** [TIMING] ScanChunk read: " << read_us << "us (avg: "
+                  << (total_read_us / read_count) << "us over " << read_count << " scans)\n";
     }
 
     // Check if zero

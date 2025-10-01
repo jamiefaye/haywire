@@ -168,17 +168,10 @@ public:
     bool DiscoverProcesses() {
         std::cout << "\n=== Process Discovery ===" << std::endl;
 
-        // Use hybrid approach: full scan first time, then fast refresh
-        if (!hasInitialScan) {
-            // First time: do full scan and remember suspect locations
-            std::cout << "Initial full memory scan for task_structs..." << std::endl;
-            return DiscoverProcessesFullScan();
-        } else {
-            // Subsequent calls: only check suspect locations (fast)
-            std::cout << "Fast refresh: checking " << suspectLocations.size()
-                      << " suspect locations..." << std::endl;
-            return RefreshFromSuspects();
-        }
+        // Always do full scan to catch newly started processes (like Firefox)
+        // The "fast refresh" approach only checks previous locations and misses new PIDs
+        std::cout << "Full memory scan for task_structs..." << std::endl;
+        return DiscoverProcessesFullScan();
     }
 
     bool DiscoverProcessesFullScan() {
@@ -823,7 +816,8 @@ private:
             return false;
         }
 
-        // Must match pattern: ^[a-zA-Z\/][a-zA-Z0-9\-_\/\[\]:\.\$]*$
+        // Must match pattern: ^[a-zA-Z\/][a-zA-Z0-9\-_\/\[\]:\.\$\s~]*$
+        // Added space and tilde for Firefox process names like "Utility Process" and "AudioIP~allback"
         if (name.length() > 0) {
             char first = name[0];
             if (!((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '/')) {
@@ -834,7 +828,7 @@ private:
                 if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
                       (c >= '0' && c <= '9') || c == '-' || c == '_' ||
                       c == '/' || c == '[' || c == ']' || c == ':' ||
-                      c == '.' || c == '$')) {
+                      c == '.' || c == '$' || c == ' ' || c == '~')) {
                     return false;
                 }
             }
