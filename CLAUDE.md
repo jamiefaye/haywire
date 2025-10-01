@@ -441,6 +441,62 @@ class MemoryMapping {
 - Non-linear mouse/scroll behavior
 - Rendering discontinuous memory regions efficiently
 
+## Recent Progress (October 1, 2025)
+
+### Firefox Process Discovery Fix
+- **Problem**: Firefox processes (PIDs 15520-16193) not appearing in PID selector
+- **Root Cause**: Process name validation rejected space and tilde characters
+- **Solution**: Added space (`' '`) and tilde (`'~'`) to allowed characters in `CheckTaskStruct()`
+- **Result**: Firefox thread names like "Utility Process" and "AudioIP~allback" now discovered
+- **File Modified**: `src/kernel_discovery.cpp` - updated character validation pattern
+
+### Inspector Mini Dump Memory Value Fix
+- **Problem**: Mini dump showing incorrect memory values (often zeros) instead of actual bytes
+- **Root Cause**: Byte offset calculation didn't account for column mode and rendering transformations
+- **Solution**:
+  - Created `PixelCoordToByteOffset()` helper that uses `GetAddressAt()` logic
+  - Properly handles column mode, split components, and all pixel format transformations
+  - Converts display pixel coordinates back to byte offsets in `currentMemory.data`
+- **Result**: Mini dump now shows actual underlying memory bytes at cursor/magnifier position
+- **Files Modified**:
+  - `include/memory_visualizer.h` - added helper declaration
+  - `src/memory_visualizer.cpp` - implemented coordinate-to-byte conversion
+
+### Search Navigation to Black Pages Fix
+- **Problem**: Searching for patterns landed on unmapped/black pages instead of actual matches
+- **Root Causes**:
+  1. Full-range search stored file offsets (0 to 6GB) instead of addresses
+  2. `ScrollToResult()` used pixels instead of bytes for stride calculations
+  3. Byte-to-pixel conversion for magnifier positioning was incorrect
+- **Solutions**:
+  1. Convert file offsets to proper addresses:
+     - PA mode: `file_offset + 0x40000000` (RAM base)
+     - VA mode: `file_offset` = flat address (already correct)
+  2. Fixed `bytesPerLine = viewport.stride * viewport.format.bytesPerPixel`
+  3. Fixed byte-to-pixel conversion to handle column mode correctly
+- **Result**: Search now lands on actual matches, magnifier locks correctly, Next/Previous work
+- **Files Modified**: `src/memory_visualizer.cpp` - search addressing and navigation
+
+### VM Disk Management and Backup Strategy
+- **Discovered**: Currently using direct write to `ubuntu_arm64.qcow2` (not overlay mode)
+- **Overlay Status**: `ubuntu_arm64_overlay.qcow2` was outdated/invalid - discarded
+- **Backups Created**:
+  - Pre-cleanup: `backups/ubuntu_arm64_pre_updates_20251001.qcow2` (8.1GB compressed)
+  - Post-cleanup: `backups/ubuntu_arm64_post_cleanup_20251001.qcow2` (9.1GB compressed)
+- **Disk Cleanup**: Freed 2GB by removing Linux source and old headers
+  - Removed `/usr/src/linux-source-6.14.0` (1.8GB)
+  - Removed old kernel headers 6.14.0-32 (208MB)
+  - Cleaned package cache (785MB)
+  - **Verified**: BTF/pahole still works (reads from `/sys/kernel/btf/vmlinux`, not source)
+- **Result**: VM now has 3.6GB free (was 922MB) for installing applications like Blender
+- **Disk Usage**: Went from 95% full (17GB used) to 81% full (15GB used)
+
+### BTF/Pahole Requirements Clarified
+- **Discovery**: BTF data is embedded in running kernel at `/sys/kernel/btf/vmlinux` (7.4MB)
+- **No Source Needed**: `pahole` reads from running kernel, NOT from source or headers
+- **Safe to Remove**: Linux source and headers can be removed without affecting kernel introspection
+- **Use Case**: Source/headers only needed for kernel development or building modules
+
 ## TODO/Future Work
 
 ### Immediate Tasks
