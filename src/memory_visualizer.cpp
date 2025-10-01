@@ -2648,12 +2648,59 @@ void MemoryVisualizer::DrawCorrelationStripe() {
             
             // Find and mark peaks
             auto peaks = correlator.FindPeaks(correlation, 0.3);
+
+            // Filter peaks to only label strongest in each vicinity (to avoid crowding)
+            const float MIN_LABEL_SPACING = 40.0f;  // Minimum pixels between labels
+            std::vector<int> peaksToLabel;
+
+            for (size_t i = 0; i < peaks.size(); i++) {
+                int peak = peaks[i];
+                float peakX = pos.x + peak * xScale;
+
+                // Check if this peak is too close to any already-labeled peak
+                bool tooClose = false;
+                int closestLabeledPeak = -1;
+                float closestDist = 1e9f;
+
+                for (int labeledPeak : peaksToLabel) {
+                    float labeledX = pos.x + labeledPeak * xScale;
+                    float dist = std::abs(peakX - labeledX);
+                    if (dist < MIN_LABEL_SPACING && dist < closestDist) {
+                        tooClose = true;
+                        closestLabeledPeak = labeledPeak;
+                        closestDist = dist;
+                    }
+                }
+
+                if (tooClose) {
+                    // Compare peak strengths - only keep the stronger one
+                    if (peak < correlation.size() && closestLabeledPeak < (int)correlation.size()) {
+                        if (correlation[peak] > correlation[closestLabeledPeak]) {
+                            // This peak is stronger - replace the labeled one
+                            peaksToLabel.erase(
+                                std::remove(peaksToLabel.begin(), peaksToLabel.end(), closestLabeledPeak),
+                                peaksToLabel.end()
+                            );
+                            peaksToLabel.push_back(peak);
+                        }
+                        // else: keep the existing stronger peak, skip this one
+                    }
+                } else {
+                    // Not too close to anything - label it
+                    peaksToLabel.push_back(peak);
+                }
+            }
+
+            // Draw all peaks (lines)
             for (int peak : peaks) {
                 float x = pos.x + peak * xScale;
                 drawList->AddLine(ImVec2(x, pos.y), ImVec2(x, pos.y + size.y),
                                  IM_COL32(255, 255, 0, 128), 2.0f);
-                
-                // Label the peak
+            }
+
+            // Draw labels only for filtered peaks
+            for (int peak : peaksToLabel) {
+                float x = pos.x + peak * xScale;
                 char label[32];
                 snprintf(label, sizeof(label), "%d", peak);
                 drawList->AddText(ImVec2(x + 2, pos.y + 2),
