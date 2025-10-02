@@ -529,3 +529,51 @@ class MemoryMapping {
 ## Contact/Issues
 
 File issues in the GitHub repository. This is a research project - use at your own risk!
+## Recent Progress (October 1, 2025)
+
+### Instruction Disassembly Infrastructure
+
+**Capstone Integration:**
+- Enabled Capstone 5.0.6 disassembler library
+- Works on macOS (Homebrew) and Ubuntu ARM64 (`libcapstone-dev`)
+- Proper CMake integration with library path detection
+
+**InstructionRenderer Class:**
+- Disassembles ARM64 instructions (32-bit, 4-byte aligned)
+- Categorizes into 10 types: move, arithmetic, logic, load, store, branch, compare, SIMD/FP, system, invalid
+- Graceful garbage handling - shows `.word HEXVALUE` for non-code data
+- Color coding: Blue (move), Yellow (arithmetic), Green (load), Orange (store), Red (branch), Brown (data)
+- Icon glyphs: 4×6 pixel bitmaps for each category
+
+**Design for Compact View:**
+- 40px × 8px per instruction
+- Layout: [6px colored icon][34px operands in 3×5 font]
+- Data regions show as `.word 12345678` instead of `???`
+- Brown checkerboard icon distinguishes data from code
+
+**Not Yet Integrated:**
+- Still need to add `INSTRUCTION_ARM64` to PixelFormat enum
+- Need to implement rendering in memory_renderer.cpp
+- Need to add format selector UI
+- Need 3×5 (or 5×7) bitmap font for operand display
+
+**Future: Instruction Visualization:**
+- Multiple scales planned: detailed (120px), gist (60px), compact (40px)
+- Pattern recognition via color strips showing instruction flow
+- Tooltip for full details on hover
+- Works with column mode and crunched memory
+
+### Autocorrelation Improvements
+
+**Pixel-Format-Aware Sampling:**
+- Matches old Haywire implementation for better display quality
+- Handles all 11 pixel formats with format-specific extraction
+- Proper normalization (÷32768, then ÷16384) matches original
+- Auto-scaling based on actual max correlation value
+- Relative peak threshold (30% of max) for adaptive detection
+
+**Key Insight:**
+- Old implementation had sophisticated per-format sample extraction
+- Current version now matches this with proper 8/16/24/32-bit handling
+- Produces more satisfying autocorrelation displays
+
