@@ -24,11 +24,6 @@ public:
     // Clear cache for specific process or all
     void ClearCache(int pid = -1);
 
-    // Direct access to kernel discovery (for bypassing mutex in rendering)
-    std::shared_ptr<KernelDiscoveryBackend> GetKernelDiscovery() const {
-        return kernelDiscovery;
-    }
-
 private:
     std::shared_ptr<KernelDiscoveryBackend> kernelDiscovery;
 
