@@ -151,18 +151,16 @@ void AddressSpaceFlattener::EnableLazyPALookup(KernelViewportTranslator* transla
     lazyTranslator = translator;
     lazyPid = pid;
 
-    // Allocate lookup table
+    // Allocate lookup cache
     size_t numPages = (totalFlatSize + PAGE_SIZE - 1) / PAGE_SIZE;
-    paLookup.clear();
-    paLookup.resize(numPages, 0);  // 0 = not yet translated
+    paCache.Clear();
+    paCache.Resize(numPages);
 
     std::cout << "***** Enabled PA lookup: " << numPages << " pages ("
               << (numPages * sizeof(uint64_t) / (1024.0 * 1024.0)) << " MB allocated)\n";
 
     // If PTEs provided, pre-populate the cache
     if (ptes && !ptes->empty()) {
-        static const uint64_t UNMAPPED_SENTINEL = 0xFFFFFFFFFFFFFFFFULL;
-
         std::cout << "***** Pre-populating PA cache from " << ptes->size() << " PTEs...\n";
         int mappedCount = 0;
         int unmappedCount = 0;
@@ -172,7 +170,7 @@ void AddressSpaceFlattener::EnableLazyPALookup(KernelViewportTranslator* transla
             uint64_t flatAddr = i * PAGE_SIZE;
             const auto* region = GetRegionForFlat(flatAddr);
             if (region) {
-                paLookup[i] = UNMAPPED_SENTINEL;  // Assume unmapped until proven otherwise
+                paCache.SetUnmapped(i);
                 unmappedCount++;
             }
         }
@@ -183,8 +181,8 @@ void AddressSpaceFlattener::EnableLazyPALookup(KernelViewportTranslator* transla
             uint64_t flatAddr = VirtualToFlat(va);
             size_t pageIdx = flatAddr / PAGE_SIZE;
 
-            if (pageIdx < numPages && paLookup[pageIdx] == UNMAPPED_SENTINEL) {
-                paLookup[pageIdx] = (pa / PAGE_SIZE) * PAGE_SIZE;  // Page-aligned PA
+            if (pageIdx < numPages && paCache.IsUnmapped(pageIdx)) {
+                paCache.SetPA(pageIdx, (pa / PAGE_SIZE) * PAGE_SIZE);  // Page-aligned PA
                 unmappedCount--;
                 mappedCount++;
             }
@@ -198,26 +196,28 @@ void AddressSpaceFlattener::EnableLazyPALookup(KernelViewportTranslator* transla
 }
 
 uint64_t AddressSpaceFlattener::GetPhysicalAddress(uint64_t flatAddr) const {
-    static const uint64_t UNMAPPED_SENTINEL = 0xFFFFFFFFFFFFFFFFULL;
-
-    if (paLookup.empty()) {
+    if (paCache.Size() == 0) {
         return 0;  // Lookup not enabled
     }
 
     size_t pageIdx = flatAddr / PAGE_SIZE;
-    if (pageIdx >= paLookup.size()) {
+    if (pageIdx >= paCache.Size()) {
         return 0;  // Out of bounds
     }
 
-    uint64_t pagePA = paLookup[pageIdx];
-
-    // Check for unmapped sentinel
-    if (pagePA == UNMAPPED_SENTINEL) {
-        return 0;  // Known unmapped page
+    // Check if already translated (mapped or unmapped sentinel)
+    if (paCache.IsTranslated(pageIdx)) {
+        uint64_t pagePA = paCache.GetPA(pageIdx);
+        if (pagePA == 0) {
+            return 0;  // Known unmapped page
+        }
+        // Add offset within page
+        uint64_t offset = flatAddr % PAGE_SIZE;
+        return pagePA + offset;
     }
 
     // Lazy translation: translate on first access
-    if (pagePA == 0 && lazyTranslator && lazyPid > 0) {
+    if (lazyTranslator && lazyPid > 0) {
         // Find which region this flat address belongs to
         const auto* region = GetRegionForFlat(flatAddr);
         if (region) {
@@ -227,24 +227,21 @@ uint64_t AddressSpaceFlattener::GetPhysicalAddress(uint64_t flatAddr) const {
 
             // Translate VA to PA (page-aligned)
             uint64_t pageVA = (va / PAGE_SIZE) * PAGE_SIZE;
-            pagePA = lazyTranslator->TranslateAddress(lazyPid, pageVA);
+            uint64_t pagePA = lazyTranslator->TranslateAddress(lazyPid, pageVA);
 
             // Cache it (either mapped PA or unmapped sentinel)
             if (pagePA != 0) {
-                paLookup[pageIdx] = pagePA;
+                paCache.SetPA(pageIdx, pagePA);
+                uint64_t offset = flatAddr % PAGE_SIZE;
+                return pagePA + offset;
             } else {
-                paLookup[pageIdx] = UNMAPPED_SENTINEL;
+                paCache.SetUnmapped(pageIdx);
+                return 0;
             }
         }
     }
 
-    if (pagePA == 0 || pagePA == UNMAPPED_SENTINEL) {
-        return 0;  // Page not mapped
-    }
-
-    // Add offset within page
-    uint64_t offset = flatAddr % PAGE_SIZE;
-    return pagePA + offset;
+    return 0;  // Unable to translate
 }
 
 std::vector<AddressSpaceFlattener::NavHint> 

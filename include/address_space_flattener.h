@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <algorithm>
 #include "guest_agent.h"
+#include "pa_lookup_cache.h"
 
 namespace Haywire {
 
@@ -73,9 +74,8 @@ private:
     uint64_t totalFlatSize;
     uint64_t totalMappedSize;
 
-    // PA lookup table: indexed by (flatAddr / 4096), contains physical address
-    // Lazily populated on first access (0 = not yet translated)
-    mutable std::vector<uint64_t> paLookup;
+    // PA lookup cache: indexed by (flatAddr / 4096), contains physical address
+    mutable PALookupCache paCache;
     static constexpr size_t PAGE_SIZE = 4096;
 
     // Lazy translation support
