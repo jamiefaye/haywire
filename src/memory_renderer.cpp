@@ -287,8 +287,13 @@ void MemoryRenderer::RenderInstructionElement(
         }
     }
 
-    // Calculate contrasting text color
-    uint32_t textColor = ContrastColor(catColor);
+    // Calculate contrasting text color (unless it's UDF - keep dark)
+    uint32_t textColor;
+    if (valid && info.mnemonic == "udf") {
+        textColor = 0xFF0A0A0A;  // Dark text for UDF - nearly invisible
+    } else {
+        textColor = ContrastColor(catColor);
+    }
 
     // Draw 4×6 icon in first 6 pixels (contrasting color on category background)
     for (int y = 0; y < 6; ++y) {

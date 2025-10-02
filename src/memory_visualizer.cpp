@@ -831,9 +831,7 @@ void MemoryVisualizer::Draw(QemuConnection& qemu) {
     ImGui::EndChild();
     
     // Draw bitmap viewers (they render as floating windows)
-    printf("Draw() method called, bitmapViewerManager = %p\n", bitmapViewerManager.get());
     if (bitmapViewerManager) {
-        printf("About to call DrawViewers() with %zu viewers\n", bitmapViewerManager->GetViewerCount());
         bitmapViewerManager->DrawViewers();
         // TODO: Add UpdateViewers call with QemuConnection when available
     }
@@ -951,9 +949,6 @@ void MemoryVisualizer::DrawControls() {
             
             // Use NavigateToAddress to handle VA translation if needed
             NavigateToAddress(targetAddress);
-        } else {
-            // Show warning in status or keep current position
-            printf("Invalid address: %s (%s)\n", addressInput, parsed.warning.c_str());
         }
     }
     ImGui::PopItemWidth();
@@ -2010,8 +2005,6 @@ void MemoryVisualizer::DrawMemoryView() {
     // Draw context menu
     if (ImGui::BeginPopup("BitmapViewerContext")) {
         if (ImGui::MenuItem("Create Bitmap Viewer Here")) {
-            printf("Creating bitmap viewer at 0x%llx, pos (%f, %f)\n", 
-                   (unsigned long long)contextMenuAddress, contextMenuPos.x, contextMenuPos.y);
             if (bitmapViewerManager) {
                 // Create typed address based on current mode
                 TypedAddress typedAddr;
@@ -2024,9 +2017,6 @@ void MemoryVisualizer::DrawMemoryView() {
                     typedAddr = TypedAddress::Physical(contextMenuAddress);
                 }
                 bitmapViewerManager->CreateViewer(typedAddr, contextMenuPos, viewport.format);
-                printf("Viewer created! Total viewers: %zu\n", bitmapViewerManager->GetViewerCount());
-            } else {
-                printf("ERROR: bitmapViewerManager is null!\n");
             }
         }
 
@@ -2042,13 +2032,10 @@ void MemoryVisualizer::DrawMemoryView() {
                 fftStartRelativePos.y = std::max(0.0f, std::min(1.0f, fftStartRelativePos.y));
 
                 fftStartEnabled = true;
-                printf("FFT start point set at relative pos (%.3f, %.3f)\n",
-                       fftStartRelativePos.x, fftStartRelativePos.y);
             }
 
             if (fftStartEnabled && ImGui::MenuItem("Clear FFT Start Point")) {
                 fftStartEnabled = false;
-                printf("FFT start point cleared\n");
             }
         }
 

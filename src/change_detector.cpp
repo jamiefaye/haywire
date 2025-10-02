@@ -37,7 +37,7 @@ void ChangeDetector::Start() {
         return;
     }
 
-    std::cout << "ChangeDetector: Starting patrol thread...\n";
+    // std::cout << "ChangeDetector: Starting patrol thread...\n";
     running_ = true;
     patrol_thread_ = std::thread(&ChangeDetector::PatrolLoop, this);
 }
@@ -81,8 +81,8 @@ void ChangeDetector::SetVAMode(bool enabled, CrunchedMemoryReader* crunchedReade
         Start();
     }
 
-    std::cout << "ChangeDetector: Switched to " << (enabled ? "VA" : "PA") << " mode\n";
-    std::cout << "  Chunk count: " << chunks_.size() << "\n";
+    // std::cout << "ChangeDetector: Switched to " << (enabled ? "VA" : "PA") << " mode\n";
+    // std::cout << "  Chunk count: " << chunks_.size() << "\n";
 }
 
 void ChangeDetector::RebuildChunkArray() {
@@ -91,13 +91,13 @@ void ChangeDetector::RebuildChunkArray() {
     if (va_mode_enabled_ && crunched_reader_) {
         // Use crunched address space size
         memory_size = crunched_reader_->GetCrunchedSize();
-        std::cout << "ChangeDetector: Building chunks for VA mode (crunched size: "
-                  << (memory_size / 1024 / 1024) << " MB)\n";
+        // std::cout << "ChangeDetector: Building chunks for VA mode (crunched size: "
+        //           << (memory_size / 1024 / 1024) << " MB)\n";
     } else if (memory_reader_) {
         // Use physical memory file size
         memory_size = memory_reader_->GetMemorySize();
-        std::cout << "ChangeDetector: Building chunks for PA mode (file size: "
-                  << (memory_size / 1024 / 1024) << " MB)\n";
+        // std::cout << "ChangeDetector: Building chunks for PA mode (file size: "
+        //           << (memory_size / 1024 / 1024) << " MB)\n";
     } else {
         chunks_.clear();
         return;
@@ -315,7 +315,7 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
 }
 
 void ChangeDetector::PatrolLoop() {
-    std::cout << "ChangeDetector: Patrol loop started, scanning " << chunks_.size() << " chunks\n";
+    // std::cout << "ChangeDetector: Patrol loop started, scanning " << chunks_.size() << " chunks\n";
 
     while (running_) {
         uint64_t now = GetMilliseconds();
@@ -336,15 +336,15 @@ void ChangeDetector::PatrolLoop() {
         size_t MAX_CHUNKS_PER_CYCLE = std::max((size_t)1000, heat_map_size + 100);
 
         // Debug output every 100 cycles
-        static int cycle_count = 0;
-        if (++cycle_count % 100 == 0) {
-            std::cout << "ChangeDetector: Scanned " << total_scans_.load()
-                      << " chunks, detected " << changes_detected_.load() << " changes\n";
-            std::cout << "  Ranges: vis[" << vis_start << "-" << vis_end << "] "
-                      << "heat[" << heat_start << "-" << heat_end << "] "
-                      << "(span=" << (heat_end - heat_start) << " chunks)\n";
-            std::cout << "  MAX_CHUNKS_PER_CYCLE: " << MAX_CHUNKS_PER_CYCLE << "\n";
-        }
+        // static int cycle_count = 0;
+        // if (++cycle_count % 100 == 0) {
+        //     std::cout << "ChangeDetector: Scanned " << total_scans_.load()
+        //               << " chunks, detected " << changes_detected_.load() << " changes\n";
+        //     std::cout << "  Ranges: vis[" << vis_start << "-" << vis_end << "] "
+        //               << "heat[" << heat_start << "-" << heat_end << "] "
+        //               << "(span=" << (heat_end - heat_start) << " chunks)\n";
+        //     std::cout << "  MAX_CHUNKS_PER_CYCLE: " << MAX_CHUNKS_PER_CYCLE << "\n";
+        // }
 
         // Priority 1: Visible chunks (already in cache from rendering)
         // Scan every 50ms (20 Hz)
