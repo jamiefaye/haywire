@@ -2612,11 +2612,18 @@ void MemoryVisualizer::DrawCorrelationStripe() {
         }
 
         auto correlation = correlator.Correlate(dataStart, dataSize, pixelFormatIndex);
-        
+
         if (!correlation.empty()) {
+            // Find max correlation value for proper scaling
+            double maxCorr = 0;
+            for (size_t i = 1; i < std::min((size_t)2048, correlation.size()); i++) {
+                if (correlation[i] > maxCorr) maxCorr = correlation[i];
+            }
+            if (maxCorr < 0.001) maxCorr = 1.0;  // Avoid division by zero
+
             // Draw correlation graph
             float xScale = size.x / std::min((size_t)2048, correlation.size());
-            float yScale = size.y * 0.8f;  // Use 80% of height
+            float yScale = (size.y * 0.8f) / maxCorr;  // Scale based on actual max value
             float baseline = pos.y + size.y - 10;
             
             // Draw grid lines
@@ -2646,8 +2653,9 @@ void MemoryVisualizer::DrawCorrelationStripe() {
                 prevPoint = curPoint;
             }
             
-            // Find and mark peaks
-            auto peaks = correlator.FindPeaks(correlation, 0.3);
+            // Find and mark peaks (threshold relative to max correlation value)
+            double peakThreshold = maxCorr * 0.3;  // 30% of maximum
+            auto peaks = correlator.FindPeaks(correlation, peakThreshold);
 
             // Filter peaks to only label strongest in each vicinity (to avoid crowding)
             const float MIN_LABEL_SPACING = 40.0f;  // Minimum pixels between labels

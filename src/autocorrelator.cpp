@@ -32,67 +32,164 @@ void Autocorrelator::InitFFT() {
 
 std::vector<double> Autocorrelator::Correlate(const uint8_t* data, size_t size, int pixelFormat) {
     correlationData.clear();
-    
+
     if (!data || size < 64) {
         return correlationData;
     }
-    
+
     // Clear workspace
     std::memset(fftWorkspace, 0, sizeof(double) * FFT_SIZE * 2);
     std::memset(fftOutput, 0, sizeof(double) * FFT_SIZE * 2);
-    
-    // Calculate how many samples to use (limit to SAMPLE_SIZE)
-    size_t sampleCount = std::min(size / 4, (size_t)SAMPLE_SIZE);  // Assume 32-bit pixels
-    
-    // Convert input data to doubles and remove DC bias
-    const uint32_t* pixels = reinterpret_cast<const uint32_t*>(data);
-    double sum = 0;
-    
-    // Calculate mean
-    for (size_t i = 0; i < sampleCount; i++) {
-        sum += pixels[i];
+
+    // Extract samples based on pixel format
+    // This matches the old Haywire implementation for better display quality
+    double* tP = fftWorkspace;
+    int64_t avga = 0;
+    size_t sampleCount = SAMPLE_SIZE;
+
+    switch (pixelFormat) {
+        case 0:  // ARGB32/RGBA8888 - RGB888
+        case 4:  // BGRA8888
+        case 5:  // ARGB8888
+        case 6:  // ABGR8888
+        case 9:  // HEX_PIXEL (32-bit)
+        {
+            // 32-bit pixel formats
+            const uint32_t* mP = reinterpret_cast<const uint32_t*>(data);
+            sampleCount = std::min(size / 4, (size_t)SAMPLE_SIZE);
+
+            // Calculate mean
+            for (size_t i = 0; i < sampleCount; i++) {
+                avga += mP[i];
+            }
+            double meanie = double(avga) / sampleCount;
+
+            // Fill with mean-removed data
+            for (size_t i = 0; i < sampleCount; i++) {
+                *tP++ = mP[i] - meanie;
+                *tP++ = 0;  // Imaginary part
+            }
+            break;
+        }
+
+        case 1:  // RGB888 (24-bit, no alpha)
+        case 2:  // BGR888
+        {
+            const uint8_t* iB = data;
+            sampleCount = std::min(size / 3, (size_t)SAMPLE_SIZE);
+
+            // Calculate mean
+            for (size_t i = 0; i < sampleCount; i++) {
+                uint32_t Dw = (iB[0] << 16) | (iB[1] << 8) | iB[2];
+                avga += Dw;
+                iB += 3;
+            }
+
+            double mean2 = double(avga) / sampleCount;
+            iB = data;
+
+            // Fill with mean-removed data
+            for (size_t i = 0; i < sampleCount; i++) {
+                uint32_t Dw = (iB[0] << 16) | (iB[1] << 8) | iB[2];
+                *tP++ = Dw - mean2;
+                *tP++ = 0;
+                iB += 3;
+            }
+            break;
+        }
+
+        case 7:  // RGB565 (16-bit)
+        case 8:  // GRAYSCALE (16-bit in old code)
+        {
+            const uint16_t* sp = reinterpret_cast<const uint16_t*>(data);
+            sampleCount = std::min(size / 2, (size_t)SAMPLE_SIZE);
+
+            // Calculate mean
+            for (size_t i = 0; i < sampleCount; i++) {
+                avga += sp[i];
+            }
+            double mean3 = double(avga) / sampleCount;
+
+            // Fill with mean-removed data
+            for (size_t i = 0; i < sampleCount; i++) {
+                *tP++ = sp[i] - mean3;
+                *tP++ = 0;
+            }
+            break;
+        }
+
+        case 10:  // CHAR_8BIT (8-bit characters)
+        {
+            const uint8_t* sp = data;
+            sampleCount = std::min(size, (size_t)SAMPLE_SIZE);
+
+            // Calculate mean
+            for (size_t i = 0; i < sampleCount; i++) {
+                avga += sp[i];
+            }
+            double mean4 = double(avga) / sampleCount;
+
+            // Fill with mean-removed data
+            for (size_t i = 0; i < sampleCount; i++) {
+                *tP++ = sp[i] - mean4;
+                *tP++ = 0;
+            }
+            break;
+        }
+
+        default:
+            // Fallback: treat as 32-bit
+            const uint32_t* mP = reinterpret_cast<const uint32_t*>(data);
+            sampleCount = std::min(size / 4, (size_t)SAMPLE_SIZE);
+
+            for (size_t i = 0; i < sampleCount; i++) {
+                avga += mP[i];
+            }
+            double meanie = double(avga) / sampleCount;
+
+            for (size_t i = 0; i < sampleCount; i++) {
+                *tP++ = mP[i] - meanie;
+                *tP++ = 0;
+            }
+            break;
     }
-    double mean = sum / sampleCount;
-    
-    // Fill FFT input with mean-removed data
-    for (size_t i = 0; i < sampleCount; i++) {
-        fftWorkspace[i * 2] = pixels[i] - mean;  // Real part
-        fftWorkspace[i * 2 + 1] = 0;  // Imaginary part
-    }
-    
-    // Zero pad the rest
+
+    // Zero pad the rest (tP already points to the right location)
     for (size_t i = sampleCount; i < FFT_SIZE; i++) {
-        fftWorkspace[i * 2] = 0;
-        fftWorkspace[i * 2 + 1] = 0;
+        *tP++ = 0;
+        *tP++ = 0;
     }
-    
+
     // Forward FFT
     DFT_16384(fftOutput, fftWorkspace);
-    
+
     // Compute power spectrum
-    for (int i = 0; i < FFT_SIZE; i++) {
-        double real = fftOutput[i * 2];
-        double imag = fftOutput[i * 2 + 1];
-        double magnitude = std::sqrt(real * real + imag * imag);
-        fftWorkspace[i * 2] = magnitude / FFT_SIZE;
-        fftWorkspace[i * 2 + 1] = 0;
+    double* t2P = fftWorkspace;
+    double* Tp = fftOutput;
+    for (int i = 0; i < SAMPLE_SIZE; i++) {
+        double rV = *Tp++;
+        double iV = *Tp++;
+        *t2P++ = std::sqrt(rV * rV + iV * iV) / 32768.0;  // Match old normalization
+        *t2P++ = 0;
     }
-    
-    // Inverse FFT to get autocorrelation
+
+    // Forward FFT of power spectrum
     DFT_16384(fftOutput, fftWorkspace);
-    
-    // Extract correlation values (real part only, normalized)
-    correlationData.resize(2048);  // Show first 2048 offsets
-    
-    // Get the autocorrelation peak value for normalization
-    double maxVal = fftOutput[0];
-    if (maxVal == 0) maxVal = 1.0;
-    
-    // Extract normalized correlation values
-    for (size_t i = 0; i < correlationData.size() && i < FFT_SIZE; i++) {
-        correlationData[i] = fftOutput[i * 2] / maxVal;
+
+    // Conjugate to make it an inverse FFT (tear through conjugating the result)
+    double* iP = fftOutput;
+    for (int i = 0; i < FFT_SIZE; i++) {
+        *iP++ /= 16384.0;           // Real part
+        *iP = *iP / -16384.0;       // Imaginary part (conjugate)
+        iP++;
     }
-    
+
+    // Extract correlation values (real part only)
+    correlationData.resize(2048);  // Show first 2048 offsets
+    for (size_t i = 0; i < correlationData.size(); i++) {
+        correlationData[i] = fftOutput[i * 2];  // Already normalized above
+    }
+
     return correlationData;
 }
 
