@@ -2214,11 +2214,10 @@ void MemoryVisualizer::DrawMagnifier() {
     // Static state for hex data visibility
     static bool showHexData = false;
 
-    // Calculate magnified area size first to know source pixels
+    // Calculate magnified area size - use most of available space but leave room for button
     ImVec2 contentRegion = ImGui::GetContentRegionAvail();
-    // Reserve space at bottom for the hex toggle button and data if expanded
-    float hexDataHeight = showHexData ? 250.0f : 30.0f; // 30px for button, 250px when expanded
-    float magnifiedAreaHeight = contentRegion.y - hexDataHeight;
+    // Reserve space at bottom for the hex toggle button (always visible)
+    float magnifiedAreaHeight = contentRegion.y - 30.0f; // 30px for button at bottom
     float magnifiedAreaWidth = contentRegion.x - 10;
     magnifiedAreaHeight = std::max(magnifiedAreaHeight, 100.0f); // Minimum height
     magnifiedAreaWidth = std::max(magnifiedAreaWidth, 100.0f); // Minimum width
