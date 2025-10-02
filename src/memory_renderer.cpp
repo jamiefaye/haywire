@@ -320,15 +320,37 @@ void MemoryRenderer::RenderInstructionElement(
             }
             text += "\"";
         } else {
-            // Show as hex value (little-endian)
+            // Show as hex value (little-endian) - will be rendered specially
             uint32_t value = (src[0] << 0) | (src[1] << 8) | (src[2] << 16) | (src[3] << 24);
-            char hexBuf[16];
-            snprintf(hexBuf, sizeof(hexBuf), "0x%08X", value);
-            text = hexBuf;
+
+            // Special rendering for hex: use Font3x5Hex and center the 8 digits
+            // 8 hex nibbles * 4 pixels each = 32 pixels, centered in 33 pixels (40 - 7 icon)
+            int hexX = 7 + 1;  // Start 1 pixel from icon edge for centering
+
+            for (int nibbleIdx = 7; nibbleIdx >= 0; --nibbleIdx) {
+                uint8_t nibble = (value >> (nibbleIdx * 4)) & 0xF;
+                uint16_t glyph = GetGlyph3x5Hex(nibble);
+
+                // Draw the 3×5 hex glyph
+                for (int y = 0; y < 5; ++y) {
+                    for (int x = 0; x < 3; ++x) {
+                        int bitPos = (4 - y) * 3 + (2 - x);
+                        bool pixel = (glyph >> bitPos) & 1;
+                        if (pixel) {
+                            dest[(y + 1) * destStride + (hexX + x)] = textColor;
+                        }
+                    }
+                }
+
+                hexX += 4;  // 3px glyph + 1px spacing
+            }
+
+            return;  // Skip the regular text rendering below
         }
     }
 
     // Draw text starting at x=7 (after 6px icon + 1px spacing)
+    // This is for instructions and ASCII strings
     int textX = 7;
     for (size_t i = 0; i < text.length() && textX + 3 <= 40; ++i) {
         char c = text[i];
