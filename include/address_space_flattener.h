@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <unordered_map>
 #include <cstdint>
 #include <algorithm>
 #include "guest_agent.h"
@@ -55,8 +56,9 @@ public:
     // Lazily translates on first access if not already cached
     uint64_t GetPhysicalAddress(uint64_t flatAddr) const;
 
-    // Enable lazy PA lookup (allocates table but doesn't translate upfront)
-    void EnableLazyPALookup(class KernelViewportTranslator* translator, int pid);
+    // Enable PA lookup with pre-populated PTE cache
+    void EnableLazyPALookup(class KernelViewportTranslator* translator, int pid,
+                           const std::unordered_map<uint64_t, uint64_t>* ptes = nullptr);
 
     // Generate navigation hints
     struct NavHint {

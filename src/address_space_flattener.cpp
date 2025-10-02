@@ -141,26 +141,67 @@ AddressSpaceFlattener::FindRegion(uint64_t addr, bool useFlat) const {
     return nullptr;
 }
 
-void AddressSpaceFlattener::EnableLazyPALookup(KernelViewportTranslator* translator, int pid) {
+void AddressSpaceFlattener::EnableLazyPALookup(KernelViewportTranslator* translator, int pid,
+                                               const std::unordered_map<uint64_t, uint64_t>* ptes) {
     if (!translator || totalFlatSize == 0) {
-        std::cerr << "Cannot enable lazy PA lookup: invalid translator or empty flat space\n";
+        std::cerr << "Cannot enable PA lookup: invalid translator or empty flat space\n";
         return;
     }
 
     lazyTranslator = translator;
     lazyPid = pid;
 
-    // Allocate lookup table but don't populate it yet
+    // Allocate lookup table
     size_t numPages = (totalFlatSize + PAGE_SIZE - 1) / PAGE_SIZE;
     paLookup.clear();
     paLookup.resize(numPages, 0);  // 0 = not yet translated
 
-    std::cout << "***** Enabled lazy PA lookup: " << numPages << " pages ("
+    std::cout << "***** Enabled PA lookup: " << numPages << " pages ("
               << (numPages * sizeof(uint64_t) / (1024.0 * 1024.0)) << " MB allocated)\n";
-    std::cout << "***** Pages will be translated on first access\n";
+
+    // If PTEs provided, pre-populate the cache
+    std::cout << "***** DEBUG: ptes pointer = " << (void*)ptes
+              << ", size = " << (ptes ? ptes->size() : 0) << "\n";
+    if (ptes && !ptes->empty()) {
+        static const uint64_t UNMAPPED_SENTINEL = 0xFFFFFFFFFFFFFFFFULL;
+
+        std::cout << "***** Pre-populating PA cache from " << ptes->size() << " PTEs...\n";
+        int mappedCount = 0;
+        int unmappedCount = 0;
+
+        // First pass: mark all pages in regions as unmapped by default
+        for (size_t i = 0; i < numPages; i++) {
+            uint64_t flatAddr = i * PAGE_SIZE;
+            const auto* region = GetRegionForFlat(flatAddr);
+            if (region) {
+                paLookup[i] = UNMAPPED_SENTINEL;  // Assume unmapped until proven otherwise
+                unmappedCount++;
+            }
+        }
+
+        // Second pass: mark mapped pages from PTE walk
+        for (const auto& [va, pa] : *ptes) {
+            // Convert VA to flat address
+            uint64_t flatAddr = VirtualToFlat(va);
+            size_t pageIdx = flatAddr / PAGE_SIZE;
+
+            if (pageIdx < numPages && paLookup[pageIdx] == UNMAPPED_SENTINEL) {
+                paLookup[pageIdx] = (pa / PAGE_SIZE) * PAGE_SIZE;  // Page-aligned PA
+                unmappedCount--;
+                mappedCount++;
+            }
+        }
+
+        std::cout << "***** PA cache populated: " << mappedCount << " mapped, "
+                  << unmappedCount << " unmapped pages\n";
+    } else {
+        std::cout << "***** Pages will be translated on first access (no PTEs provided)\n";
+    }
 }
 
 uint64_t AddressSpaceFlattener::GetPhysicalAddress(uint64_t flatAddr) const {
+    static const uint64_t UNMAPPED_SENTINEL = 0xFFFFFFFFFFFFFFFFULL;
+
     if (paLookup.empty()) {
         return 0;  // Lookup not enabled
     }
@@ -171,6 +212,11 @@ uint64_t AddressSpaceFlattener::GetPhysicalAddress(uint64_t flatAddr) const {
     }
 
     uint64_t pagePA = paLookup[pageIdx];
+
+    // Check for unmapped sentinel
+    if (pagePA == UNMAPPED_SENTINEL) {
+        return 0;  // Known unmapped page
+    }
 
     // Lazy translation: translate on first access
     if (pagePA == 0 && lazyTranslator && lazyPid > 0) {
@@ -185,14 +231,16 @@ uint64_t AddressSpaceFlattener::GetPhysicalAddress(uint64_t flatAddr) const {
             uint64_t pageVA = (va / PAGE_SIZE) * PAGE_SIZE;
             pagePA = lazyTranslator->TranslateAddress(lazyPid, pageVA);
 
-            // Cache it
+            // Cache it (either mapped PA or unmapped sentinel)
             if (pagePA != 0) {
                 paLookup[pageIdx] = pagePA;
+            } else {
+                paLookup[pageIdx] = UNMAPPED_SENTINEL;
             }
         }
     }
 
-    if (pagePA == 0) {
+    if (pagePA == 0 || pagePA == UNMAPPED_SENTINEL) {
         return 0;  // Page not mapped
     }
 

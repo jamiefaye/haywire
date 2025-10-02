@@ -286,9 +286,10 @@ int main(int argc, char** argv) {
                 }
                 std::cout << "------------------------------------------------\n";
                 
-                // Load the memory map into the visualizer
-                visualizer.LoadMemoryMap(regions);
+                // Set PID first so targetPid is set when LoadMemoryMap calls EnableLazyPALookup
+                std::cout << "***** DEBUG: About to call LoadMemoryMap with " << ptes.size() << " PTEs\n";
                 visualizer.SetProcessPid(pid);
+                visualizer.LoadMemoryMap(regions, &ptes);
                 
                 // Also load sections into the overview
                 overview.LoadProcessSections(regions);

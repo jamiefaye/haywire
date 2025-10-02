@@ -67,7 +67,8 @@ public:
     void SetGuestAgent(GuestAgent* agent) { guestAgent = agent; }
     
     // Load memory map for navigation
-    void LoadMemoryMap(const std::vector<GuestMemoryRegion>& regions);
+    void LoadMemoryMap(const std::vector<GuestMemoryRegion>& regions,
+                       const std::unordered_map<uint64_t, uint64_t>* ptes = nullptr);
     
     // Callback when process map is loaded
     std::function<void(int, const std::vector<GuestMemoryRegion>&)> onProcessMapLoaded;

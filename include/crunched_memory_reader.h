@@ -64,6 +64,10 @@ public:
     // WARNING: Pointer is only valid while memory backend remains mapped
     const uint8_t* GetDirectPointer(uint64_t flatAddress);
 
+    // Fast check if page is known to be unmapped (doesn't trigger translation)
+    // Returns true if page is in cache and marked as unmapped
+    bool IsPageKnownUnmapped(uint64_t flatAddress) const;
+
     // Get total size of crunched space
     uint64_t GetCrunchedSize() const {
         return flattener ? flattener->GetFlatSize() : 0;

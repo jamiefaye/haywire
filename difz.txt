@@ -1,0 +1,1073 @@
+diff --git a/include/address_space_flattener.h b/include/address_space_flattener.h
+index a7d20da..fb29a41 100644
+--- a/include/address_space_flattener.h
++++ b/include/address_space_flattener.h
+@@ -49,15 +49,7 @@ public:
+     
+     // Get all regions for visualization
+     const std::vector<MappedRegion>& GetRegions() const { return regions; }
+-
+-    // Physical address lookup (flat -> PA translation without page table walks)
+-    // Returns 0 if address not mapped
+-    // Lazily translates on first access if not already cached
+-    uint64_t GetPhysicalAddress(uint64_t flatAddr) const;
+-
+-    // Enable lazy PA lookup (allocates table but doesn't translate upfront)
+-    void EnableLazyPALookup(class KernelViewportTranslator* translator, int pid);
+-
++    
+     // Generate navigation hints
+     struct NavHint {
+         uint64_t flatAddr;
+@@ -70,16 +62,7 @@ private:
+     std::vector<MappedRegion> regions;
+     uint64_t totalFlatSize;
+     uint64_t totalMappedSize;
+-
+-    // PA lookup table: indexed by (flatAddr / 4096), contains physical address
+-    // Lazily populated on first access (0 = not yet translated)
+-    mutable std::vector<uint64_t> paLookup;
+-    static constexpr size_t PAGE_SIZE = 4096;
+-
+-    // Lazy translation support
+-    mutable class KernelViewportTranslator* lazyTranslator;
+-    mutable int lazyPid;
+-
++    
+     // Binary search helper
+     const MappedRegion* FindRegion(uint64_t addr, bool useFlat) const;
+ };
+diff --git a/include/crunched_memory_reader.h b/include/crunched_memory_reader.h
+index e3fea81..619c469 100644
+--- a/include/crunched_memory_reader.h
++++ b/include/crunched_memory_reader.h
+@@ -55,11 +55,6 @@ public:
+     // Returns true if any non-zero bytes found
+     bool TestPageNonZero(uint64_t flatAddress, size_t size = 4096);
+ 
+-    // Get direct pointer to memory at flat address (zero-copy, uses PA lookup table)
+-    // Returns nullptr if address not mapped or lookup table not available
+-    // WARNING: Pointer is only valid while memory backend remains mapped
+-    const uint8_t* GetDirectPointer(uint64_t flatAddress);
+-
+     // Get total size of crunched space
+     uint64_t GetCrunchedSize() const {
+         return flattener ? flattener->GetFlatSize() : 0;
+diff --git a/qemu-mods/qemu-src b/qemu-mods/qemu-src
+--- a/qemu-mods/qemu-src
++++ b/qemu-mods/qemu-src
+@@ -1 +1 @@
+-Subproject commit 8d0dc1a7623f5b77ce8104c71f9d321e9567e050
++Subproject commit 8d0dc1a7623f5b77ce8104c71f9d321e9567e050-dirty
+diff --git a/src/address_space_flattener.cpp b/src/address_space_flattener.cpp
+index b5c2504..3698462 100644
+--- a/src/address_space_flattener.cpp
++++ b/src/address_space_flattener.cpp
+@@ -1,5 +1,4 @@
+ #include "address_space_flattener.h"
+-#include "kernel_viewport_translator.h"
+ #include "imgui.h"
+ #include <sstream>
+ #include <iomanip>
+@@ -7,8 +6,8 @@
+ 
+ namespace Haywire {
+ 
+-AddressSpaceFlattener::AddressSpaceFlattener()
+-    : totalFlatSize(0), totalMappedSize(0), lazyTranslator(nullptr), lazyPid(0) {
++AddressSpaceFlattener::AddressSpaceFlattener() 
++    : totalFlatSize(0), totalMappedSize(0) {
+ }
+ 
+ void AddressSpaceFlattener::BuildFromRegions(const std::vector<GuestMemoryRegion>& inputRegions) {
+@@ -141,66 +140,6 @@ AddressSpaceFlattener::FindRegion(uint64_t addr, bool useFlat) const {
+     return nullptr;
+ }
+ 
+-void AddressSpaceFlattener::EnableLazyPALookup(KernelViewportTranslator* translator, int pid) {
+-    if (!translator || totalFlatSize == 0) {
+-        std::cerr << "Cannot enable lazy PA lookup: invalid translator or empty flat space\n";
+-        return;
+-    }
+-
+-    lazyTranslator = translator;
+-    lazyPid = pid;
+-
+-    // Allocate lookup table but don't populate it yet
+-    size_t numPages = (totalFlatSize + PAGE_SIZE - 1) / PAGE_SIZE;
+-    paLookup.clear();
+-    paLookup.resize(numPages, 0);  // 0 = not yet translated
+-
+-    std::cout << "***** Enabled lazy PA lookup: " << numPages << " pages ("
+-              << (numPages * sizeof(uint64_t) / (1024.0 * 1024.0)) << " MB allocated)\n";
+-    std::cout << "***** Pages will be translated on first access\n";
+-}
+-
+-uint64_t AddressSpaceFlattener::GetPhysicalAddress(uint64_t flatAddr) const {
+-    if (paLookup.empty()) {
+-        return 0;  // Lookup not enabled
+-    }
+-
+-    size_t pageIdx = flatAddr / PAGE_SIZE;
+-    if (pageIdx >= paLookup.size()) {
+-        return 0;  // Out of bounds
+-    }
+-
+-    uint64_t pagePA = paLookup[pageIdx];
+-
+-    // Lazy translation: translate on first access
+-    if (pagePA == 0 && lazyTranslator && lazyPid > 0) {
+-        // Find which region this flat address belongs to
+-        const auto* region = GetRegionForFlat(flatAddr);
+-        if (region) {
+-            // Calculate VA from flat address
+-            uint64_t offsetInRegion = flatAddr - region->flatStart;
+-            uint64_t va = region->virtualStart + offsetInRegion;
+-
+-            // Translate VA to PA (page-aligned)
+-            uint64_t pageVA = (va / PAGE_SIZE) * PAGE_SIZE;
+-            pagePA = lazyTranslator->TranslateAddress(lazyPid, pageVA);
+-
+-            // Cache it
+-            if (pagePA != 0) {
+-                paLookup[pageIdx] = pagePA;
+-            }
+-        }
+-    }
+-
+-    if (pagePA == 0) {
+-        return 0;  // Page not mapped
+-    }
+-
+-    // Add offset within page
+-    uint64_t offset = flatAddr % PAGE_SIZE;
+-    return pagePA + offset;
+-}
+-
+ std::vector<AddressSpaceFlattener::NavHint> 
+ AddressSpaceFlattener::GetNavigationHints() const {
+     std::vector<NavHint> hints;
+diff --git a/src/bitmap_viewer.cpp b/src/bitmap_viewer.cpp
+index 86a05f6..08d98cb 100644
+--- a/src/bitmap_viewer.cpp
++++ b/src/bitmap_viewer.cpp
+@@ -800,7 +800,7 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
+         crunchedReader && currentPid > 0) {
+             // Allocate buffer for memory
+             std::vector<uint8_t> buffer(totalBytes);
+-        
++
+         // Read memory using crunched reader (handles all VA->PA translation)
+         size_t bytesRead = crunchedReader->ReadCrunchedMemory(
+             viewer.memoryAddress.value, totalBytes, buffer);
+diff --git a/src/change_detector.cpp b/src/change_detector.cpp
+index 8f127ac..7b58bd7 100644
+--- a/src/change_detector.cpp
++++ b/src/change_detector.cpp
+@@ -229,11 +229,8 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
+     size_t size = 0;
+     std::vector<uint8_t> buffer;  // For VA mode
+ 
+-    // Timing: measure read time
+-    auto read_start = std::chrono::high_resolution_clock::now();
+-
+     if (va_mode_enabled_ && crunched_reader_) {
+-        // VA mode: Use direct pointer via PA lookup table (zero-copy!)
++        // VA mode: Read from crunched address space
+         uint64_t flat_address = chunk.offset;
+         uint64_t crunched_size = crunched_reader_->GetCrunchedSize();
+ 
+@@ -242,52 +239,34 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
+             return;  // Beyond crunched space
+         }
+ 
++        // OPTIMIZATION: Skip unmapped regions entirely
++        // Check if this flat address actually corresponds to a mapped region
++        auto* flattener = crunched_reader_->GetFlattener();
++        if (flattener) {
++            const auto* region = flattener->GetRegionForFlat(flat_address);
++            if (!region) {
++                // This chunk is in an unmapped gap - skip it entirely
++                return;
++            }
++        }
++
+         size = std::min(chunk_size_, (size_t)(crunched_size - flat_address));
+ 
+-        // Try direct pointer first (fast path using PA lookup)
+-        data = crunched_reader_->GetDirectPointer(flat_address);
++        buffer.resize(size);
+ 
+-        static int direct_ptr_success = 0;
+-        static int direct_ptr_fail = 0;
++        // Protect against crashes in translation
++        try {
++            size_t bytes_read = crunched_reader_->ReadCrunchedMemory(flat_address, size, buffer);
+ 
+-        if (!data) {
+-            direct_ptr_fail++;
+-            if (direct_ptr_fail <= 10 || direct_ptr_fail % 1000 == 0) {
+-                std::cout << "***** GetDirectPointer failed at flat 0x" << std::hex << flat_address << std::dec
+-                          << " (success: " << direct_ptr_success << ", fail: " << direct_ptr_fail << ")\n";
++            if (bytes_read == 0) {
++                return;  // Invalid or unmapped region
+             }
+ 
+-            // Quick check: if PA lookup returns 0, page is unmapped - treat as zero and skip slow path
+-            auto* flattener = crunched_reader_->GetFlattener();
+-            if (flattener) {
+-                uint64_t testPA = flattener->GetPhysicalAddress(flat_address);
+-                if (testPA == 0) {
+-                    // Page not mapped - treat entire chunk as zeros
+-                    static std::vector<uint8_t> zero_buffer;
+-                    if (zero_buffer.size() < size) {
+-                        zero_buffer.resize(size, 0);
+-                    }
+-                    data = zero_buffer.data();
+-                } else {
+-                    // PA exists but GetDirectPointer failed (probably outside memory backend range)
+-                    // Fall back to slow copy path
+-                    buffer.resize(size);
+-                    try {
+-                        size_t bytes_read = crunched_reader_->ReadCrunchedMemory(flat_address, size, buffer);
+-                        if (bytes_read == 0) {
+-                            return;
+-                        }
+-                        data = buffer.data();
+-                        size = bytes_read;
+-                    } catch (...) {
+-                        return;
+-                    }
+-                }
+-            } else {
+-                return;  // No flattener available
+-            }
+-        } else {
+-            direct_ptr_success++;
++            data = buffer.data();
++            size = bytes_read;
++        } catch (...) {
++            // Translation or read failed - skip this chunk
++            return;
+         }
+     } else if (memory_reader_) {
+         // PA mode: Read from physical memory file
+@@ -301,19 +280,6 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
+         return;  // No reader available
+     }
+ 
+-    auto read_end = std::chrono::high_resolution_clock::now();
+-    auto read_us = std::chrono::duration_cast<std::chrono::microseconds>(read_end - read_start).count();
+-
+-    // Log slow reads (> 1ms)
+-    static uint64_t total_read_us = 0;
+-    static int read_count = 0;
+-    total_read_us += read_us;
+-    read_count++;
+-    if (read_us > 1000 || read_count % 1000 == 0) {
+-        std::cout << "***** [TIMING] ScanChunk read: " << read_us << "us (avg: "
+-                  << (total_read_us / read_count) << "us over " << read_count << " scans)\n";
+-    }
+-
+     // Check if zero
+     bool is_zero = TestChunkZero(data, size);
+ 
+@@ -362,16 +328,15 @@ void ChangeDetector::PatrolLoop() {
+         size_t heat_map_size = (heat_end > heat_start) ? (heat_end - heat_start) : 0;
+         size_t MAX_CHUNKS_PER_CYCLE = std::max((size_t)1000, heat_map_size + 100);
+ 
+-        // Debug output every 100 cycles
+-        static int cycle_count = 0;
+-        if (++cycle_count % 100 == 0) {
+-            std::cout << "ChangeDetector: Scanned " << total_scans_.load()
+-                      << " chunks, detected " << changes_detected_.load() << " changes\n";
+-            std::cout << "  Ranges: vis[" << vis_start << "-" << vis_end << "] "
+-                      << "heat[" << heat_start << "-" << heat_end << "] "
+-                      << "(span=" << (heat_end - heat_start) << " chunks)\n";
+-            std::cout << "  MAX_CHUNKS_PER_CYCLE: " << MAX_CHUNKS_PER_CYCLE << "\n";
+-        }
++        // Debug output every 100 cycles (disabled for production)
++        // static int cycle_count = 0;
++        // if (++cycle_count % 100 == 0) {
++        //     std::cout << "ChangeDetector: Scanned " << total_scans_.load()
++        //               << " chunks, detected " << changes_detected_.load() << " changes\n";
++        //     std::cout << "  Ranges: vis[" << vis_start << "-" << vis_end << "] "
++        //               << "heat[" << heat_start << "-" << heat_end << "] "
++        //               << "(span=" << (heat_end - heat_start) << " chunks)\n";
++        // }
+ 
+         // Priority 1: Visible chunks (already in cache from rendering)
+         // Scan every 50ms (20 Hz)
+diff --git a/src/crunched_memory_reader.cpp b/src/crunched_memory_reader.cpp
+index 46ffe31..4ab0088 100644
+--- a/src/crunched_memory_reader.cpp
++++ b/src/crunched_memory_reader.cpp
+@@ -93,19 +93,12 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
+         
+         while (regionBytesRead < toRead) {
+             size_t chunkSize = std::min<size_t>(pageSize, toRead - regionBytesRead);
+-            uint64_t chunkFlatAddr = currentFlat + totalRead + regionBytesRead;
+-
+-            // Try PA lookup table first (fast path)
++            uint64_t chunkVA = virtualAddr + regionBytesRead;
++            
++            // Translate VA to PA using beacon translator if available, otherwise viewport
++            translationsNeeded++;
+             uint64_t physAddr = 0;
+-            if (flattener) {
+-                physAddr = flattener->GetPhysicalAddress(chunkFlatAddr);
+-            }
+-
+-            // Fallback to translation if lookup failed
+-            if (physAddr == 0 && translator) {
+-                translationsNeeded++;
+-                uint64_t chunkVA = virtualAddr + regionBytesRead;
+-
++            if (translator) {
+                 // Validate VA before translation to prevent crashes
+                 // ARM64 userspace VA max is 0x0001000000000000 (48-bit address space)
+                 if (chunkVA < 0x0001000000000000ULL) {
+@@ -119,29 +112,66 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
+                 }
+             }
+             
+-            // Debug: VA->PA translation (disabled for production)
+-            // static int translationCount = 0;
+-            // if (++translationCount <= 5) {
+-            //     std::cerr << "VA->PA: 0x" << std::hex << chunkVA << " -> ";
+-            //     if (physAddr != 0) {
+-            //         std::cerr << "0x" << physAddr << std::dec << " (success)" << std::endl;
+-            //     } else {
+-            //         std::cerr << "not mapped" << std::dec << std::endl;
+-            //     }
+-            // }
++            static int translationCount = 0;
++            if (++translationCount <= 5) {
++                std::cerr << "VA->PA: 0x" << std::hex << chunkVA << " -> ";
++                if (physAddr != 0) {
++                    std::cerr << "0x" << physAddr << std::dec << " (success)" << std::endl;
++                } else {
++                    std::cerr << "not mapped" << std::dec << std::endl;
++                }
++            }
+             
+             if (physAddr == 0) {
+                 // Page not present - fill with zeros but remember it's unmapped
+                 buffer.resize(buffer.size() + chunkSize, 0);
++                static int notPresentCount = 0;
++                if (++notPresentCount <= 3) {
++                    std::cerr << "Page not present at VA 0x" << std::hex << chunkVA 
++                              << " in region " << region->name
++                              << " (occurrence " << std::dec << notPresentCount << ")" << std::endl;
++                }
+             } else {
+                 // Read from physical memory
+                 std::vector<uint8_t> tempBuffer;
+-
++                
++                // Debug: Check if PA is in valid range and test offset
++                static int readCount = 0;
++                if (++readCount <= 10) {
++                    std::cerr << "Reading from PA 0x" << std::hex << physAddr;
++                    if (physAddr >= 0x40000000) {
++                        uint64_t testOffset = physAddr - 0x40000000;
++                        std::cerr << " (file offset would be 0x" << std::hex << testOffset << ")";
++                    } else {
++                        std::cerr << " (below guest RAM start 0x40000000!)";
++                    }
++                    std::cerr << std::dec << std::endl;
++                }
++                
+                 if (qemu->ReadMemory(physAddr, chunkSize, tempBuffer)) {
+                     buffer.insert(buffer.end(), tempBuffer.begin(), tempBuffer.end());
++                    
++                    // Debug: Check if we're getting non-zero data
++                    if (readCount <= 10) {
++                        bool hasNonZero = false;
++                        for (size_t i = 0; i < std::min<size_t>(16, tempBuffer.size()); i++) {
++                            if (tempBuffer[i] != 0) {
++                                hasNonZero = true;
++                                break;
++                            }
++                        }
++                        std::cerr << "  Got " << tempBuffer.size() << " bytes" 
++                                  << (hasNonZero ? " (has data)" : " (all zeros)") 
++                                  << std::endl;
++                    }
+                 } else {
+                     // Read failed - fill with zeros
+                     buffer.resize(buffer.size() + chunkSize, 0);
++                    static int readFailCount = 0;
++                    if (++readFailCount <= 10) {
++                        std::cerr << "Physical read failed at PA 0x" << std::hex << physAddr 
++                                  << " from VA 0x" << chunkVA << std::dec << std::endl;
++                    }
+                 }
+             }
+             
+@@ -161,26 +191,6 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
+     return totalRead;
+ }
+ 
+-const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
+-    if (!flattener || !qemu) {
+-        return nullptr;
+-    }
+-
+-    // Use PA lookup table for instant translation
+-    uint64_t physAddr = flattener->GetPhysicalAddress(flatAddress);
+-    if (physAddr == 0) {
+-        return nullptr;  // Not mapped
+-    }
+-
+-    // Get memory backend and return direct pointer
+-    auto* backend = qemu->GetMemoryBackend();
+-    if (!backend || !backend->IsAvailable()) {
+-        return nullptr;
+-    }
+-
+-    return backend->GetDirectPointer(physAddr);
+-}
+-
+ CrunchedMemoryReader::PositionInfo CrunchedMemoryReader::GetPositionInfo(uint64_t flatAddress) const {
+     PositionInfo info;
+     info.flatAddr = flatAddress;
+diff --git a/src/memory_renderer.cpp b/src/memory_renderer.cpp
+index 2f8f0b1..120bbf0 100644
+--- a/src/memory_renderer.cpp
++++ b/src/memory_renderer.cpp
+@@ -70,6 +70,78 @@ ExtendedFormat MemoryRenderer::GetExtendedFormat(PixelFormat::Type format, bool
+     }
+ }
+ 
++// =============================================================================
++// Fast row renderers for 1:1 pixel formats
++// =============================================================================
++
++// Fast path: Render entire row of grayscale pixels at once
++static inline void RenderGrayscaleRow(const uint8_t* src, uint32_t* dest, int count) {
++    for (int i = 0; i < count; i++) {
++        uint8_t gray = src[i];
++        // Pack as ARGB: 0xFFGGGGGG (alpha=255, R=G=B=gray)
++        dest[i] = 0xFF000000 | (gray << 16) | (gray << 8) | gray;
++    }
++}
++
++// Fast path: Render entire row of RGB888 pixels at once
++static inline void RenderRGB888Row(const uint8_t* src, uint32_t* dest, int count) {
++    for (int i = 0; i < count; i++) {
++        const uint8_t* pixel = src + i * 3;
++        dest[i] = 0xFF000000 | (pixel[2] << 16) | (pixel[1] << 8) | pixel[0];
++    }
++}
++
++// Fast path: Render entire row of BGR888 pixels at once
++static inline void RenderBGR888Row(const uint8_t* src, uint32_t* dest, int count) {
++    for (int i = 0; i < count; i++) {
++        const uint8_t* pixel = src + i * 3;
++        dest[i] = 0xFF000000 | (pixel[0] << 16) | (pixel[1] << 8) | pixel[2];
++    }
++}
++
++// Fast path: Render entire row of RGBA8888 pixels at once
++static inline void RenderRGBA8888Row(const uint8_t* src, uint32_t* dest, int count) {
++    for (int i = 0; i < count; i++) {
++        const uint8_t* pixel = src + i * 4;
++        dest[i] = (pixel[3] << 24) | (pixel[2] << 16) | (pixel[1] << 8) | pixel[0];
++    }
++}
++
++// Fast path: Render entire row of BGRA8888 pixels at once
++static inline void RenderBGRA8888Row(const uint8_t* src, uint32_t* dest, int count) {
++    for (int i = 0; i < count; i++) {
++        const uint8_t* pixel = src + i * 4;
++        dest[i] = (pixel[3] << 24) | (pixel[0] << 16) | (pixel[1] << 8) | pixel[2];
++    }
++}
++
++// Fast path: Render entire row of ARGB8888 pixels at once
++static inline void RenderARGB8888Row(const uint8_t* src, uint32_t* dest, int count) {
++    for (int i = 0; i < count; i++) {
++        const uint8_t* pixel = src + i * 4;
++        dest[i] = (pixel[0] << 24) | (pixel[1] << 16) | (pixel[2] << 8) | pixel[3];
++    }
++}
++
++// Fast path: Render entire row of ABGR8888 pixels at once
++static inline void RenderABGR8888Row(const uint8_t* src, uint32_t* dest, int count) {
++    for (int i = 0; i < count; i++) {
++        const uint8_t* pixel = src + i * 4;
++        dest[i] = (pixel[0] << 24) | (pixel[3] << 16) | (pixel[2] << 8) | pixel[1];
++    }
++}
++
++// Fast path: Render entire row of RGB565 pixels at once
++static inline void RenderRGB565Row(const uint8_t* src, uint32_t* dest, int count) {
++    for (int i = 0; i < count; i++) {
++        uint16_t pixel = (src[i * 2 + 1] << 8) | src[i * 2];
++        uint8_t r = ((pixel >> 11) & 0x1F) << 3;
++        uint8_t g = ((pixel >> 5) & 0x3F) << 2;
++        uint8_t b = (pixel & 0x1F) << 3;
++        dest[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
++    }
++}
++
+ // =============================================================================
+ // Single-element renderer functions
+ // =============================================================================
+@@ -316,6 +388,103 @@ std::vector<uint32_t> MemoryRenderer::RenderWithLayout(
+     int elementWidth = desc.pixelsOutX;
+     int elementHeight = desc.pixelsOutY;
+ 
++    // =========================================================================
++    // FAST PATH: For 1:1 pixel formats without column mode, use optimized row rendering
++    // =========================================================================
++    if (!config.columnMode && elementWidth == 1 && elementHeight == 1) {
++        int pixelsPerRow = std::min(config.displayWidth, (int)(dataSize / desc.bytesIn));
++        int rows = std::min(config.displayHeight, (int)(dataSize / (pixelsPerRow * desc.bytesIn)));
++
++        switch (format) {
++            case ExtendedFormat::GRAYSCALE:
++                for (int y = 0; y < rows; y++) {
++                    RenderGrayscaleRow(
++                        data + y * pixelsPerRow,
++                        pixels.data() + y * config.displayWidth,
++                        pixelsPerRow
++                    );
++                }
++                return pixels;
++
++            case ExtendedFormat::RGB565:
++                for (int y = 0; y < rows; y++) {
++                    RenderRGB565Row(
++                        data + y * pixelsPerRow * 2,
++                        pixels.data() + y * config.displayWidth,
++                        pixelsPerRow
++                    );
++                }
++                return pixels;
++
++            case ExtendedFormat::RGB888:
++                for (int y = 0; y < rows; y++) {
++                    RenderRGB888Row(
++                        data + y * pixelsPerRow * 3,
++                        pixels.data() + y * config.displayWidth,
++                        pixelsPerRow
++                    );
++                }
++                return pixels;
++
++            case ExtendedFormat::BGR888:
++                for (int y = 0; y < rows; y++) {
++                    RenderBGR888Row(
++                        data + y * pixelsPerRow * 3,
++                        pixels.data() + y * config.displayWidth,
++                        pixelsPerRow
++                    );
++                }
++                return pixels;
++
++            case ExtendedFormat::RGBA8888:
++                for (int y = 0; y < rows; y++) {
++                    RenderRGBA8888Row(
++                        data + y * pixelsPerRow * 4,
++                        pixels.data() + y * config.displayWidth,
++                        pixelsPerRow
++                    );
++                }
++                return pixels;
++
++            case ExtendedFormat::BGRA8888:
++                for (int y = 0; y < rows; y++) {
++                    RenderBGRA8888Row(
++                        data + y * pixelsPerRow * 4,
++                        pixels.data() + y * config.displayWidth,
++                        pixelsPerRow
++                    );
++                }
++                return pixels;
++
++            case ExtendedFormat::ARGB8888:
++                for (int y = 0; y < rows; y++) {
++                    RenderARGB8888Row(
++                        data + y * pixelsPerRow * 4,
++                        pixels.data() + y * config.displayWidth,
++                        pixelsPerRow
++                    );
++                }
++                return pixels;
++
++            case ExtendedFormat::ABGR8888:
++                for (int y = 0; y < rows; y++) {
++                    RenderABGR8888Row(
++                        data + y * pixelsPerRow * 4,
++                        pixels.data() + y * config.displayWidth,
++                        pixelsPerRow
++                    );
++                }
++                return pixels;
++
++            default:
++                // Fall through to element-by-element rendering
++                break;
++        }
++    }
++    // =========================================================================
++    // END FAST PATH
++    // =========================================================================
++
+     // Set up column parameters
+     // Non-column mode is just 1 column with full width and no gap
+     int columnWidth = config.columnMode ? config.columnWidth : config.displayWidth;
+diff --git a/src/memory_visualizer.cpp b/src/memory_visualizer.cpp
+index af81ba0..ce0242e 100644
+--- a/src/memory_visualizer.cpp
++++ b/src/memory_visualizer.cpp
+@@ -44,8 +44,7 @@ MemoryVisualizer::MemoryVisualizer()
+       magnifierSize(32), magnifierLockPos(0, 0), memoryViewPos(0, 0), memoryViewSize(0, 0),
+       targetPid(-1), useVirtualAddresses(false), guestAgent(nullptr),
+       searchType(SEARCH_ASCII), currentSearchResult(0), searchActive(false), searchFromCurrent(false),
+-      searchFullRange(true), memFd(-1), memBase(nullptr), memSize(0), qemuConn(nullptr),
+-      fftStartRelativePos(0.5f, 0.5f), fftStartEnabled(false) {
++      searchFullRange(true), memFd(-1), memBase(nullptr), memSize(0), qemuConn(nullptr) {
+     
+     memset(searchPattern, 0, sizeof(searchPattern));
+     
+@@ -137,11 +136,6 @@ void MemoryVisualizer::SetProcessPid(int pid) {
+         }
+         std::cerr << "Automatically enabled VA mode for PID " << pid << std::endl;
+     }
+-
+-    // Build PA lookup table for fast flat->PA translation
+-    if (pid > 0 && addressFlattener && viewportTranslator) {
+-        addressFlattener->EnableLazyPALookup(viewportTranslator.get(), pid);
+-    }
+ }
+ 
+ void MemoryVisualizer::CreateTexture() {
+@@ -1853,28 +1847,7 @@ void MemoryVisualizer::DrawMemoryView() {
+         // This will be used to offset the memory view
+         // For now just track it, actual implementation would update base address
+     }
+-
+-    // Draw FFT start point anchor if enabled
+-    if (fftStartEnabled && showCorrelation) {
+-        ImDrawList* drawList = ImGui::GetWindowDrawList();
+-
+-        // Calculate screen position from relative position
+-        float screenX = memoryViewPos.x + fftStartRelativePos.x * memoryViewSize.x;
+-        float screenY = memoryViewPos.y + fftStartRelativePos.y * memoryViewSize.y;
+-
+-        // Draw anchor with distinctive color (orange/yellow for FFT)
+-        ImVec2 center(screenX, screenY);
+-        float radius = 8.0f;
+-
+-        // Orange circle with black outline
+-        drawList->AddCircleFilled(center, radius, IM_COL32(255, 165, 0, 200));
+-        drawList->AddCircle(center, radius, IM_COL32(0, 0, 0, 255), 0, 2.0f);
+-
+-        // Draw "FFT" label
+-        drawList->AddText(ImVec2(screenX + 12, screenY - 8),
+-                        IM_COL32(255, 165, 0, 255), "FFT");
+-    }
+-
++    
+     // Handle right-click context menu for creating bitmap viewers
+     if (ImGui::IsMouseClicked(1) && ImGui::IsWindowHovered()) {
+         ImVec2 mousePos = ImGui::GetMousePos();
+@@ -1917,32 +1890,9 @@ void MemoryVisualizer::DrawMemoryView() {
+                 printf("ERROR: bitmapViewerManager is null!\n");
+             }
+         }
+-
+-        // FFT start point option (only when correlation is enabled)
+-        if (showCorrelation) {
+-            if (ImGui::MenuItem("Set FFT Start Point Here")) {
+-                // Store relative position (0.0-1.0) within the viewport
+-                fftStartRelativePos.x = (contextMenuPos.x - memoryViewPos.x) / memoryViewSize.x;
+-                fftStartRelativePos.y = (contextMenuPos.y - memoryViewPos.y) / memoryViewSize.y;
+-
+-                // Clamp to valid range
+-                fftStartRelativePos.x = std::max(0.0f, std::min(1.0f, fftStartRelativePos.x));
+-                fftStartRelativePos.y = std::max(0.0f, std::min(1.0f, fftStartRelativePos.y));
+-
+-                fftStartEnabled = true;
+-                printf("FFT start point set at relative pos (%.3f, %.3f)\n",
+-                       fftStartRelativePos.x, fftStartRelativePos.y);
+-            }
+-
+-            if (fftStartEnabled && ImGui::MenuItem("Clear FFT Start Point")) {
+-                fftStartEnabled = false;
+-                printf("FFT start point cleared\n");
+-            }
+-        }
+-
+         ImGui::EndPopup();
+     }
+-
++    
+     ImGui::EndChild();
+     
+     // Draw correlation stripe at bottom if enabled
+@@ -1958,25 +1908,6 @@ void MemoryVisualizer::DrawMemoryView() {
+     // Note: Search is now integrated into magnifier window
+ }
+ 
+-// Helper: Convert pixel coordinates (x,y) to byte offset in currentMemory.data
+-// This uses the same logic as GetAddressAt() but returns offset instead of absolute address
+-size_t MemoryVisualizer::PixelCoordToByteOffset(int pixelX, int pixelY) const {
+-    // Reuse GetAddressAt which handles all the complex cases (split components, column mode, etc.)
+-    uint64_t addr = GetAddressAt(pixelX, pixelY);
+-
+-    // Convert absolute address to offset in currentMemory.data
+-    if (addr < viewport.baseAddress) {
+-        return SIZE_MAX;  // Before current viewport
+-    }
+-
+-    size_t offset = addr - viewport.baseAddress;
+-    if (offset >= currentMemory.data.size()) {
+-        return SIZE_MAX;  // Beyond current viewport
+-    }
+-
+-    return offset;
+-}
+-
+ void MemoryVisualizer::DrawMagnifier() {
+     // Create a floating window for the magnifier - resizable
+     // Always use NoNavInputs to prevent arrow key focus issues
+@@ -2210,31 +2141,21 @@ void MemoryVisualizer::DrawMagnifier() {
+         uint64_t resultAddr = searchResults[currentSearchResult];
+         
+         // Calculate the offset of this result within the current memory buffer
+-        if (resultAddr >= viewport.baseAddress &&
++        if (resultAddr >= viewport.baseAddress && 
+             resultAddr < viewport.baseAddress + currentMemory.data.size()) {
+-
++            
+             // Result is within current view
+             size_t resultOffset = resultAddr - viewport.baseAddress;
+-
+-            // Convert byte offset to pixel coordinates
+-            // Account for column mode, split components, etc.
+-            if (columnMode) {
+-                // Column mode
+-                int bytesPerPixel = viewport.format.bytesPerPixel;
+-                size_t bytesPerColumn = viewport.height * columnWidth * bytesPerPixel;
+-
+-                int col = resultOffset / bytesPerColumn;
+-                size_t posInColumn = resultOffset % bytesPerColumn;
+-
+-                srcY = posInColumn / (columnWidth * bytesPerPixel);
+-                int xInColumn = (posInColumn % (columnWidth * bytesPerPixel)) / bytesPerPixel;
+-                srcX = col * (columnWidth + columnGap) + xInColumn;
+-            } else {
+-                // Linear mode
+-                size_t strideBytes = viewport.stride * viewport.format.bytesPerPixel;
+-                srcX = (resultOffset % strideBytes) / viewport.format.bytesPerPixel;
+-                srcY = resultOffset / strideBytes;
+-            }
++            
++            // For search results, we want to center on the BYTE position, not pixel position
++            // Calculate the exact byte position in the viewport
++            int byteX = resultOffset % viewport.stride;
++            int byteY = resultOffset / viewport.stride;
++            
++            // Convert byte position to pixel position
++            // This centers on the start of the found pattern
++            srcX = byteX / viewport.format.bytesPerPixel;
++            srcY = byteY;
+             
+             // Also update magnifierLockPos to match the search result position
+             // This ensures arrow keys start from the correct position
+@@ -2242,10 +2163,10 @@ void MemoryVisualizer::DrawMagnifier() {
+             magnifierLockPos.y = srcY;
+             
+             // Add indicator that we're showing search result
+-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Showing search result %zu of %zu",
++            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Showing search result %zu of %zu", 
+                               currentSearchResult + 1, searchResults.size());
+             ImGui::Text("Address: 0x%llx", resultAddr);
+-            ImGui::Text("Pixel: (%d, %d)", srcX, srcY);
++            ImGui::Text("Pattern starts at byte offset %d in line", byteX);
+         } else {
+             // Result is not in current view - should navigate to it
+             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Result not in current view");
+@@ -2391,26 +2312,22 @@ void MemoryVisualizer::DrawMagnifier() {
+         // Display 16 bytes per line, centered on current position
+         const int bytesToShow = 16;
+         const int halfBytes = bytesToShow / 2;
+-
+-        // Calculate the center byte offset we're looking at
+-        size_t centerByteOffset;
++        
++        // Calculate the actual byte position we're looking at
++        int centerByteX;
+         if (magnifierLocked && searchActive && !searchResults.empty() && currentSearchResult < searchResults.size() && !userNavigated) {
+             // For search results (when not manually navigated), use the exact byte position
+-            centerByteOffset = searchResults[currentSearchResult] - viewport.baseAddress;
++            size_t resultOffset = searchResults[currentSearchResult];
++            centerByteX = resultOffset % viewport.stride;
+         } else {
+-            // For mouse position or manual navigation, convert pixel coords to byte offset
+-            centerByteOffset = PixelCoordToByteOffset(srcX, srcY);
++            // For mouse position or manual navigation, use pixel-based calculation
++            centerByteX = srcX * viewport.format.bytesPerPixel;
+         }
+-
++        
+         for (int lineOffset = -1; lineOffset <= 1; lineOffset++) {
+             int y = srcY + lineOffset;
+             if (y >= 0 && y < viewport.height) {
+-                // Calculate byte offset for this line
+-                size_t lineByteOffset = PixelCoordToByteOffset(srcX, y);
+-                if (lineByteOffset == SIZE_MAX) continue;  // Invalid position (e.g., in column gap)
+-
+-                // Calculate range of bytes to show around center
+-                size_t lineStart = (lineByteOffset >= halfBytes) ? lineByteOffset - halfBytes : 0;
++                size_t lineStart = y * viewport.stride + std::max(0, centerByteX - halfBytes);
+                 
+                 // Line label
+                 if (lineOffset == -1) ImGui::Text("Above: ");
+@@ -2427,15 +2344,18 @@ void MemoryVisualizer::DrawMagnifier() {
+                         bool isCenter = false;
+                         if (magnifierLocked && searchActive && !searchResults.empty() && lineOffset == 0 && !userNavigated) {
+                             // For search results (when not manually navigated), highlight the actual pattern
+-                            size_t patternLen = (searchType == SEARCH_ASCII) ?
+-                                strlen(searchPattern) :
++                            uint64_t resultAddr = searchResults[currentSearchResult];
++                            size_t patternLen = (searchType == SEARCH_ASCII) ? 
++                                strlen(searchPattern) : 
+                                 (strlen(searchPattern) + 1) / 2;  // Hex pattern length
+-
++                            
+                             // Check if this byte is part of the pattern
+-                            isCenter = (byteOffset >= centerByteOffset && byteOffset < centerByteOffset + patternLen);
++                            // byteOffset is relative to current viewport, need to convert to absolute
++                            uint64_t absoluteByteAddr = viewport.baseAddress + byteOffset;
++                            isCenter = (absoluteByteAddr >= resultAddr && absoluteByteAddr < resultAddr + patternLen);
+                         } else if (lineOffset == 0) {
+-                            // For manual navigation or mouse position, highlight the center pixel's bytes
+-                            isCenter = (byteOffset >= centerByteOffset && byteOffset < centerByteOffset + viewport.format.bytesPerPixel);
++                            // For manual navigation or mouse position, highlight the center bytes
++                            isCenter = (b >= halfBytes && b < halfBytes + viewport.format.bytesPerPixel);
+                         }
+                         
+                         if (isCenter) {
+@@ -2468,13 +2388,16 @@ void MemoryVisualizer::DrawMagnifier() {
+                         bool isCenter = false;
+                         if (magnifierLocked && searchActive && !searchResults.empty() && lineOffset == 0) {
+                             // For search results, highlight the actual pattern
+-                            size_t patternLen = (searchType == SEARCH_ASCII) ?
+-                                strlen(searchPattern) :
++                            uint64_t resultAddr = searchResults[currentSearchResult];
++                            size_t patternLen = (searchType == SEARCH_ASCII) ? 
++                                strlen(searchPattern) : 
+                                 (strlen(searchPattern) + 1) / 2;
+-                            isCenter = (byteOffset >= centerByteOffset && byteOffset < centerByteOffset + patternLen);
+-                        } else if (lineOffset == 0) {
+-                            // For mouse position or manual navigation, highlight the pixel's bytes
+-                            isCenter = (byteOffset >= centerByteOffset && byteOffset < centerByteOffset + viewport.format.bytesPerPixel);
++                            // byteOffset is relative to current viewport, need to convert to absolute
++                            uint64_t absoluteByteAddr = viewport.baseAddress + byteOffset;
++                            isCenter = (absoluteByteAddr >= resultAddr && absoluteByteAddr < resultAddr + patternLen);
++                        } else if (!magnifierLocked && lineOffset == 0) {
++                            // For mouse position, highlight the pixel's bytes
++                            isCenter = (b >= halfBytes && b < halfBytes + viewport.format.bytesPerPixel);
+                         }
+                         
+                         if (ch >= 32 && ch < 127) {
+@@ -2588,42 +2511,14 @@ void MemoryVisualizer::DrawCorrelationStripe() {
+     
+     // Compute correlation if we have memory
+     if (!currentMemory.data.empty()) {
+-        // Determine starting point for correlation
+-        const uint8_t* dataStart = currentMemory.data.data();
+-        size_t dataSize = currentMemory.data.size();
+-
+-        if (fftStartEnabled) {
+-            // Convert relative screen position to pixel coordinates
+-            int pixX = (int)(fftStartRelativePos.x * viewport.width);
+-            int pixY = (int)(fftStartRelativePos.y * viewport.height);
+-
+-            // Clamp to viewport bounds
+-            pixX = std::max(0, std::min(pixX, (int)(viewport.width - 1)));
+-            pixY = std::max(0, std::min(pixY, (int)(viewport.height - 1)));
+-
+-            // Convert pixel coordinates to byte offset
+-            size_t offset = PixelCoordToByteOffset(pixX, pixY);
+-
+-            if (offset != SIZE_MAX && offset < currentMemory.data.size()) {
+-                // Start correlation from FFT start point
+-                dataStart = currentMemory.data.data() + offset;
+-                dataSize = currentMemory.data.size() - offset;
+-            }
+-        }
+-
+-        auto correlation = correlator.Correlate(dataStart, dataSize, pixelFormatIndex);
+-
++        auto correlation = correlator.Correlate(currentMemory.data.data(), 
++                                               currentMemory.data.size(), 
++                                               pixelFormatIndex);
++        
+         if (!correlation.empty()) {
+-            // Find max correlation value for proper scaling
+-            double maxCorr = 0;
+-            for (size_t i = 1; i < std::min((size_t)2048, correlation.size()); i++) {
+-                if (correlation[i] > maxCorr) maxCorr = correlation[i];
+-            }
+-            if (maxCorr < 0.001) maxCorr = 1.0;  // Avoid division by zero
+-
+             // Draw correlation graph
+             float xScale = size.x / std::min((size_t)2048, correlation.size());
+-            float yScale = (size.y * 0.8f) / maxCorr;  // Scale based on actual max value
++            float yScale = size.y * 0.8f;  // Use 80% of height
+             float baseline = pos.y + size.y - 10;
+             
+             // Draw grid lines
+@@ -2653,78 +2548,18 @@ void MemoryVisualizer::DrawCorrelationStripe() {
+                 prevPoint = curPoint;
+             }
+             
+-            // Find and mark peaks (threshold relative to max correlation value)
+-            double peakThreshold = maxCorr * 0.3;  // 30% of maximum
+-            auto peaks = correlator.FindPeaks(correlation, peakThreshold);
+-
+-            // Filter peaks to only label strongest in each vicinity (to avoid crowding)
+-            const float MIN_LABEL_SPACING = 40.0f;  // Minimum pixels between labels
+-            std::vector<int> peaksToLabel;
+-
+-            for (size_t i = 0; i < peaks.size(); i++) {
+-                int peak = peaks[i];
+-                float peakX = pos.x + peak * xScale;
+-
+-                // Check if this peak is too close to any already-labeled peak
+-                bool tooClose = false;
+-                int closestLabeledPeak = -1;
+-                float closestDist = 1e9f;
+-
+-                for (int labeledPeak : peaksToLabel) {
+-                    float labeledX = pos.x + labeledPeak * xScale;
+-                    float dist = std::abs(peakX - labeledX);
+-                    if (dist < MIN_LABEL_SPACING && dist < closestDist) {
+-                        tooClose = true;
+-                        closestLabeledPeak = labeledPeak;
+-                        closestDist = dist;
+-                    }
+-                }
+-
+-                if (tooClose) {
+-                    // Compare peak strengths - only keep the stronger one
+-                    if (peak < correlation.size() && closestLabeledPeak < (int)correlation.size()) {
+-                        if (correlation[peak] > correlation[closestLabeledPeak]) {
+-                            // This peak is stronger - replace the labeled one
+-                            peaksToLabel.erase(
+-                                std::remove(peaksToLabel.begin(), peaksToLabel.end(), closestLabeledPeak),
+-                                peaksToLabel.end()
+-                            );
+-                            peaksToLabel.push_back(peak);
+-                        }
+-                        // else: keep the existing stronger peak, skip this one
+-                    }
+-                } else {
+-                    // Not too close to anything - label it
+-                    peaksToLabel.push_back(peak);
+-                }
+-            }
+-
+-            // Draw all peaks (lines)
++            // Find and mark peaks
++            auto peaks = correlator.FindPeaks(correlation, 0.3);
+             for (int peak : peaks) {
+                 float x = pos.x + peak * xScale;
+                 drawList->AddLine(ImVec2(x, pos.y), ImVec2(x, pos.y + size.y),
+                                  IM_COL32(255, 255, 0, 128), 2.0f);
+-            }
+-
+-            // Draw labels only for filtered peaks
+-            for (int peak : peaksToLabel) {
+-                float x = pos.x + peak * xScale;
++                
++                // Label the peak
+                 char label[32];
+                 snprintf(label, sizeof(label), "%d", peak);
+-
+-                // Calculate text size for background
+-                ImVec2 textSize = ImGui::CalcTextSize(label);
+-                ImVec2 labelPos(x + 2, pos.y + 2);
+-
+-                // Draw semi-transparent background to make label readable
+-                drawList->AddRectFilled(
+-                    ImVec2(labelPos.x - 2, labelPos.y - 1),
+-                    ImVec2(labelPos.x + textSize.x + 2, labelPos.y + textSize.y + 1),
+-                    IM_COL32(0, 0, 0, 180)  // Dark background with 70% opacity
+-                );
+-
+-                // Draw the label text
+-                drawList->AddText(labelPos, IM_COL32(255, 255, 0, 255), label);
++                drawList->AddText(ImVec2(x + 2, pos.y + 2),
++                                 IM_COL32(255, 255, 0, 255), label);
+             }
+         }
+     }
+@@ -3255,11 +3090,6 @@ void MemoryVisualizer::LoadMemoryMap(const std::vector<GuestMemoryRegion>& regio
+     if (addressFlattener) {
+         addressFlattener->BuildFromRegions(regions);
+         std::cerr << "Loaded memory map with " << regions.size() << " regions\n";
+-
+-        // Build PA lookup table for fast flat->PA translation
+-        if (viewportTranslator && targetPid > 0) {
+-            addressFlattener->EnableLazyPALookup(viewportTranslator.get(), targetPid);
+-        }
+     }
+ }
+ 
+@@ -3382,14 +3212,14 @@ void MemoryVisualizer::PerformSearch() {
+ 
+ void MemoryVisualizer::ScrollToResult(uint64_t resultAddr) {
+     // Calculate the viewport boundaries
+-    int bytesPerLine = viewport.stride * viewport.format.bytesPerPixel;
+     uint64_t viewStart = viewport.baseAddress;
+-    uint64_t viewEnd = viewport.baseAddress + (viewport.height * bytesPerLine);
+-
++    uint64_t viewEnd = viewport.baseAddress + (viewport.height * viewport.stride);
++    
+     // Check if result is already visible
+     if (resultAddr >= viewStart && resultAddr < viewEnd) {
+         // Result is visible - no need to scroll
+         // Just ensure it's not too close to edges (keep at least 2 lines of context)
++        int bytesPerLine = viewport.stride;
+         uint64_t resultLine = (resultAddr - viewStart) / bytesPerLine;
+         
+         if (resultLine < 2) {
+@@ -3409,6 +3239,7 @@ void MemoryVisualizer::ScrollToResult(uint64_t resultAddr) {
+         // Otherwise result is nicely visible - don't scroll
+     } else {
+         // Result is off-screen - need to scroll
++        int bytesPerLine = viewport.stride;
+         uint64_t lineAlignedAddr = (resultAddr / bytesPerLine) * bytesPerLine;
+         
+         // Position result at about 1/3 from top for good context
+@@ -3562,21 +3393,9 @@ void MemoryVisualizer::PerformFullRangeSearch() {
+             break;  // No more matches
+         }
+         
+-        // Calculate absolute position in file
++        // Calculate absolute position
+         size_t foundPos = (uint8_t*)found - memBytes;
+-
+-        // Convert file offset to address
+-        // In PA mode: file offset 0 corresponds to physical address 0x40000000
+-        // In VA mode: we're searching crunched flat space, so offset = flat address
+-        uint64_t resultAddress;
+-        if (useVirtualAddresses && addressFlattener && targetPid > 0) {
+-            // VA mode - offset is flat address
+-            resultAddress = foundPos;
+-        } else {
+-            // PA mode - add RAM base offset
+-            resultAddress = foundPos + 0x40000000;
+-        }
+-        searchResults.push_back(resultAddress);
++        searchResults.push_back(foundPos);
+         
+         if (searchResults.size() >= MAX_SEARCH_RESULTS) {
+             hitLimit = true;

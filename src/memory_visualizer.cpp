@@ -131,17 +131,12 @@ void MemoryVisualizer::SetProcessPid(int pid) {
         if (bitmapViewerManager) {
             bitmapViewerManager->SetVAMode(true);
         }
-        // Update change detector to use VA mode
-        if (changeDetector_) {
-            changeDetector_->SetVAMode(true, crunchedReader.get());
-        }
+        // NOTE: Change detector VA mode is now set in LoadMemoryMap() after regions are built
         std::cerr << "Automatically enabled VA mode for PID " << pid << std::endl;
     }
 
-    // Build PA lookup table for fast flat->PA translation
-    if (pid > 0 && addressFlattener && viewportTranslator) {
-        addressFlattener->EnableLazyPALookup(viewportTranslator.get(), pid);
-    }
+    // NOTE: PA lookup table is now built in LoadMemoryMap() with PTEs pre-populated
+    // No need to call EnableLazyPALookup here anymore
 }
 
 void MemoryVisualizer::CreateTexture() {
@@ -235,10 +230,11 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                 // Use GetDirectPointer for fast direct access (bypasses slow ReadCrunchedMemory)
                 buffer.resize(size);  // Allocate once
                 size_t bytesRead = 0;
+                size_t unmappedPages = 0;
 
                 // Read in page-sized chunks using GetDirectPointer
                 const size_t pageSize = 4096;
-                for (size_t offset = 0; offset < size; offset += pageSize) {
+                for (size_t offset = 0; offset < size; ) {
                     size_t chunkSize = std::min(pageSize, size - offset);
                     const uint8_t* ptr = crunchedReader->GetDirectPointer(addr + offset);
 
@@ -246,21 +242,40 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                         // Direct memcpy from mmap'd memory (fast!)
                         std::memcpy(buffer.data() + offset, ptr, chunkSize);
                         bytesRead += chunkSize;
+                        offset += pageSize;
                     } else {
-                        // Unmapped page - fill with zeros
-                        std::memset(buffer.data() + offset, 0, chunkSize);
+                        // Unmapped page - check if there's a run of unmapped pages
+                        // Scan cache to find run length (fast, no translations!)
+                        size_t runLength = pageSize;
+                        size_t remainingPages = (size - offset - pageSize) / pageSize;
+
+                        for (size_t i = 1; i <= remainingPages; i++) {
+                            // Fast cache check - doesn't trigger translation
+                            if (!crunchedReader->IsPageKnownUnmapped(addr + offset + i * pageSize)) {
+                                break;  // Hit a mapped page or unknown page, stop run
+                            }
+                            runLength += pageSize;
+                        }
+
+                        // Fill entire run with zeros at once
+                        std::memset(buffer.data() + offset, 0, runLength);
+                        unmappedPages += runLength / pageSize;
+                        offset += runLength;
+                    }
+                }
+
+                // Report if significant unmapped pages (potential jank source)
+                size_t totalPages = (size + pageSize - 1) / pageSize;
+                if (unmappedPages > totalPages / 4) {  // More than 25% unmapped
+                    static int reportCount = 0;
+                    if (++reportCount % 10 == 0) {
+                        std::cerr << "***** High unmapped page rate: " << unmappedPages
+                                  << "/" << totalPages << " pages at flat addr 0x"
+                                  << std::hex << addr << std::dec << std::endl;
                     }
                 }
 
                 readSuccess = (bytesRead > 0);
-                if (!readSuccess) {
-                    static int failCount = 0;
-                    if (++failCount % 10 == 0) {
-                        std::cerr << "GetDirectPointer failed at flat addr 0x"
-                                  << std::hex << addr << std::dec
-                                  << " (fail #" << failCount << ")" << std::endl;
-                    }
-                }
             } else if (memoryDataSource_) {
                 // Use custom memory data source (e.g., for file viewing)
                 buffer.resize(size);
@@ -3271,14 +3286,20 @@ void MemoryVisualizer::SetViewport(const ViewportSettings& settings) {
     needsUpdate = true;
 }
 
-void MemoryVisualizer::LoadMemoryMap(const std::vector<GuestMemoryRegion>& regions) {
+void MemoryVisualizer::LoadMemoryMap(const std::vector<GuestMemoryRegion>& regions,
+                                     const std::unordered_map<uint64_t, uint64_t>* ptes) {
     if (addressFlattener) {
         addressFlattener->BuildFromRegions(regions);
         std::cerr << "Loaded memory map with " << regions.size() << " regions\n";
 
         // Build PA lookup table for fast flat->PA translation
         if (viewportTranslator && targetPid > 0) {
-            addressFlattener->EnableLazyPALookup(viewportTranslator.get(), targetPid);
+            addressFlattener->EnableLazyPALookup(viewportTranslator.get(), targetPid, ptes);
+        }
+
+        // Update change detector to use VA mode (now that flattener has regions built)
+        if (changeDetector_ && targetPid > 0 && useVirtualAddresses) {
+            changeDetector_->SetVAMode(true, crunchedReader.get());
         }
     }
 }

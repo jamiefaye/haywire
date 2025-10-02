@@ -280,6 +280,21 @@ const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
     }
 }
 
+bool CrunchedMemoryReader::IsPageKnownUnmapped(uint64_t flatAddress) const {
+    // Only valid in VA mode with cache
+    if (!translator || targetPid <= 0 || renderPageCache.empty()) {
+        return false;
+    }
+
+    size_t pageIdx = flatAddress / PAGE_SIZE;
+    if (pageIdx >= renderPageCache.size()) {
+        return false;
+    }
+
+    // Check if page is marked as unmapped (flags != 0)
+    return renderPageCache[pageIdx].flags != 0;
+}
+
 CrunchedMemoryReader::PositionInfo CrunchedMemoryReader::GetPositionInfo(uint64_t flatAddress) const {
     PositionInfo info;
     info.flatAddr = flatAddress;
