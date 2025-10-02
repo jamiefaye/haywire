@@ -261,11 +261,34 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
         return;  // No reader available
     }
 
-    // Check if zero
-    bool is_zero = TestChunkZero(data, size);
+    // Combined zero-check and checksum calculation in single pass
+    // This saves a full page read (important since 4KB > L1 cache working set)
+    uint32_t checksum = 0;
+    bool is_zero = true;
 
-    // Calculate checksum (skip for zero chunks)
-    uint32_t checksum = is_zero ? 0 : CalculateChecksum(data, size);
+    // Use 64-bit processing for speed
+    const uint64_t* data64 = reinterpret_cast<const uint64_t*>(data);
+    size_t count64 = size / 8;
+
+    for (size_t i = 0; i < count64; i++) {
+        uint64_t val = data64[i];
+        if (val != 0) {
+            is_zero = false;
+            // Calculate checksum byte by byte from this qword
+            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&val);
+            for (int j = 0; j < 8; j++) {
+                checksum = ((checksum << 5) | (checksum >> 27)) ^ bytes[j];
+            }
+        }
+    }
+
+    // Process remaining bytes
+    for (size_t i = count64 * 8; i < size; i++) {
+        if (data[i] != 0) {
+            is_zero = false;
+            checksum = ((checksum << 5) | (checksum >> 27)) ^ data[i];
+        }
+    }
 
     // Detect changes
     bool is_first_scan = !chunk.scanned;
