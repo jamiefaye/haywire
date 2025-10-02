@@ -760,11 +760,16 @@ void MemoryVisualizer::DrawMemoryBitmap() {
 
         // Draw heat map (pass file offset, not physical address)
         if (heatMapWidget_->Draw(heatMapWidth, maxHeight, fileOffset, viewSize)) {
-            // User clicked on heat map - convert file offset to physical address
+            // User clicked on heat map - clicked_file_offset is either:
+            // - PA mode: file offset (needs ramBase added)
+            // - VA mode: flat address in crunched space (needs flat→VA conversion)
             uint64_t clicked_file_offset = heatMapWidget_->GetClickedOffset();
             uint64_t clicked_address = clicked_file_offset;
 
-            if (!useVirtualAddresses) {
+            if (useVirtualAddresses && addressFlattener) {
+                // Convert flat address (crunched space) to virtual address
+                clicked_address = addressFlattener->FlatToVirtual(clicked_file_offset);
+            } else if (!useVirtualAddresses) {
                 // Convert file offset back to physical address
                 uint64_t ramBase = 0x40000000;
                 if (memoryMapper && !memoryMapper->GetRegions().empty()) {
