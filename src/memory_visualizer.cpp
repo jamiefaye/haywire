@@ -3295,6 +3295,9 @@ void MemoryVisualizer::LoadMemoryMap(const std::vector<GuestMemoryRegion>& regio
         // Build PA lookup table for fast flat->PA translation
         if (viewportTranslator && targetPid > 0) {
             addressFlattener->EnableLazyPALookup(viewportTranslator.get(), targetPid, ptes);
+
+            // Start PTE patrol thread (1 Hz background scan for mapping changes)
+            addressFlattener->StartPTEPatrol(1);
         }
 
         // Update change detector to use VA mode (now that flattener has regions built)
