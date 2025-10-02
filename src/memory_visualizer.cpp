@@ -2115,7 +2115,8 @@ void MemoryVisualizer::DrawMagnifier() {
     // Set window size dynamically based on hex state
     // Don't use ImGuiCond - set it every frame to ensure proper sizing
     float baseHeight = 520.0f; // Enough for search bar, controls, magnified area, and bottom info
-    float windowHeight = showHexData ? baseHeight + 250.0f : baseHeight;
+    float hexDataHeight = 130.0f; // Height needed for 3 lines of hex + separator + format info
+    float windowHeight = showHexData ? baseHeight + hexDataHeight : baseHeight;
     ImGui::SetNextWindowSize(ImVec2(550, windowHeight));
     ImGui::SetNextWindowSizeConstraints(ImVec2(400, windowHeight), ImVec2(FLT_MAX, windowHeight));
 
