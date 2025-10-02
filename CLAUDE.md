@@ -529,14 +529,16 @@ class MemoryMapping {
 ## Contact/Issues
 
 File issues in the GitHub repository. This is a research project - use at your own risk!
-## Recent Progress (October 1, 2025)
+## Recent Progress (October 2, 2025)
 
-### Instruction Disassembly Infrastructure
+### Instruction Disassembly and Visualization
 
 **Capstone Integration:**
 - Enabled Capstone 5.0.6 disassembler library
 - Works on macOS (Homebrew) and Ubuntu ARM64 (`libcapstone-dev`)
 - Proper CMake integration with library path detection
+- Currently using CS_OPT_DETAIL OFF for basic disassembly
+- Could enable detailed mode for branch target extraction, register info, etc.
 
 **InstructionRenderer Class:**
 - Disassembles ARM64 instructions (32-bit, 4-byte aligned)
@@ -544,24 +546,66 @@ File issues in the GitHub repository. This is a research project - use at your o
 - Graceful garbage handling - shows `.word HEXVALUE` for non-code data
 - Color coding: Blue (move), Yellow (arithmetic), Green (load), Orange (store), Red (branch), Brown (data)
 - Icon glyphs: 4×6 pixel bitmaps for each category
+- UDF instructions (0x00000000) rendered nearly invisible (0x0A0A0A dark gray)
 
-**Design for Compact View:**
-- 40px × 8px per instruction
+**Compact View (40px × 8px):**
+- 40px × 8px per instruction (perfect for column mode)
 - Layout: [6px colored icon][34px operands in 3×5 font]
+- Recommended viewing: 40px column width + gap pixels for nice ARM64 code display
 - Data regions show as `.word 12345678` instead of `???`
 - Brown checkerboard icon distinguishes data from code
 
-**Not Yet Integrated:**
-- Still need to add `INSTRUCTION_ARM64` to PixelFormat enum
-- Need to implement rendering in memory_renderer.cpp
-- Need to add format selector UI
-- Need 3×5 (or 5×7) bitmap font for operand display
+**Format Menu Updates:**
+- Added ARM64 Insn to both main visualizer and bitmap viewer format menus
+- Cleaned up format labels to match web version (RGB instead of RGB888, etc.)
+- Split variants shown as pipe-separated (R|G|B|A, B|G|R|A, etc.)
+- Removed old "Split" checkbox in favor of explicit split format options
 
-**Future: Instruction Visualization:**
-- Multiple scales planned: detailed (120px), gist (60px), compact (40px)
+### Magnifier/Inspector Window Improvements
+
+**Layout Optimization:**
+- Removed help text section at bottom for more magnification space
+- Hex data toggle moved to top control bar (next to Lock checkbox)
+- Compact "Hex" checkbox instead of full-width button at bottom
+- Window properly sizes without scrollbars (520px base, +50px with hex)
+- Fixed: Window now resizable vertically (was locked by constraints)
+
+**Hex Data Section:**
+- Collapsible section controlled by "Hex" checkbox
+- Starts collapsed by default (max space for magnification)
+- When enabled, expands window by 50px (tight fit, no wasted space)
+- Shows 3 lines of hex dump (above, current, below) with ASCII
+- Format-specific value display (RGB, RGBA, BGR, etc.)
+
+**User Experience:**
+- No scrollbars - everything visible from start
+- Hex data accessible via single checkbox click
+- Window grows/shrinks smoothly when hex toggled
+- User can manually resize window at any time
+
+### Performance and Build Options
+
+**Build Modes:**
+- Debug mode: Standard development build with full debug symbols
+- RelWithDebInfo: Full optimizations (-O2/-O3) + debug symbols (~15% FPS boost)
+- Release: Maximum optimization, no debug info
+- Easy switching: `cmake -DCMAKE_BUILD_TYPE=<mode> build && cmake --build build`
+
+### Future Considerations
+
+**Light Theme:**
+- Would change GUI chrome only (windows, buttons, text)
+- Memory rendering stays same (0x00=black, 0xFF=white pixel values)
+- Requires color tweaking for status bars, autocorrelation, etc.
+- ImGui makes basic toggle easy, but custom colors need adjustment
+
+**Advanced Disassembly Features (Future):**
+- Branch target extraction (enable CS_OPT_DETAIL for operand details)
+- Symbol table integration (would need ELF/Mach-O parser like LIEF)
+- Control flow arrows (breaks current rendering model, would need overlay layer)
+- Multiple scales: detailed (120px), gist (60px), current compact (40px)
 - Pattern recognition via color strips showing instruction flow
-- Tooltip for full details on hover
-- Works with column mode and crunched memory
+- For now: Color-coded compact view works well for scanning code patterns
 
 ### Autocorrelation Improvements
 
