@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <cstdint>
 #include <algorithm>
+#include <memory>
 #include "guest_agent.h"
 #include "pa_lookup_cache.h"
 
@@ -18,12 +19,13 @@ public:
         uint64_t flatStart;      // Position in flattened space
         uint64_t flatEnd;
         std::string name;
-        
+
         uint64_t Size() const { return virtualEnd - virtualStart; }
         uint64_t FlatSize() const { return flatEnd - flatStart; }
     };
-    
+
     AddressSpaceFlattener();
+    ~AddressSpaceFlattener();
     
     // Build flattened map from memory regions
     void BuildFromRegions(const std::vector<GuestMemoryRegion>& regions);
@@ -61,6 +63,21 @@ public:
     void EnableLazyPALookup(class KernelViewportTranslator* translator, int pid,
                            const std::unordered_map<uint64_t, uint64_t>* ptes = nullptr);
 
+    // Start PTE patrol thread (1 Hz background scan for mapping changes)
+    void StartPTEPatrol(int patrolHz = 1);
+
+    // Stop PTE patrol thread
+    void StopPTEPatrol();
+
+    // Get PTE patrol statistics
+    struct PTEPatrolStats {
+        uint64_t scanCount;
+        uint64_t newMappings;
+        uint64_t unmappings;
+        uint64_t lastScanDurationMs;
+    };
+    PTEPatrolStats GetPTEPatrolStats() const;
+
     // Generate navigation hints
     struct NavHint {
         uint64_t flatAddr;
@@ -81,6 +98,9 @@ private:
     // Lazy translation support
     mutable class KernelViewportTranslator* lazyTranslator;
     mutable int lazyPid;
+
+    // PTE patrol thread
+    std::unique_ptr<class PTEWalker> pteWalker;
 
     // Binary search helper
     const MappedRegion* FindRegion(uint64_t addr, bool useFlat) const;

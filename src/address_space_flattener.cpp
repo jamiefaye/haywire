@@ -1,5 +1,6 @@
 #include "address_space_flattener.h"
 #include "kernel_viewport_translator.h"
+#include "pte_walker.h"
 #include "imgui.h"
 #include <sstream>
 #include <iomanip>
@@ -9,6 +10,10 @@ namespace Haywire {
 
 AddressSpaceFlattener::AddressSpaceFlattener()
     : totalFlatSize(0), totalMappedSize(0), lazyTranslator(nullptr), lazyPid(0) {
+}
+
+AddressSpaceFlattener::~AddressSpaceFlattener() {
+    StopPTEPatrol();
 }
 
 void AddressSpaceFlattener::BuildFromRegions(const std::vector<GuestMemoryRegion>& inputRegions) {
@@ -244,7 +249,43 @@ uint64_t AddressSpaceFlattener::GetPhysicalAddress(uint64_t flatAddr) const {
     return 0;  // Unable to translate
 }
 
-std::vector<AddressSpaceFlattener::NavHint> 
+void AddressSpaceFlattener::StartPTEPatrol(int patrolHz) {
+    if (!lazyTranslator || lazyPid <= 0) {
+        std::cerr << "Cannot start PTE patrol: translator not initialized\n";
+        return;
+    }
+
+    if (!pteWalker) {
+        pteWalker = std::make_unique<PTEWalker>();
+    }
+
+    if (pteWalker->IsRunning()) {
+        std::cerr << "PTE patrol already running\n";
+        return;
+    }
+
+    pteWalker->Start(&paCache, this, lazyTranslator, lazyPid, patrolHz);
+}
+
+void AddressSpaceFlattener::StopPTEPatrol() {
+    if (pteWalker) {
+        pteWalker->Stop();
+    }
+}
+
+AddressSpaceFlattener::PTEPatrolStats AddressSpaceFlattener::GetPTEPatrolStats() const {
+    PTEPatrolStats stats = {0, 0, 0, 0};
+    if (pteWalker) {
+        auto walkerStats = pteWalker->GetStats();
+        stats.scanCount = walkerStats.scanCount;
+        stats.newMappings = walkerStats.newMappings;
+        stats.unmappings = walkerStats.unmappings;
+        stats.lastScanDurationMs = walkerStats.lastScanDurationMs;
+    }
+    return stats;
+}
+
+std::vector<AddressSpaceFlattener::NavHint>
 AddressSpaceFlattener::GetNavigationHints() const {
     std::vector<NavHint> hints;
     

@@ -90,6 +90,7 @@ add_executable(haywire
     src/kernel_viewport_translator.cpp
     src/process_memory_map.cpp
     src/address_space_flattener.cpp
+    src/pte_walker.cpp
     src/pagemap_cache.cpp
     src/crunched_memory_reader.cpp
     src/memory_visualizer.cpp
