@@ -2496,12 +2496,14 @@ void MemoryVisualizer::DrawMagnifier() {
     ImGui::Text("Center: (%d, %d)", srcX, srcY);
     ImGui::SameLine(150);
     ImGui::Text("Address: 0x%llx", addr);
-    
-    // Show hex data for three lines (above, current, below)
-    ImGui::Separator();
-    ImGui::Text("Hex Data:");
 
-    if (!currentMemory.data.empty()) {
+    // Collapsible hex data section
+    ImGui::Separator();
+    static bool showHexData = false;
+    if (ImGui::CollapsingHeader("Hex Data", showHexData ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+        showHexData = true;
+
+        if (!currentMemory.data.empty()) {
         // Display 16 bytes per line, centered on current position
         const int bytesToShow = 16;
         const int halfBytes = bytesToShow / 2;
@@ -2608,18 +2610,16 @@ void MemoryVisualizer::DrawMagnifier() {
                 }
             }
         }
-    }
-    
-    ImGui::Separator();
-    
-    // Get the pixel value at center (keep existing format-specific display)
-    if (!currentMemory.data.empty()) {
+
+        ImGui::Separator();
+
+        // Get the pixel value at center (keep existing format-specific display)
         size_t offset = (srcY * viewport.stride + srcX) * viewport.format.bytesPerPixel;
         if (offset < currentMemory.data.size()) {
             switch (viewport.format.type) {
                 case PixelFormat::RGB888:
                     if (offset + 2 < currentMemory.data.size()) {
-                        ImGui::Text("RGB: %02X %02X %02X", 
+                        ImGui::Text("RGB: %02X %02X %02X",
                                    currentMemory.data[offset],
                                    currentMemory.data[offset + 1],
                                    currentMemory.data[offset + 2]);
@@ -2636,7 +2636,7 @@ void MemoryVisualizer::DrawMagnifier() {
                     break;
                 case PixelFormat::BGR888:
                     if (offset + 2 < currentMemory.data.size()) {
-                        ImGui::Text("BGR: %02X %02X %02X", 
+                        ImGui::Text("BGR: %02X %02X %02X",
                                    currentMemory.data[offset],
                                    currentMemory.data[offset + 1],
                                    currentMemory.data[offset + 2]);
@@ -2680,7 +2680,8 @@ void MemoryVisualizer::DrawMagnifier() {
                     break;
             }
         }
-    }
+        }  // End of !currentMemory.data.empty() check
+    }  // End of CollapsingHeader
 
     ImGui::End();
 }
