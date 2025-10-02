@@ -2210,10 +2210,15 @@ void MemoryVisualizer::DrawMagnifier() {
     }
     
     ImGui::Separator();
-    
+
+    // Static state for hex data visibility
+    static bool showHexData = false;
+
     // Calculate magnified area size first to know source pixels
     ImVec2 contentRegion = ImGui::GetContentRegionAvail();
-    float magnifiedAreaHeight = contentRegion.y - 250; // Leave space for hex display
+    // Reserve space at bottom for the hex toggle button and data if expanded
+    float hexDataHeight = showHexData ? 250.0f : 30.0f; // 30px for button, 250px when expanded
+    float magnifiedAreaHeight = contentRegion.y - hexDataHeight;
     float magnifiedAreaWidth = contentRegion.x - 10;
     magnifiedAreaHeight = std::max(magnifiedAreaHeight, 100.0f); // Minimum height
     magnifiedAreaWidth = std::max(magnifiedAreaWidth, 100.0f); // Minimum width
@@ -2490,18 +2495,22 @@ void MemoryVisualizer::DrawMagnifier() {
     
     // Make space for the drawn content
     ImGui::Dummy(ImVec2(magnifiedAreaWidth, magnifiedAreaHeight));
-    
-    // Show info about center pixel and surrounding hex data
+
+    // Show info about center pixel
     uint64_t addr = GetAddressAt(srcX, srcY);
     ImGui::Text("Center: (%d, %d)", srcX, srcY);
     ImGui::SameLine(150);
     ImGui::Text("Address: 0x%llx", addr);
 
-    // Collapsible hex data section
+    // Hex data toggle button at bottom
     ImGui::Separator();
-    static bool showHexData = false;
-    if (ImGui::CollapsingHeader("Hex Data", showHexData ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
-        showHexData = true;
+    if (ImGui::Button(showHexData ? "Hide Hex Data" : "Show Hex Data", ImVec2(-1, 0))) {
+        showHexData = !showHexData;
+    }
+
+    // Hex data section (only shown when toggled on)
+    if (showHexData) {
+        ImGui::Separator();
 
         if (!currentMemory.data.empty()) {
         // Display 16 bytes per line, centered on current position
@@ -2681,7 +2690,7 @@ void MemoryVisualizer::DrawMagnifier() {
             }
         }
         }  // End of !currentMemory.data.empty() check
-    }  // End of CollapsingHeader
+    }  // End of showHexData
 
     ImGui::End();
 }
