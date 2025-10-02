@@ -194,8 +194,13 @@ const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
 
         uint64_t physAddr = renderPACache[pageIdx];
 
+        // Check for cached unmapped page (marked as bad)
+        if (physAddr == PA_UNMAPPED) {
+            return nullptr;  // Previously determined to be unmapped, skip immediately
+        }
+
         // Lazy translation: translate on first access
-        if (physAddr == 0) {
+        if (physAddr == PA_NOT_TRANSLATED) {
             // Find which region this flat address belongs to
             const auto* region = flattener->GetRegionForFlat(flatAddress);
             if (!region) {
@@ -210,14 +215,14 @@ const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
             uint64_t pageVA = (va / PAGE_SIZE) * PAGE_SIZE;
             physAddr = translator->TranslateAddress(targetPid, pageVA);
 
-            // Cache the result (even if 0, to avoid repeated failed translations)
+            // Cache the result - mark unmapped pages with sentinel
             if (physAddr != 0) {
                 renderPACache[pageIdx] = physAddr;
+            } else {
+                // Mark as unmapped so we skip it immediately next time
+                renderPACache[pageIdx] = PA_UNMAPPED;
+                return nullptr;
             }
-        }
-
-        if (physAddr == 0) {
-            return nullptr;  // Page not mapped
         }
 
         // Add offset within page
