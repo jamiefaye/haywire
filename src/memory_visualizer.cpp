@@ -2214,10 +2214,9 @@ void MemoryVisualizer::DrawMagnifier() {
     // Static state for hex data visibility
     static bool showHexData = false;
 
-    // Calculate magnified area size - use most of available space but leave room for button
+    // Calculate magnified area size - use available space
     ImVec2 contentRegion = ImGui::GetContentRegionAvail();
-    // Reserve space at bottom for the hex toggle button (always visible)
-    float magnifiedAreaHeight = contentRegion.y - 30.0f; // 30px for button at bottom
+    float magnifiedAreaHeight = contentRegion.y;
     float magnifiedAreaWidth = contentRegion.x - 10;
     magnifiedAreaHeight = std::max(magnifiedAreaHeight, 100.0f); // Minimum height
     magnifiedAreaWidth = std::max(magnifiedAreaWidth, 100.0f); // Minimum width
@@ -2273,7 +2272,13 @@ void MemoryVisualizer::DrawMagnifier() {
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Lock position and use WASD or Arrow keys to navigate");
     }
-    
+
+    ImGui::SameLine();
+    ImGui::Checkbox("Hex", &showHexData);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Show hex data at bottom");
+    }
+
     // Track if user has manually navigated away from search result
     // (userNavigated is declared above near the Find button)
     
@@ -2501,13 +2506,7 @@ void MemoryVisualizer::DrawMagnifier() {
     ImGui::SameLine(150);
     ImGui::Text("Address: 0x%llx", addr);
 
-    // Hex data toggle button at bottom
-    ImGui::Separator();
-    if (ImGui::Button(showHexData ? "Hide Hex Data" : "Show Hex Data", ImVec2(-1, 0))) {
-        showHexData = !showHexData;
-    }
-
-    // Hex data section (only shown when toggled on)
+    // Hex data section (only shown when Hex checkbox is enabled)
     if (showHexData) {
         ImGui::Separator();
 
