@@ -10,9 +10,9 @@ namespace Haywire {
 // Lightweight micro-benchmarking timer with min/avg/max stats
 class MicroTimer {
 public:
-    MicroTimer(const std::string& name, int reportEveryN = 1000)
-        : name_(name), reportInterval_(reportEveryN), count_(0),
-          totalNs_(0), minNs_(1e18), maxNs_(0) {}
+    MicroTimer(const std::string& name, int reportEveryN = 1000, bool resetAfterReport = false)
+        : name_(name), reportInterval_(reportEveryN), resetAfterReport_(resetAfterReport),
+          count_(0), totalNs_(0), minNs_(1e18), maxNs_(0) {}
 
     // Start timing an operation
     void Start() {
@@ -32,6 +32,9 @@ public:
         // Report stats periodically
         if (count_ % reportInterval_ == 0) {
             Report();
+            if (resetAfterReport_) {
+                Reset();
+            }
         }
     }
 
@@ -58,6 +61,7 @@ public:
 private:
     std::string name_;
     int reportInterval_;
+    bool resetAfterReport_;
     int count_;
     int64_t totalNs_;
     int64_t minNs_;
@@ -92,10 +96,10 @@ private:
 } // namespace Haywire
 
 // Convenience macros for easy enable/disable
-#define MICRO_TIMER_ENABLE 0  // Set to 1 to enable timing
+#define MICRO_TIMER_ENABLE 1  // Set to 1 to enable timing
 
 #if MICRO_TIMER_ENABLE
-    #define MICRO_TIMER_DECL(name, interval) static Haywire::MicroTimer name(#name, interval)
+    #define MICRO_TIMER_DECL(name, interval) static Haywire::MicroTimer name(#name, interval, true)
     #define MICRO_TIMER_START(timer) timer.Start()
     #define MICRO_TIMER_STOP(timer) timer.Stop()
     #define MICRO_TIMER_SCOPE(timer) Haywire::ScopedTimer _scoped_##timer(timer)

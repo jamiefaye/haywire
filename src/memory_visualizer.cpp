@@ -231,13 +231,33 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                     addr = clampedAddr;
                     viewport.baseAddress = addr;  // Update viewport to stay in bounds
                 }
-                size_t bytesRead = crunchedReader->ReadCrunchedMemory(addr, size, buffer);
+
+                // Use GetDirectPointer for fast direct access (bypasses slow ReadCrunchedMemory)
+                buffer.resize(size);  // Allocate once
+                size_t bytesRead = 0;
+
+                // Read in page-sized chunks using GetDirectPointer
+                const size_t pageSize = 4096;
+                for (size_t offset = 0; offset < size; offset += pageSize) {
+                    size_t chunkSize = std::min(pageSize, size - offset);
+                    const uint8_t* ptr = crunchedReader->GetDirectPointer(addr + offset);
+
+                    if (ptr) {
+                        // Direct memcpy from mmap'd memory (fast!)
+                        std::memcpy(buffer.data() + offset, ptr, chunkSize);
+                        bytesRead += chunkSize;
+                    } else {
+                        // Unmapped page - fill with zeros
+                        std::memset(buffer.data() + offset, 0, chunkSize);
+                    }
+                }
+
                 readSuccess = (bytesRead > 0);
                 if (!readSuccess) {
                     static int failCount = 0;
                     if (++failCount % 10 == 0) {
-                        std::cerr << "CrunchedMemoryReader failed at flat addr 0x" 
-                                  << std::hex << addr << std::dec 
+                        std::cerr << "GetDirectPointer failed at flat addr 0x"
+                                  << std::hex << addr << std::dec
                                   << " (fail #" << failCount << ")" << std::endl;
                     }
                 }
