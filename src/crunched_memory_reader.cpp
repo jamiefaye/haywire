@@ -221,8 +221,11 @@ const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
         // Lazy translation: translate on first access
         if (physAddr == 0) {
             // VA is already cached from initialization (O(1) lookup!)
-            uint64_t pageVA = (entry.va / PAGE_SIZE) * PAGE_SIZE;
-            physAddr = translator->TranslateAddress(targetPid, pageVA);
+            // Call kernel discovery directly to bypass mutex-protected translator cache
+            auto kernelDiscovery = translator->GetKernelDiscovery();
+            if (kernelDiscovery) {
+                physAddr = kernelDiscovery->TranslateVA(entry.va);
+            }
 
             // Cache the result - mark unmapped pages with flag
             if (physAddr != 0) {
