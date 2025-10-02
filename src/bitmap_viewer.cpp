@@ -195,66 +195,79 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         ImGui::SameLine(100);
         ImGui::SetNextItemWidth(80);
         
-        // Build format list with separator and split option
-        const char* formats[] = { 
-            "RGB888", "RGBA8888", "BGR888", "BGRA8888", 
-            "ARGB8888", "ABGR8888", "RGB565", "GRAYSCALE", 
-            "BINARY", "HEX", "CHAR",
-            "---",  // Separator
-            viewer.splitComponents ? "[X] Split" : "[ ] Split"
+        // Build format list matching web version
+        const char* formats[] = {
+            "Grayscale", "RGB565", "RGB", "RGBA",
+            "BGR", "BGRA", "ARGB", "ABGR",
+            "Binary", "Hex Pixel", "Char 8-bit", "ARM64 Insn",
+            "R|G|B|A", "B|G|R|A", "A|R|G|B", "A|B|G|R"
         };
         
-        // Dynamically set height to show all items based on array size
+        // Map format index and split state to menu item index
+        int menuIndex;
+        if (viewer.splitComponents && viewer.formatIndex >= 3 && viewer.formatIndex <= 7) {
+            if (viewer.formatIndex == 3) menuIndex = 12;      // RGBA -> R|G|B|A
+            else if (viewer.formatIndex == 5) menuIndex = 13; // BGRA -> B|G|R|A
+            else if (viewer.formatIndex == 6) menuIndex = 14; // ARGB -> A|R|G|B
+            else if (viewer.formatIndex == 7) menuIndex = 15; // ABGR -> A|B|G|R
+            else menuIndex = viewer.formatIndex;
+        } else {
+            menuIndex = viewer.formatIndex;
+        }
+
+        // Dynamically set height to show all items
         int numFormats = IM_ARRAYSIZE(formats);
         float itemHeight = ImGui::GetTextLineHeightWithSpacing();
-        float maxHeight = itemHeight * (numFormats + 0.5f); // All items plus a bit of padding
+        float maxHeight = itemHeight * (numFormats + 0.5f);
         ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, maxHeight));
-        
-        // Custom combo to handle the split option specially
-        int displayIndex = viewer.formatIndex;
-        if (ImGui::BeginCombo("##Format", formats[displayIndex])) {
+
+        if (ImGui::BeginCombo("##Format", formats[menuIndex])) {
             for (int i = 0; i < numFormats; i++) {
-                if (i == 11) { // Separator line
-                    ImGui::Separator();
-                    continue;
-                }
-                
-                bool isSelected = (i == displayIndex);
+                bool isSelected = (i == menuIndex);
                 if (ImGui::Selectable(formats[i], isSelected)) {
-                    if (i == 12) { // Split toggle
-                        viewer.splitComponents = !viewer.splitComponents;
-                        viewer.needsUpdate = true;
-                    } else if (i < 11) { // Regular format selection
+                    // Handle split variants (12-15)
+                    if (i >= 12) {
+                        viewer.splitComponents = true;
+                        // Map split menu items back to base format
+                        if (i == 12) viewer.formatIndex = 3;      // R|G|B|A -> RGBA
+                        else if (i == 13) viewer.formatIndex = 5; // B|G|R|A -> BGRA
+                        else if (i == 14) viewer.formatIndex = 6; // A|R|G|B -> ARGB
+                        else if (i == 15) viewer.formatIndex = 7; // A|B|G|R -> ABGR
+                    } else {
+                        // Regular formats
+                        viewer.splitComponents = false;
                         viewer.formatIndex = i;
-                        // Map combo index to PixelFormat::Type
-                        PixelFormat::Type newType;
-                        switch(i) {
-                            case 0: newType = PixelFormat::RGB888; break;
-                            case 1: newType = PixelFormat::RGBA8888; break;
-                            case 2: newType = PixelFormat::BGR888; break;
-                            case 3: newType = PixelFormat::BGRA8888; break;
-                            case 4: newType = PixelFormat::ARGB8888; break;
-                            case 5: newType = PixelFormat::ABGR8888; break;
-                            case 6: newType = PixelFormat::RGB565; break;
-                            case 7: newType = PixelFormat::GRAYSCALE; break;
-                            case 8: newType = PixelFormat::BINARY; break;
-                            case 9: newType = PixelFormat::HEX_PIXEL; break;
-                            case 10: newType = PixelFormat::CHAR_8BIT; break;
-                            default: newType = PixelFormat::RGB888; break;
-                        }
-                        viewer.format = PixelFormat(newType);
-                        // Update stride when format changes
-                        // Update stride based on new format
-                        if (viewer.format.type == PixelFormat::BINARY) {
-                            viewer.stride = (viewer.memWidth + 7) / 8;  // Binary: bits to bytes  
-                        } else {
-                            viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
-                        }
-                        viewer.needsUpdate = true;
                     }
+
+                    // Map index to PixelFormat::Type (order: Grayscale, RGB565, RGB, RGBA, BGR, BGRA, ARGB, ABGR, Binary, Hex, Char, ARM64)
+                    PixelFormat::Type newType;
+                    switch(viewer.formatIndex) {
+                        case 0: newType = PixelFormat::GRAYSCALE; break;
+                        case 1: newType = PixelFormat::RGB565; break;
+                        case 2: newType = PixelFormat::RGB888; break;
+                        case 3: newType = PixelFormat::RGBA8888; break;
+                        case 4: newType = PixelFormat::BGR888; break;
+                        case 5: newType = PixelFormat::BGRA8888; break;
+                        case 6: newType = PixelFormat::ARGB8888; break;
+                        case 7: newType = PixelFormat::ABGR8888; break;
+                        case 8: newType = PixelFormat::BINARY; break;
+                        case 9: newType = PixelFormat::HEX_PIXEL; break;
+                        case 10: newType = PixelFormat::CHAR_8BIT; break;
+                        case 11: newType = PixelFormat::INSTRUCTION_ARM64; break;
+                        default: newType = PixelFormat::GRAYSCALE; break;
+                    }
+                    viewer.format = PixelFormat(newType);
+
+                    // Update stride based on new format
+                    if (viewer.format.type == PixelFormat::BINARY) {
+                        viewer.stride = (viewer.memWidth + 7) / 8;  // Binary: bits to bytes
+                    } else {
+                        viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+                    }
+                    viewer.needsUpdate = true;
                 }
-                
-                if (isSelected && i < 11) {
+
+                if (isSelected) {
                     ImGui::SetItemDefaultFocus();
                 }
             }
@@ -320,61 +333,73 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                 }
             }
             
-            // Format selector in popup with split option
+            // Format selector in popup
             ImGui::Separator();
-            const char* formats[] = { 
-                "RGB888", "RGBA8888", "BGR888", "BGRA8888", 
-                "ARGB8888", "ABGR8888", "RGB565", "Grayscale", 
-                "Binary", "Hex Pixel", "Char 8-bit",
-                "---",  // Separator
-                viewer.splitComponents ? "[X] Split" : "[ ] Split"
+            const char* popupFormats[] = {
+                "Grayscale", "RGB565", "RGB", "RGBA",
+                "BGR", "BGRA", "ARGB", "ABGR",
+                "Binary", "Hex Pixel", "Char 8-bit", "ARM64 Insn",
+                "R|G|B|A", "B|G|R|A", "A|R|G|B", "A|B|G|R"
             };
-            
-            // Custom combo to handle the split option specially
-            int displayIndex = viewer.formatIndex;
+
+            // Map format index and split state to menu item index
+            int popupMenuIndex;
+            if (viewer.splitComponents && viewer.formatIndex >= 3 && viewer.formatIndex <= 7) {
+                if (viewer.formatIndex == 3) popupMenuIndex = 12;      // RGBA -> R|G|B|A
+                else if (viewer.formatIndex == 5) popupMenuIndex = 13; // BGRA -> B|G|R|A
+                else if (viewer.formatIndex == 6) popupMenuIndex = 14; // ARGB -> A|R|G|B
+                else if (viewer.formatIndex == 7) popupMenuIndex = 15; // ABGR -> A|B|G|R
+                else popupMenuIndex = viewer.formatIndex;
+            } else {
+                popupMenuIndex = viewer.formatIndex;
+            }
+
             ImGui::SetNextItemWidth(120);
-            if (ImGui::BeginCombo("##Format", formats[displayIndex])) {
-                for (int i = 0; i < IM_ARRAYSIZE(formats); i++) {
-                    if (i == 11) { // Separator line
-                        ImGui::Separator();
-                        continue;
-                    }
-                    
-                    bool isSelected = (i == displayIndex);
-                    if (ImGui::Selectable(formats[i], isSelected)) {
-                        if (i == 12) { // Split toggle
-                            viewer.splitComponents = !viewer.splitComponents;
-                            viewer.needsUpdate = true;
-                        } else if (i < 11) { // Regular format selection
+            if (ImGui::BeginCombo("##FormatPopup", popupFormats[popupMenuIndex])) {
+                for (int i = 0; i < IM_ARRAYSIZE(popupFormats); i++) {
+                    bool isSelected = (i == popupMenuIndex);
+                    if (ImGui::Selectable(popupFormats[i], isSelected)) {
+                        // Handle split variants (12-15)
+                        if (i >= 12) {
+                            viewer.splitComponents = true;
+                            if (i == 12) viewer.formatIndex = 3;      // R|G|B|A -> RGBA
+                            else if (i == 13) viewer.formatIndex = 5; // B|G|R|A -> BGRA
+                            else if (i == 14) viewer.formatIndex = 6; // A|R|G|B -> ARGB
+                            else if (i == 15) viewer.formatIndex = 7; // A|B|G|R -> ABGR
+                        } else {
+                            viewer.splitComponents = false;
                             viewer.formatIndex = i;
-                            // Map combo index to PixelFormat::Type
-                            PixelFormat::Type newType;
-                            switch(viewer.formatIndex) {
-                                case 0: newType = PixelFormat::RGB888; break;
-                                case 1: newType = PixelFormat::RGBA8888; break;
-                                case 2: newType = PixelFormat::BGR888; break;
-                                case 3: newType = PixelFormat::BGRA8888; break;
-                                case 4: newType = PixelFormat::ARGB8888; break;
-                                case 5: newType = PixelFormat::ABGR8888; break;
-                                case 6: newType = PixelFormat::RGB565; break;
-                                case 7: newType = PixelFormat::GRAYSCALE; break;
-                                case 8: newType = PixelFormat::BINARY; break;
-                                case 9: newType = PixelFormat::HEX_PIXEL; break;
-                                case 10: newType = PixelFormat::CHAR_8BIT; break;
-                                default: newType = PixelFormat::RGB888; break;
-                            }
-                            viewer.format = PixelFormat(newType);
-                            // Update stride based on new format
-                            if (viewer.format.type == PixelFormat::BINARY) {
-                                viewer.stride = (viewer.memWidth + 7) / 8;  // Binary: bits to bytes
-                            } else {
-                                viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
-                            }
-                            viewer.needsUpdate = true;
                         }
+
+                        // Map to PixelFormat::Type
+                        PixelFormat::Type newType;
+                        switch(viewer.formatIndex) {
+                            case 0: newType = PixelFormat::GRAYSCALE; break;
+                            case 1: newType = PixelFormat::RGB565; break;
+                            case 2: newType = PixelFormat::RGB888; break;
+                            case 3: newType = PixelFormat::RGBA8888; break;
+                            case 4: newType = PixelFormat::BGR888; break;
+                            case 5: newType = PixelFormat::BGRA8888; break;
+                            case 6: newType = PixelFormat::ARGB8888; break;
+                            case 7: newType = PixelFormat::ABGR8888; break;
+                            case 8: newType = PixelFormat::BINARY; break;
+                            case 9: newType = PixelFormat::HEX_PIXEL; break;
+                            case 10: newType = PixelFormat::CHAR_8BIT; break;
+                            case 11: newType = PixelFormat::INSTRUCTION_ARM64; break;
+                            default: newType = PixelFormat::GRAYSCALE; break;
+                        }
+                        viewer.format = PixelFormat(newType);
+
+                        // Update stride based on new format
+                        if (viewer.format.type == PixelFormat::BINARY) {
+                            viewer.stride = (viewer.memWidth + 7) / 8;
+                        } else {
+                            viewer.stride = viewer.memWidth * viewer.format.bytesPerPixel;
+                        }
+                        viewer.needsUpdate = true;
                     }
-                    
-                    if (isSelected && i < 11) {
+
+                    if (isSelected) {
                         ImGui::SetItemDefaultFocus();
                     }
                 }

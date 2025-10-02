@@ -977,41 +977,56 @@ void MemoryVisualizer::DrawControls() {
     
     ImGui::SameLine();
     
-    // Build format list with separator and split option
-    const char* formats[] = { "RGB888", "RGBA8888", "BGR888", "BGRA8888",
-                              "ARGB8888", "ABGR8888", "RGB565", "Grayscale", "Binary",
-                              "Hex Pixel", "Char 8-bit", "ARM64 Insn",
-                              "---",  // Separator
-                              splitComponents ? "[X] Split" : "[ ] Split" };
+    // Build format list matching web version
+    const char* formats[] = { "Grayscale", "RGB565", "RGB", "RGBA",
+                              "BGR", "BGRA", "ARGB", "ABGR",
+                              "Binary", "Hex Pixel", "Char 8-bit", "ARM64 Insn",
+                              "R|G|B|A", "B|G|R|A", "A|R|G|B", "A|B|G|R" };
     ImGui::PushItemWidth(120);
     
-    // Dynamically set height to show all items based on array size
+    // Map format index and split state to menu item index
+    // Indices 0-11: non-split formats, 12-15: split RGBA variants
+    int menuIndex;
+    if (splitComponents && pixelFormatIndex >= 1 && pixelFormatIndex <= 4) {
+        // Split RGBA formats: RGBA(3)->12, BGRA(5)->13, ARGB(6)->14, ABGR(7)->15
+        // But our indices are: RGB(2)->skip, RGBA(3)->12, BGR(4)->skip, BGRA(5)->13
+        if (pixelFormatIndex == 3) menuIndex = 12;      // RGBA -> R|G|B|A
+        else if (pixelFormatIndex == 5) menuIndex = 13; // BGRA -> B|G|R|A
+        else if (pixelFormatIndex == 6) menuIndex = 14; // ARGB -> A|R|G|B
+        else if (pixelFormatIndex == 7) menuIndex = 15; // ABGR -> A|B|G|R
+        else menuIndex = pixelFormatIndex;
+    } else {
+        menuIndex = pixelFormatIndex;
+    }
+
+    // Dynamically set height to show all items
     int numFormats = IM_ARRAYSIZE(formats);
     float itemHeight = ImGui::GetTextLineHeightWithSpacing();
-    float maxHeight = itemHeight * (numFormats + 0.5f); // All items plus a bit of padding
+    float maxHeight = itemHeight * (numFormats + 0.5f);
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, maxHeight));
-    
-    // Custom combo to handle the split option specially
-    if (ImGui::BeginCombo("##Format", formats[pixelFormatIndex])) {
+
+    if (ImGui::BeginCombo("##Format", formats[menuIndex])) {
         for (int i = 0; i < numFormats; i++) {
-            if (i == 12) { // Separator line
-                ImGui::Separator();
-                continue;
-            }
-
-            bool isSelected = (i == pixelFormatIndex);
+            bool isSelected = (i == menuIndex);
             if (ImGui::Selectable(formats[i], isSelected)) {
-                if (i == 13) { // Split toggle
-                    splitComponents = !splitComponents;
-                    needsUpdate = true;
-                } else if (i < 12) { // Regular format selection
+                // Handle split variants (12-15)
+                if (i >= 12) {
+                    splitComponents = true;
+                    // Map split menu items back to base format
+                    if (i == 12) pixelFormatIndex = 3;      // R|G|B|A -> RGBA
+                    else if (i == 13) pixelFormatIndex = 5; // B|G|R|A -> BGRA
+                    else if (i == 14) pixelFormatIndex = 6; // A|R|G|B -> ARGB
+                    else if (i == 15) pixelFormatIndex = 7; // A|B|G|R -> ABGR
+                } else {
+                    // Regular formats
+                    splitComponents = false;
                     pixelFormatIndex = i;
-                    viewport.format = PixelFormat(static_cast<PixelFormat::Type>(pixelFormatIndex));
-                    needsUpdate = true;
                 }
+                viewport.format = PixelFormat(static_cast<PixelFormat::Type>(pixelFormatIndex));
+                needsUpdate = true;
             }
 
-            if (isSelected && i < 12) {
+            if (isSelected) {
                 ImGui::SetItemDefaultFocus();
             }
         }
