@@ -2213,11 +2213,26 @@ void MemoryVisualizer::DrawMagnifier() {
 
     // Static state for hex data visibility
     static bool showHexData = false;
+    static bool prevShowHexData = false;
 
-    // Calculate magnified area size - use available space
+    // Adjust window size when hex data is toggled
+    if (showHexData != prevShowHexData) {
+        ImVec2 currentSize = ImGui::GetWindowSize();
+        if (showHexData) {
+            // Expand window to accommodate hex data
+            ImGui::SetWindowSize(ImVec2(currentSize.x, currentSize.y + 250.0f));
+        } else {
+            // Shrink window when hiding hex data
+            ImGui::SetWindowSize(ImVec2(currentSize.x, currentSize.y - 250.0f));
+        }
+        prevShowHexData = showHexData;
+    }
+
+    // Calculate magnified area size - fixed height for consistency
     ImVec2 contentRegion = ImGui::GetContentRegionAvail();
-    float magnifiedAreaHeight = contentRegion.y;
     float magnifiedAreaWidth = contentRegion.x - 10;
+    // Use most of the content region for magnified area, leaving space for controls and hex toggle
+    float magnifiedAreaHeight = contentRegion.y - 40.0f; // Reserve 40px for bottom info
     magnifiedAreaHeight = std::max(magnifiedAreaHeight, 100.0f); // Minimum height
     magnifiedAreaWidth = std::max(magnifiedAreaWidth, 100.0f); // Minimum width
     
