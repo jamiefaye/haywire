@@ -268,55 +268,66 @@ void MemoryRenderer::RenderInstructionElement(
     uint32_t catColor = InstructionRenderer::GetCategoryColor(info.category);
     const uint8_t* icon = InstructionRenderer::GetCategoryIcon(info.category);
 
-    // Layout: [6px icon][34px operands] = 40px total, 8px high
-    // Draw 4×6 icon in first 6 pixels
+    // Fill entire box with category color as background
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 40; ++x) {
+            dest[y * destStride + x] = catColor;
+        }
+    }
+
+    // Calculate contrasting text color
+    uint32_t textColor = ContrastColor(catColor);
+
+    // Draw 4×6 icon in first 6 pixels (contrasting color on category background)
     for (int y = 0; y < 6; ++y) {
         for (int x = 0; x < 4; ++x) {
             bool pixel = (icon[y] >> (3 - x)) & 1;
-            dest[y * destStride + x] = pixel ? catColor : 0xFF000000;  // Color or black
-        }
-        // Fill remaining 2 pixels of icon area with black
-        dest[y * destStride + 4] = 0xFF000000;
-        dest[y * destStride + 5] = 0xFF000000;
-    }
-
-    // Fill bottom 2 rows of icon area with black
-    for (int y = 6; y < 8; ++y) {
-        for (int x = 0; x < 6; ++x) {
-            dest[y * destStride + x] = 0xFF000000;
+            if (pixel) {
+                dest[y * destStride + x] = textColor;
+            }
+            // Non-pixel areas already filled with catColor above
         }
     }
 
-    // Draw operands text in remaining 34 pixels (starts at x=6)
-    // Use 3×5 font, white text on black background
-    const std::string& text = valid ? info.operands : ".word";
-    uint32_t fgColor = 0xFFFFFFFF;  // White
-    uint32_t bgColor = 0xFF000000;  // Black
+    // Build text: uppercase mnemonic + operands
+    std::string text;
+    if (valid) {
+        // Convert mnemonic to uppercase
+        text = info.mnemonic;
+        for (char& c : text) {
+            c = std::toupper(c);
+        }
+        // Add space and operands if present
+        if (!info.operands.empty()) {
+            text += " " + info.operands;
+        }
+    } else {
+        text = ".word";
+    }
 
-    int textX = 6;
+    // Draw text starting at x=7 (after 6px icon + 1px spacing)
+    int textX = 7;
     for (size_t i = 0; i < text.length() && textX + 3 <= 40; ++i) {
         char c = text[i];
         if (c < 32 || c > 126) c = '?';  // Out of range
 
         const uint8_t* glyph = FONT_3X5[c - 32];
 
-        // Draw 3×5 glyph
+        // Draw 3×5 glyph with contrasting color
         for (int y = 0; y < 5; ++y) {
             for (int x = 0; x < 3; ++x) {
                 bool pixel = glyph[y] & (1 << (2 - x));
-                dest[(y + 1) * destStride + (textX + x)] = pixel ? fgColor : bgColor;
+                if (pixel) {
+                    dest[(y + 1) * destStride + (textX + x)] = textColor;
+                }
+                // Non-pixel areas already filled with catColor above
             }
         }
 
         textX += 4;  // 3px glyph + 1px spacing
     }
 
-    // Fill remaining pixels with black
-    for (int y = 0; y < 8; ++y) {
-        for (int x = textX; x < 40; ++x) {
-            dest[y * destStride + x] = bgColor;
-        }
-    }
+    // Remaining pixels already filled with catColor above
 }
 
 // Render a single binary element (1 byte -> 8x1 pixels)
