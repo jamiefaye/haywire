@@ -827,6 +827,8 @@ void MemoryVisualizer::DrawBitmapViewers() {
 }
 
 void MemoryVisualizer::SetMemoryFileReader(std::shared_ptr<MemoryFileReader> reader) {
+    memoryFileReader_ = reader;
+
     // Needed for bitmap viewers' direct memory access
     if (bitmapViewerManager) {
         bitmapViewerManager->SetMemoryFileReader(reader);
@@ -834,7 +836,9 @@ void MemoryVisualizer::SetMemoryFileReader(std::shared_ptr<MemoryFileReader> rea
 
     // Initialize change detector if not already done
     if (reader && !changeDetector_) {
-        changeDetector_ = std::make_unique<ChangeDetector>(reader.get());
+        const size_t chunkSizes[] = {4096, 16384, 65536, 262144, 1048576};
+        size_t chunkSize = chunkSizes[heatMapChunkSizeIndex];
+        changeDetector_ = std::make_unique<ChangeDetector>(reader.get(), chunkSize);
         heatMapWidget_ = std::make_unique<HeatMapWidget>(changeDetector_.get());
         // Don't auto-start - user can enable via checkbox
     }
@@ -1028,6 +1032,53 @@ void MemoryVisualizer::DrawControls() {
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Show change detection heat map (memory bandwidth: ~256 MB/sec)");
+    }
+
+    // Heat map chunk size control (only show when heat map enabled)
+    if (showHeatMap) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
+        const char* chunkSizeLabels[] = {"4KB", "16KB", "64KB", "256KB", "1MB"};
+        int oldChunkSizeIndex = heatMapChunkSizeIndex;
+        if (ImGui::Combo("##ChunkSize", &heatMapChunkSizeIndex, chunkSizeLabels, 5)) {
+            // Recreate change detector with new chunk size
+            if (changeDetector_ && memoryFileReader_) {
+                bool wasRunning = changeDetector_->IsRunning();
+                changeDetector_->Stop();
+
+                const size_t chunkSizes[] = {4096, 16384, 65536, 262144, 1048576};
+                size_t newChunkSize = chunkSizes[heatMapChunkSizeIndex];
+
+                changeDetector_ = std::make_unique<ChangeDetector>(memoryFileReader_.get(), newChunkSize);
+                heatMapWidget_ = std::make_unique<HeatMapWidget>(changeDetector_.get());
+
+                // Restore VA mode if needed
+                if (useVirtualAddresses && crunchedReader) {
+                    changeDetector_->SetVAMode(true, crunchedReader.get());
+                }
+
+                if (wasRunning) {
+                    changeDetector_->Start();
+                }
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Chunk size for change detection");
+        }
+
+        // Heat map zoom control
+        if (heatMapWidget_) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(70);
+            const char* zoomLabels[] = {"1px", "2px", "4px", "6px", "8px"};
+            int zoomLevel = heatMapWidget_->GetZoomLevel();
+            if (ImGui::Combo("##HeatMapZoom", &zoomLevel, zoomLabels, 5)) {
+                heatMapWidget_->SetZoomLevel(zoomLevel);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Pixels per chunk in heat map");
+            }
+        }
     }
 
     ImGui::SameLine();

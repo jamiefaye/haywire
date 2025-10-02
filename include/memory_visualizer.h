@@ -267,8 +267,10 @@ private:
     std::shared_ptr<MemoryDataSource> memoryDataSource_;
 
     // Change detection and heat map
+    std::shared_ptr<MemoryFileReader> memoryFileReader_;  // Stored for change detector recreation
     std::unique_ptr<ChangeDetector> changeDetector_;
     std::unique_ptr<HeatMapWidget> heatMapWidget_;
+    int heatMapChunkSizeIndex = 2;  // 0=4KB(page), 1=16KB, 2=64KB(default), 3=256KB, 4=1MB
 };
 
 }
