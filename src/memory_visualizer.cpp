@@ -2500,7 +2500,7 @@ void MemoryVisualizer::DrawMagnifier() {
     // Show hex data for three lines (above, current, below)
     ImGui::Separator();
     ImGui::Text("Hex Data:");
-    
+
     if (!currentMemory.data.empty()) {
         // Display 16 bytes per line, centered on current position
         const int bytesToShow = 16;
@@ -2681,11 +2681,7 @@ void MemoryVisualizer::DrawMagnifier() {
             }
         }
     }
-    
-    // Add shortcut hints at bottom
-    ImGui::Separator();
-    ImGui::TextDisabled("Tips: M = bring to front, Ctrl+F = search, F3/Shift+F3 = next/prev");
-    
+
     ImGui::End();
 }
 
