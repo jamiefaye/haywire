@@ -168,14 +168,15 @@ InstructionCategory InstructionRenderer::Classify(const char* mnemonic) {
         return InstructionCategory::SIMD_FP;
     }
     
-    // System
-    if (std::strncmp(mnemonic, "msr", 3) == 0 || 
+    // System (including UDF which we'll handle specially)
+    if (std::strncmp(mnemonic, "msr", 3) == 0 ||
         std::strncmp(mnemonic, "mrs", 3) == 0 ||
         std::strncmp(mnemonic, "svc", 3) == 0 ||
-        std::strncmp(mnemonic, "nop", 3) == 0) {
+        std::strncmp(mnemonic, "nop", 3) == 0 ||
+        std::strncmp(mnemonic, "udf", 3) == 0) {
         return InstructionCategory::SYSTEM;
     }
-    
+
     // Everything else
     return InstructionCategory::DATA_MOVE;  // Default fallback
 }

@@ -264,8 +264,13 @@ void MemoryRenderer::RenderInstructionElement(
     InstructionInfo info;
     bool valid = renderer.Disassemble(src, address, info);
 
-    // Get category color
-    uint32_t catColor = InstructionRenderer::GetCategoryColor(info.category);
+    // Get category color (special case for UDF - make it muted gray)
+    uint32_t catColor;
+    if (valid && info.mnemonic == "udf") {
+        catColor = 0xFF404040;  // Dark gray - blend into background
+    } else {
+        catColor = InstructionRenderer::GetCategoryColor(info.category);
+    }
     const uint8_t* icon = InstructionRenderer::GetCategoryIcon(info.category);
 
     // Fill entire box with category color as background
