@@ -773,6 +773,7 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
             RenderConfig config;
             config.displayWidth = viewer.memWidth;
             config.displayHeight = viewer.memHeight;
+            config.baseAddress = viewer.anchorAddress.value;  // For instruction disassembly
             config.stride = viewer.stride;
             config.width = viewer.memWidth;
             config.height = viewer.memHeight;
@@ -813,6 +814,7 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
             RenderConfig config;
             config.displayWidth = viewer.memWidth;
             config.displayHeight = viewer.memHeight;
+            config.baseAddress = viewer.anchorAddress.value;  // For instruction disassembly
             config.stride = viewer.stride;
             config.width = viewer.memWidth;
             config.height = viewer.memHeight;
@@ -919,6 +921,7 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
     RenderConfig config;
     config.displayWidth = viewer.memWidth;
     config.displayHeight = viewer.memHeight;
+    config.baseAddress = viewer.anchorAddress.value;  // For instruction disassembly
     config.stride = viewer.stride;
     config.width = viewer.memWidth;
     config.height = viewer.memHeight;

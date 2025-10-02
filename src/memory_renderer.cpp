@@ -1,6 +1,8 @@
 #include "memory_renderer.h"
 #include "font5x7u.h"
 #include "font_data.h"
+#include "font_3x5.h"
+#include "instruction_renderer.h"
 #include <cstring>
 #include <algorithm>
 
@@ -29,9 +31,10 @@ FormatDescriptor MemoryRenderer::GetFormatDescriptor(ExtendedFormat format) {
         case ExtendedFormat::ABGR8888_SPLIT: return FormatDescriptor(4, 4, 1);  // A, B, G, R
 
         // Special display formats
-        case ExtendedFormat::BINARY:      return FormatDescriptor(1, 8, 1);   // 8 bits as pixels
-        case ExtendedFormat::HEX_PIXEL:   return FormatDescriptor(4, 33, 7);  // Hex display
-        case ExtendedFormat::CHAR_8BIT:   return FormatDescriptor(1, 6, 8);   // Character glyph
+        case ExtendedFormat::BINARY:           return FormatDescriptor(1, 8, 1);    // 8 bits as pixels
+        case ExtendedFormat::HEX_PIXEL:        return FormatDescriptor(4, 33, 7);   // Hex display
+        case ExtendedFormat::CHAR_8BIT:        return FormatDescriptor(1, 6, 8);    // Character glyph
+        case ExtendedFormat::INSTRUCTION_ARM64: return FormatDescriptor(4, 40, 8);   // Instruction display
 
         default:
             return FormatDescriptor(1, 1, 1);  // Default fallback
@@ -63,10 +66,11 @@ ExtendedFormat MemoryRenderer::GetExtendedFormat(PixelFormat::Type format, bool 
         case PixelFormat::BGRA8888:  return ExtendedFormat::BGRA8888;
         case PixelFormat::ARGB8888:  return ExtendedFormat::ARGB8888;
         case PixelFormat::ABGR8888:  return ExtendedFormat::ABGR8888;
-        case PixelFormat::BINARY:    return ExtendedFormat::BINARY;
-        case PixelFormat::HEX_PIXEL: return ExtendedFormat::HEX_PIXEL;
-        case PixelFormat::CHAR_8BIT: return ExtendedFormat::CHAR_8BIT;
-        default:                     return ExtendedFormat::GRAYSCALE;  // Default
+        case PixelFormat::BINARY:           return ExtendedFormat::BINARY;
+        case PixelFormat::HEX_PIXEL:        return ExtendedFormat::HEX_PIXEL;
+        case PixelFormat::CHAR_8BIT:        return ExtendedFormat::CHAR_8BIT;
+        case PixelFormat::INSTRUCTION_ARM64: return ExtendedFormat::INSTRUCTION_ARM64;
+        default:                            return ExtendedFormat::GRAYSCALE;  // Default
     }
 }
 
@@ -242,6 +246,75 @@ void MemoryRenderer::RenderCharElement(
             dest[y * destStride + x] = bit ? fgColor : bgColor;
 
             rotatingBit >>= 1;  // Move to next bit
+        }
+    }
+}
+
+// Render a single instruction element (4 bytes -> 40x8 pixels)
+void MemoryRenderer::RenderInstructionElement(
+    const uint8_t* src,      // 4 bytes input (ARM64 instruction)
+    uint32_t* dest,          // Destination buffer
+    int destStride,          // Stride in pixels
+    uint64_t address)        // Address for disassembly
+{
+    // Create static instruction renderer instance
+    static InstructionRenderer renderer;
+
+    // Disassemble the instruction
+    InstructionInfo info;
+    bool valid = renderer.Disassemble(src, address, info);
+
+    // Get category color
+    uint32_t catColor = InstructionRenderer::GetCategoryColor(info.category);
+    const uint8_t* icon = InstructionRenderer::GetCategoryIcon(info.category);
+
+    // Layout: [6px icon][34px operands] = 40px total, 8px high
+    // Draw 4×6 icon in first 6 pixels
+    for (int y = 0; y < 6; ++y) {
+        for (int x = 0; x < 4; ++x) {
+            bool pixel = (icon[y] >> (3 - x)) & 1;
+            dest[y * destStride + x] = pixel ? catColor : 0xFF000000;  // Color or black
+        }
+        // Fill remaining 2 pixels of icon area with black
+        dest[y * destStride + 4] = 0xFF000000;
+        dest[y * destStride + 5] = 0xFF000000;
+    }
+
+    // Fill bottom 2 rows of icon area with black
+    for (int y = 6; y < 8; ++y) {
+        for (int x = 0; x < 6; ++x) {
+            dest[y * destStride + x] = 0xFF000000;
+        }
+    }
+
+    // Draw operands text in remaining 34 pixels (starts at x=6)
+    // Use 3×5 font, white text on black background
+    const std::string& text = valid ? info.operands : ".word";
+    uint32_t fgColor = 0xFFFFFFFF;  // White
+    uint32_t bgColor = 0xFF000000;  // Black
+
+    int textX = 6;
+    for (size_t i = 0; i < text.length() && textX + 3 <= 40; ++i) {
+        char c = text[i];
+        if (c < 32 || c > 126) c = '?';  // Out of range
+
+        const uint8_t* glyph = FONT_3X5[c - 32];
+
+        // Draw 3×5 glyph
+        for (int y = 0; y < 5; ++y) {
+            for (int x = 0; x < 3; ++x) {
+                bool pixel = glyph[y] & (1 << (2 - x));
+                dest[(y + 1) * destStride + (textX + x)] = pixel ? fgColor : bgColor;
+            }
+        }
+
+        textX += 4;  // 3px glyph + 1px spacing
+    }
+
+    // Fill remaining pixels with black
+    for (int y = 0; y < 8; ++y) {
+        for (int x = textX; x < 40; ++x) {
+            dest[y * destStride + x] = bgColor;
         }
     }
 }
@@ -528,6 +601,13 @@ std::vector<uint32_t> MemoryRenderer::RenderWithLayout(
                     break;
                 case ExtendedFormat::CHAR_8BIT:
                     RenderCharElement(data + srcOffset, destPtr, config.displayWidth);
+                    break;
+                case ExtendedFormat::INSTRUCTION_ARM64:
+                    {
+                        // Calculate virtual address for this instruction
+                        uint64_t address = config.baseAddress + srcOffset;
+                        RenderInstructionElement(data + srcOffset, destPtr, config.displayWidth, address);
+                    }
                     break;
                 case ExtendedFormat::BINARY:
                     // Binary is single-line, no stride needed

@@ -749,6 +749,11 @@ void MemoryVisualizer::DrawMemoryBitmap() {
             int elementsWide = viewport.width / 6;
             int elementsHigh = viewport.height / 8;
             viewSize = elementsWide * elementsHigh * 1;
+        } else if (viewport.format.type == PixelFormat::INSTRUCTION_ARM64) {
+            // INSTRUCTION_ARM64: 4 bytes displayed as 40×8 pixels
+            int elementsWide = viewport.width / 40;
+            int elementsHigh = viewport.height / 8;
+            viewSize = elementsWide * elementsHigh * 4;
         } else {
             // Standard formats: 1:1 pixel mapping
             viewSize = viewport.width * viewport.height * viewport.format.bytesPerPixel;
@@ -978,9 +983,9 @@ void MemoryVisualizer::DrawControls() {
     ImGui::SameLine();
     
     // Build format list with separator and split option
-    const char* formats[] = { "RGB888", "RGBA8888", "BGR888", "BGRA8888", 
+    const char* formats[] = { "RGB888", "RGBA8888", "BGR888", "BGRA8888",
                               "ARGB8888", "ABGR8888", "RGB565", "Grayscale", "Binary",
-                              "Hex Pixel", "Char 8-bit",
+                              "Hex Pixel", "Char 8-bit", "ARM64 Insn",
                               "---",  // Separator
                               splitComponents ? "[X] Split" : "[ ] Split" };
     ImGui::PushItemWidth(120);
@@ -994,24 +999,24 @@ void MemoryVisualizer::DrawControls() {
     // Custom combo to handle the split option specially
     if (ImGui::BeginCombo("##Format", formats[pixelFormatIndex])) {
         for (int i = 0; i < numFormats; i++) {
-            if (i == 11) { // Separator line
+            if (i == 12) { // Separator line
                 ImGui::Separator();
                 continue;
             }
-            
+
             bool isSelected = (i == pixelFormatIndex);
             if (ImGui::Selectable(formats[i], isSelected)) {
-                if (i == 12) { // Split toggle
+                if (i == 13) { // Split toggle
                     splitComponents = !splitComponents;
                     needsUpdate = true;
-                } else if (i < 11) { // Regular format selection
+                } else if (i < 12) { // Regular format selection
                     pixelFormatIndex = i;
                     viewport.format = PixelFormat(static_cast<PixelFormat::Type>(pixelFormatIndex));
                     needsUpdate = true;
                 }
             }
-            
-            if (isSelected && i < 11) {
+
+            if (isSelected && i < 12) {
                 ImGui::SetItemDefaultFocus();
             }
         }
@@ -3226,6 +3231,7 @@ std::vector<uint32_t> MemoryVisualizer::ConvertMemoryToPixels(const MemoryBlock&
     RenderConfig config;
     config.displayWidth = viewport.width;
     config.displayHeight = viewport.height;
+    config.baseAddress = viewport.baseAddress;  // For instruction disassembly
     config.stride = viewport.stride * viewport.format.bytesPerPixel;
     config.width = viewport.width;
     config.height = viewport.height;

@@ -11,12 +11,13 @@ struct RenderConfig {
     // Display dimensions (in pixels)
     int displayWidth;
     int displayHeight;
-    
+
     // Memory layout
+    uint64_t baseAddress = 0;  // Base virtual address for disassembly
     int stride;           // Bytes per row in memory
     int width;            // Logical width (elements, not pixels)
     int height;           // Logical height (elements, not pixels)
-    
+
     // Format
     PixelFormat format;
     bool splitComponents;  // Split RGB/RGBA into separate channels
@@ -109,7 +110,8 @@ enum class ExtendedFormat {
     // Special display formats
     BINARY,
     HEX_PIXEL,
-    CHAR_8BIT
+    CHAR_8BIT,
+    INSTRUCTION_ARM64
 };
 
 class MemoryRenderer {
@@ -139,6 +141,13 @@ private:
         const uint8_t* src,      // 1 byte input
         uint32_t* dest,          // Destination buffer
         int destStride           // Stride in pixels
+    );
+
+    static void RenderInstructionElement(
+        const uint8_t* src,      // 4 bytes input (ARM64 instruction)
+        uint32_t* dest,          // Destination buffer
+        int destStride,          // Stride in pixels
+        uint64_t address         // Address for disassembly
     );
 
     static void RenderBinaryElement(

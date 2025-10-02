@@ -29,8 +29,9 @@ struct PixelFormat {
         RGB565,
         GRAYSCALE,
         BINARY,
-        HEX_PIXEL,  // 32-bit value as 8 hex digits (32x6 pixels)
-        CHAR_8BIT,  // 8-bit byte as character (6x8 pixels)
+        HEX_PIXEL,       // 32-bit value as 8 hex digits (32x6 pixels)
+        CHAR_8BIT,       // 8-bit byte as character (6x8 pixels)
+        INSTRUCTION_ARM64,  // ARM64 instruction with icon and operands (40x8 pixels)
         CUSTOM
     };
     
@@ -50,6 +51,7 @@ struct PixelFormat {
             case BINARY: bytesPerPixel = 1; break;
             case HEX_PIXEL: bytesPerPixel = 4; break;  // Process 32-bit values
             case CHAR_8BIT: bytesPerPixel = 1; break;  // Process 8-bit chars
+            case INSTRUCTION_ARM64: bytesPerPixel = 4; break;  // Process 32-bit instructions
             default: bytesPerPixel = 1;
         }
     }
