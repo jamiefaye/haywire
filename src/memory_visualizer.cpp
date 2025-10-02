@@ -2274,7 +2274,7 @@ void MemoryVisualizer::DrawMagnifier() {
     }
 
     ImGui::SameLine();
-    ImGui::Checkbox("Hex", &showHexData);
+    ImGui::Checkbox("Hex##MagnifierHex", &showHexData);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Show hex data at bottom");
     }
