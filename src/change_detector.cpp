@@ -106,15 +106,18 @@ void ChangeDetector::RebuildChunkArray() {
     size_t num_chunks = (memory_size + chunk_size_ - 1) / chunk_size_;
 
     // Pre-allocate chunk info array
-    chunks_.resize(num_chunks);
+    chunks_.clear();
+    chunks_.reserve(num_chunks);
     for (size_t i = 0; i < num_chunks; i++) {
-        chunks_[i].offset = i * chunk_size_;
-        chunks_[i].checksum = 0;
-        chunks_[i].last_change_time = 0;
-        chunks_[i].last_scan_time = 0;
-        chunks_[i].scan_count = 0;
-        chunks_[i].is_zero = false;
-        chunks_[i].scanned = false;
+        ChunkInfo info;
+        info.offset = i * chunk_size_;
+        info.checksum.store(0);
+        info.last_change_time.store(0);
+        info.last_scan_time.store(0);
+        info.scan_count.store(0);
+        info.is_zero.store(false);
+        info.scanned.store(false);
+        chunks_.push_back(std::move(info));
     }
 
     // Reset scan position
@@ -291,20 +294,20 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
     }
 
     // Detect changes
-    bool is_first_scan = !chunk.scanned;
-    bool checksum_changed = !is_first_scan && chunk.checksum != checksum;
-    bool zero_changed = !is_first_scan && chunk.is_zero != is_zero;
+    bool is_first_scan = !chunk.scanned.load();
+    bool checksum_changed = !is_first_scan && chunk.checksum.load() != checksum;
+    bool zero_changed = !is_first_scan && chunk.is_zero.load() != is_zero;
     bool has_changed = checksum_changed || zero_changed;
 
     // Update chunk info
-    chunk.checksum = checksum;
-    chunk.is_zero = is_zero;
-    chunk.scanned = true;
-    chunk.scan_count++;
-    chunk.last_scan_time = now;
+    chunk.checksum.store(checksum);
+    chunk.is_zero.store(is_zero);
+    chunk.scanned.store(true);
+    chunk.scan_count.fetch_add(1);
+    chunk.last_scan_time.store(now);
 
     if (has_changed) {
-        chunk.last_change_time = now;
+        chunk.last_change_time.store(now);
         changes_detected_++;
     }
 
@@ -346,7 +349,7 @@ void ChangeDetector::PatrolLoop() {
         // Priority 1: Visible chunks (already in cache from rendering)
         // Scan every 50ms (20 Hz)
         for (size_t i = vis_start; i < vis_end && scanned_this_cycle < MAX_CHUNKS_PER_CYCLE; i++) {
-            if (now - chunks_[i].last_scan_time > 50) {
+            if (now - chunks_[i].last_scan_time.load() > 50) {
                 ScanChunk(i);
                 scanned_this_cycle++;
             }
@@ -360,7 +363,7 @@ void ChangeDetector::PatrolLoop() {
                 continue;
             }
 
-            if (now - chunks_[i].last_scan_time > 250) {
+            if (now - chunks_[i].last_scan_time.load() > 250) {
                 ScanChunk(i);
                 scanned_this_cycle++;
             }

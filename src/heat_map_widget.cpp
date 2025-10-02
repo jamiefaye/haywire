@@ -27,22 +27,23 @@ HeatMapWidget::Color HeatMapWidget::GetChunkColor(const ChunkInfo& chunk) const 
     }
 
     // Zero chunk - dark gray
-    if (chunk.is_zero) {
+    if (chunk.is_zero.load()) {
         return {32, 32, 32, 255};
     }
 
     // First scan - neutral blue (not a change)
-    if (chunk.scan_count <= 1) {
+    if (chunk.scan_count.load() <= 1) {
         return {64, 128, 192, 255};
     }
 
     // Has changed - use logarithmic decay from hot (green) to cool (red)
-    if (chunk.last_change_time > 0) {
+    uint64_t last_change = chunk.last_change_time.load();
+    if (last_change > 0) {
         auto now = std::chrono::system_clock::now();
         auto duration = now.time_since_epoch();
         uint64_t current_ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
 
-        uint64_t ms_since_change = current_ms - chunk.last_change_time;
+        uint64_t ms_since_change = current_ms - last_change;
         double seconds = ms_since_change / 1000.0;
 
         // Logarithmic decay: log(1) = 0 (just changed), log(1000) = 3 (old change)
@@ -184,10 +185,11 @@ bool HeatMapWidget::Draw(float width, float height, uint64_t current_offset, uin
         // Get color for this chunk
         Color color = GetChunkColor(chunk);
 
-        // Draw chunk pixel (no gap - fill entire pixel)
+        // Draw chunk pixel (with 1px gap for sizes >= 2px, no gap for 1px)
+        float gap = (pixel_size_ >= 2) ? 1.0f : 0.0f;
         draw_list->AddRectFilled(
             ImVec2(x, y),
-            ImVec2(x + pixel_size_, y + pixel_size_),
+            ImVec2(x + pixel_size_ - gap, y + pixel_size_ - gap),
             IM_COL32(color.r, color.g, color.b, color.a)
         );
     }
@@ -209,7 +211,7 @@ bool HeatMapWidget::Draw(float width, float height, uint64_t current_offset, uin
         int end_row = display_end / chunks_per_row;
         int end_col = display_end % chunks_per_row;
 
-        // Draw the indicator properly handling multi-row spans
+        // Draw the indicator as a continuous outline (no interior divisions)
         if (start_row == end_row) {
             // Single row - simple rectangle
             float start_x = canvas_pos.x + start_col * pixel_size_;
@@ -224,23 +226,45 @@ bool HeatMapWidget::Draw(float width, float height, uint64_t current_offset, uin
                 0.0f, 0, 2.0f
             );
         } else {
-            // Multiple rows - draw each row segment
-            for (int row = start_row; row <= end_row; row++) {
-                int col_start = (row == start_row) ? start_col : 0;
-                int col_end = (row == end_row) ? end_col : chunks_per_row - 1;
+            // Multiple rows - trace the perimeter as a polyline
+            // Build the path going clockwise around the entire region
+            std::vector<ImVec2> path;
 
-                float x1 = canvas_pos.x + col_start * pixel_size_;
-                float y1 = canvas_pos.y + row * pixel_size_;
-                float x2 = canvas_pos.x + (col_end + 1) * pixel_size_;
-                float y2 = canvas_pos.y + (row + 1) * pixel_size_;
+            // Start at top-left of first row
+            path.push_back(ImVec2(canvas_pos.x + start_col * pixel_size_,
+                                  canvas_pos.y + start_row * pixel_size_));
 
-                draw_list->AddRect(
-                    ImVec2(x1, y1),
-                    ImVec2(x2, y2),
-                    IM_COL32(255, 255, 0, 255),
-                    0.0f, 0, 2.0f
-                );
-            }
+            // Top edge to right side of first row
+            path.push_back(ImVec2(canvas_pos.x + chunks_per_row * pixel_size_,
+                                  canvas_pos.y + start_row * pixel_size_));
+
+            // Right edge down to last row
+            path.push_back(ImVec2(canvas_pos.x + chunks_per_row * pixel_size_,
+                                  canvas_pos.y + (end_row + 1) * pixel_size_));
+
+            // Bottom edge to end column of last row
+            path.push_back(ImVec2(canvas_pos.x + (end_col + 1) * pixel_size_,
+                                  canvas_pos.y + (end_row + 1) * pixel_size_));
+
+            // Left edge of last row down
+            path.push_back(ImVec2(canvas_pos.x + (end_col + 1) * pixel_size_,
+                                  canvas_pos.y + end_row * pixel_size_));
+
+            // Bottom edge to left side
+            path.push_back(ImVec2(canvas_pos.x,
+                                  canvas_pos.y + end_row * pixel_size_));
+
+            // Left edge up to first row bottom
+            path.push_back(ImVec2(canvas_pos.x,
+                                  canvas_pos.y + (start_row + 1) * pixel_size_));
+
+            // Bottom edge of first row to start column
+            path.push_back(ImVec2(canvas_pos.x + start_col * pixel_size_,
+                                  canvas_pos.y + (start_row + 1) * pixel_size_));
+
+            // Close the path
+            draw_list->AddPolyline(path.data(), path.size(), IM_COL32(255, 255, 0, 255),
+                                  ImDrawFlags_Closed, 2.0f);
         }
     }
 
@@ -289,17 +313,18 @@ void HeatMapWidget::DrawTooltip(size_t chunk_idx, const ChunkInfo& chunk) {
 
     if (!chunk.scanned) {
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Not scanned");
-    } else if (chunk.is_zero) {
+    } else if (chunk.is_zero.load()) {
         ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "ZERO");
     } else {
-        ImGui::Text("Checksum: 0x%x", chunk.checksum);
-        ImGui::Text("Scans: %u", chunk.scan_count);
+        ImGui::Text("Checksum: 0x%x", chunk.checksum.load());
+        ImGui::Text("Scans: %u", chunk.scan_count.load());
 
-        if (chunk.last_change_time > 0) {
+        uint64_t last_change = chunk.last_change_time.load();
+        if (last_change > 0) {
             auto now = std::chrono::system_clock::now();
             auto duration = now.time_since_epoch();
             uint64_t current_ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
-            double seconds_ago = (current_ms - chunk.last_change_time) / 1000.0;
+            double seconds_ago = (current_ms - last_change) / 1000.0;
 
             ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "CHANGED");
             ImGui::Text("%.1f seconds ago", seconds_ago);

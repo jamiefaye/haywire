@@ -16,16 +16,42 @@ class AddressSpaceFlattener;
 
 // Information about a single chunk's state
 struct ChunkInfo {
-    uint64_t offset;              // Byte offset in file
-    uint32_t checksum;            // Fast rotation-based hash
-    uint64_t last_change_time;    // Milliseconds since epoch (0 = never changed)
-    uint64_t last_scan_time;      // Milliseconds since epoch
-    uint16_t scan_count;          // Number of times scanned
-    bool is_zero;                 // True if entire chunk is zeros
-    bool scanned;                 // True if scanned at least once
+    uint64_t offset;                          // Byte offset in file (set once, never changes)
+    std::atomic<uint32_t> checksum;           // Fast rotation-based hash
+    std::atomic<uint64_t> last_change_time;   // Milliseconds since epoch (0 = never changed)
+    std::atomic<uint64_t> last_scan_time;     // Milliseconds since epoch
+    std::atomic<uint16_t> scan_count;         // Number of times scanned
+    std::atomic<bool> is_zero;                // True if entire chunk is zeros
+    std::atomic<bool> scanned;                // True if scanned at least once
 
     ChunkInfo() : offset(0), checksum(0), last_change_time(0),
                   last_scan_time(0), scan_count(0), is_zero(false), scanned(false) {}
+
+    // Move constructor (required for std::vector)
+    ChunkInfo(ChunkInfo&& other) noexcept
+        : offset(other.offset),
+          checksum(other.checksum.load()),
+          last_change_time(other.last_change_time.load()),
+          last_scan_time(other.last_scan_time.load()),
+          scan_count(other.scan_count.load()),
+          is_zero(other.is_zero.load()),
+          scanned(other.scanned.load()) {}
+
+    // Move assignment (required for std::vector)
+    ChunkInfo& operator=(ChunkInfo&& other) noexcept {
+        offset = other.offset;
+        checksum.store(other.checksum.load());
+        last_change_time.store(other.last_change_time.load());
+        last_scan_time.store(other.last_scan_time.load());
+        scan_count.store(other.scan_count.load());
+        is_zero.store(other.is_zero.load());
+        scanned.store(other.scanned.load());
+        return *this;
+    }
+
+    // Delete copy constructor and assignment (atomics can't be copied)
+    ChunkInfo(const ChunkInfo&) = delete;
+    ChunkInfo& operator=(const ChunkInfo&) = delete;
 };
 
 // Change detection with background patrol thread
