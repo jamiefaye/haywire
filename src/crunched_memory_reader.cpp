@@ -1,8 +1,15 @@
 #include "crunched_memory_reader.h"
+#include "micro_timer.h"
 #include <iostream>
 #include <algorithm>
 
 namespace Haywire {
+
+// Timing instrumentation (toggle MICRO_TIMER_ENABLE in micro_timer.h)
+MICRO_TIMER_DECL(timer_ReadCrunchedMemory, 100);
+MICRO_TIMER_DECL(timer_GetRegionForFlat, 1000);
+MICRO_TIMER_DECL(timer_TranslateAddress, 1000);
+MICRO_TIMER_DECL(timer_GetDirectPointer, 1000);
 
 CrunchedMemoryReader::CrunchedMemoryReader()
     : flattener(nullptr), translator(nullptr), // beaconTranslator removed
@@ -12,8 +19,9 @@ CrunchedMemoryReader::CrunchedMemoryReader()
 CrunchedMemoryReader::~CrunchedMemoryReader() {
 }
 
-size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t size, 
+size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t size,
                                                 std::vector<uint8_t>& buffer) {
+    MICRO_TIMER_START(timer_ReadCrunchedMemory);
     static bool firstCall = true;
     
     if (!flattener) {
@@ -154,10 +162,11 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
     
     // Log read statistics for first few reads only
     if (readCount <= 5) {
-        std::cerr << "CrunchedRead #" << readCount << ": " << translationsNeeded 
+        std::cerr << "CrunchedRead #" << readCount << ": " << translationsNeeded
                   << " translations for " << totalRead << " bytes" << std::endl;
     }
-    
+
+    MICRO_TIMER_STOP(timer_ReadCrunchedMemory);
     return totalRead;
 }
 
@@ -197,7 +206,10 @@ void CrunchedMemoryReader::InitializeRenderCache() {
 }
 
 const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
+    MICRO_TIMER_START(timer_GetDirectPointer);
+
     if (!flattener || !qemu) {
+        MICRO_TIMER_STOP(timer_GetDirectPointer);
         return nullptr;
     }
 
@@ -240,24 +252,31 @@ const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
         // Get memory backend and return direct pointer
         auto* backend = qemu->GetMemoryBackend();
         if (!backend || !backend->IsAvailable()) {
+            MICRO_TIMER_STOP(timer_GetDirectPointer);
             return nullptr;
         }
 
-        return backend->GetDirectPointer(physAddr);
+        const uint8_t* ptr = backend->GetDirectPointer(physAddr);
+        MICRO_TIMER_STOP(timer_GetDirectPointer);
+        return ptr;
     } else {
         // PA mode or old path: Use AddressSpaceFlattener's PA lookup
         uint64_t physAddr = flattener->GetPhysicalAddress(flatAddress);
         if (physAddr == 0) {
+            MICRO_TIMER_STOP(timer_GetDirectPointer);
             return nullptr;  // Not mapped
         }
 
         // Get memory backend and return direct pointer
         auto* backend = qemu->GetMemoryBackend();
         if (!backend || !backend->IsAvailable()) {
+            MICRO_TIMER_STOP(timer_GetDirectPointer);
             return nullptr;
         }
 
-        return backend->GetDirectPointer(physAddr);
+        const uint8_t* ptr = backend->GetDirectPointer(physAddr);
+        MICRO_TIMER_STOP(timer_GetDirectPointer);
+        return ptr;
     }
 }
 
