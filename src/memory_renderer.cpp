@@ -271,10 +271,10 @@ void MemoryRenderer::RenderInstructionElement(
     InstructionInfo info;
     bool valid = renderer.Disassemble(src, address, info);
 
-    // Get category color (special case for UDF - make it very muted gray)
+    // Get category color (special case for UDF - make it barely visible)
     uint32_t catColor;
     if (valid && info.mnemonic == "udf") {
-        catColor = 0xFF202020;  // Very dark gray - blend into background (50% dimmer)
+        catColor = 0xFF0A0A0A;  // Almost black - barely visible
     } else {
         catColor = InstructionRenderer::GetCategoryColor(info.category);
     }
