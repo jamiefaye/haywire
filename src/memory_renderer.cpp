@@ -71,6 +71,78 @@ ExtendedFormat MemoryRenderer::GetExtendedFormat(PixelFormat::Type format, bool 
 }
 
 // =============================================================================
+// Fast row renderers for 1:1 pixel formats
+// =============================================================================
+
+// Fast path: Render entire row of grayscale pixels at once
+static inline void RenderGrayscaleRow(const uint8_t* src, uint32_t* dest, int count) {
+    for (int i = 0; i < count; i++) {
+        uint8_t gray = src[i];
+        // Pack as ARGB: 0xFFGGGGGG (alpha=255, R=G=B=gray)
+        dest[i] = 0xFF000000 | (gray << 16) | (gray << 8) | gray;
+    }
+}
+
+// Fast path: Render entire row of RGB888 pixels at once
+static inline void RenderRGB888Row(const uint8_t* src, uint32_t* dest, int count) {
+    for (int i = 0; i < count; i++) {
+        const uint8_t* pixel = src + i * 3;
+        dest[i] = 0xFF000000 | (pixel[2] << 16) | (pixel[1] << 8) | pixel[0];
+    }
+}
+
+// Fast path: Render entire row of BGR888 pixels at once
+static inline void RenderBGR888Row(const uint8_t* src, uint32_t* dest, int count) {
+    for (int i = 0; i < count; i++) {
+        const uint8_t* pixel = src + i * 3;
+        dest[i] = 0xFF000000 | (pixel[0] << 16) | (pixel[1] << 8) | pixel[2];
+    }
+}
+
+// Fast path: Render entire row of RGBA8888 pixels at once
+static inline void RenderRGBA8888Row(const uint8_t* src, uint32_t* dest, int count) {
+    for (int i = 0; i < count; i++) {
+        const uint8_t* pixel = src + i * 4;
+        dest[i] = (pixel[3] << 24) | (pixel[2] << 16) | (pixel[1] << 8) | pixel[0];
+    }
+}
+
+// Fast path: Render entire row of BGRA8888 pixels at once
+static inline void RenderBGRA8888Row(const uint8_t* src, uint32_t* dest, int count) {
+    for (int i = 0; i < count; i++) {
+        const uint8_t* pixel = src + i * 4;
+        dest[i] = (pixel[3] << 24) | (pixel[0] << 16) | (pixel[1] << 8) | pixel[2];
+    }
+}
+
+// Fast path: Render entire row of ARGB8888 pixels at once
+static inline void RenderARGB8888Row(const uint8_t* src, uint32_t* dest, int count) {
+    for (int i = 0; i < count; i++) {
+        const uint8_t* pixel = src + i * 4;
+        dest[i] = (pixel[0] << 24) | (pixel[1] << 16) | (pixel[2] << 8) | pixel[3];
+    }
+}
+
+// Fast path: Render entire row of ABGR8888 pixels at once
+static inline void RenderABGR8888Row(const uint8_t* src, uint32_t* dest, int count) {
+    for (int i = 0; i < count; i++) {
+        const uint8_t* pixel = src + i * 4;
+        dest[i] = (pixel[0] << 24) | (pixel[3] << 16) | (pixel[2] << 8) | pixel[1];
+    }
+}
+
+// Fast path: Render entire row of RGB565 pixels at once
+static inline void RenderRGB565Row(const uint8_t* src, uint32_t* dest, int count) {
+    for (int i = 0; i < count; i++) {
+        uint16_t pixel = (src[i * 2 + 1] << 8) | src[i * 2];
+        uint8_t r = ((pixel >> 11) & 0x1F) << 3;
+        uint8_t g = ((pixel >> 5) & 0x3F) << 2;
+        uint8_t b = (pixel & 0x1F) << 3;
+        dest[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
+    }
+}
+
+// =============================================================================
 // Single-element renderer functions
 // =============================================================================
 
@@ -315,6 +387,103 @@ std::vector<uint32_t> MemoryRenderer::RenderWithLayout(
     // Calculate layout parameters
     int elementWidth = desc.pixelsOutX;
     int elementHeight = desc.pixelsOutY;
+
+    // =========================================================================
+    // FAST PATH: For 1:1 pixel formats without column mode, use optimized row rendering
+    // =========================================================================
+    if (!config.columnMode && elementWidth == 1 && elementHeight == 1) {
+        int pixelsPerRow = std::min(config.displayWidth, (int)(dataSize / desc.bytesIn));
+        int rows = std::min(config.displayHeight, (int)(dataSize / (pixelsPerRow * desc.bytesIn)));
+
+        switch (format) {
+            case ExtendedFormat::GRAYSCALE:
+                for (int y = 0; y < rows; y++) {
+                    RenderGrayscaleRow(
+                        data + y * pixelsPerRow,
+                        pixels.data() + y * config.displayWidth,
+                        pixelsPerRow
+                    );
+                }
+                return pixels;
+
+            case ExtendedFormat::RGB565:
+                for (int y = 0; y < rows; y++) {
+                    RenderRGB565Row(
+                        data + y * pixelsPerRow * 2,
+                        pixels.data() + y * config.displayWidth,
+                        pixelsPerRow
+                    );
+                }
+                return pixels;
+
+            case ExtendedFormat::RGB888:
+                for (int y = 0; y < rows; y++) {
+                    RenderRGB888Row(
+                        data + y * pixelsPerRow * 3,
+                        pixels.data() + y * config.displayWidth,
+                        pixelsPerRow
+                    );
+                }
+                return pixels;
+
+            case ExtendedFormat::BGR888:
+                for (int y = 0; y < rows; y++) {
+                    RenderBGR888Row(
+                        data + y * pixelsPerRow * 3,
+                        pixels.data() + y * config.displayWidth,
+                        pixelsPerRow
+                    );
+                }
+                return pixels;
+
+            case ExtendedFormat::RGBA8888:
+                for (int y = 0; y < rows; y++) {
+                    RenderRGBA8888Row(
+                        data + y * pixelsPerRow * 4,
+                        pixels.data() + y * config.displayWidth,
+                        pixelsPerRow
+                    );
+                }
+                return pixels;
+
+            case ExtendedFormat::BGRA8888:
+                for (int y = 0; y < rows; y++) {
+                    RenderBGRA8888Row(
+                        data + y * pixelsPerRow * 4,
+                        pixels.data() + y * config.displayWidth,
+                        pixelsPerRow
+                    );
+                }
+                return pixels;
+
+            case ExtendedFormat::ARGB8888:
+                for (int y = 0; y < rows; y++) {
+                    RenderARGB8888Row(
+                        data + y * pixelsPerRow * 4,
+                        pixels.data() + y * config.displayWidth,
+                        pixelsPerRow
+                    );
+                }
+                return pixels;
+
+            case ExtendedFormat::ABGR8888:
+                for (int y = 0; y < rows; y++) {
+                    RenderABGR8888Row(
+                        data + y * pixelsPerRow * 4,
+                        pixels.data() + y * config.displayWidth,
+                        pixelsPerRow
+                    );
+                }
+                return pixels;
+
+            default:
+                // Fall through to element-by-element rendering
+                break;
+        }
+    }
+    // =========================================================================
+    // END FAST PATH
+    // =========================================================================
 
     // Set up column parameters
     // Non-column mode is just 1 column with full width and no gap
