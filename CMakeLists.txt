@@ -49,25 +49,24 @@ set(IMGUI_SOURCES
     ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
-# Capstone (disabled for now - not needed yet)
+# Capstone disassembler library
 find_package(PkgConfig)
-# if(PKG_CONFIG_FOUND)
-#     pkg_check_modules(CAPSTONE capstone)
-# endif()
-# 
-# # Fallback for Homebrew on Apple Silicon
-# if(NOT CAPSTONE_FOUND AND APPLE)
-#     find_path(CAPSTONE_INCLUDE_DIR capstone/capstone.h
-#         PATHS /opt/homebrew/include /usr/local/include)
-#     find_library(CAPSTONE_LIBRARY capstone
-#         PATHS /opt/homebrew/lib /usr/local/lib)
-#     if(CAPSTONE_INCLUDE_DIR AND CAPSTONE_LIBRARY)
-#         set(CAPSTONE_FOUND TRUE)
-#         set(CAPSTONE_INCLUDE_DIRS ${CAPSTONE_INCLUDE_DIR})
-#         set(CAPSTONE_LIBRARIES ${CAPSTONE_LIBRARY})
-#     endif()
-# endif()
-set(CAPSTONE_FOUND FALSE)
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(CAPSTONE capstone)
+endif()
+
+# Fallback for Homebrew on Apple Silicon
+if(NOT CAPSTONE_FOUND AND APPLE)
+    find_path(CAPSTONE_INCLUDE_DIR capstone/capstone.h
+        PATHS /opt/homebrew/include /usr/local/include)
+    find_library(CAPSTONE_LIBRARY capstone
+        PATHS /opt/homebrew/lib /usr/local/lib)
+    if(CAPSTONE_INCLUDE_DIR AND CAPSTONE_LIBRARY)
+        set(CAPSTONE_FOUND TRUE)
+        set(CAPSTONE_INCLUDE_DIRS ${CAPSTONE_INCLUDE_DIR})
+        set(CAPSTONE_LIBRARIES ${CAPSTONE_LIBRARY})
+    endif()
+endif()
 
 # JSON library (using nlohmann/json)
 include(FetchContent)
@@ -99,6 +98,7 @@ add_executable(haywire
     src/hex_overlay.cpp
     src/autocorrelator.cpp
     src/fft16384.cpp
+    src/instruction_renderer.cpp
     # New memory reader using kernel discovery
     src/kernel_memory_reader.cpp
     src/memory_file_reader.cpp
@@ -143,12 +143,8 @@ target_link_libraries(haywire PRIVATE
 if(CAPSTONE_FOUND)
     target_compile_definitions(haywire PRIVATE HAS_CAPSTONE)
     target_include_directories(haywire PRIVATE ${CAPSTONE_INCLUDE_DIRS})
-    if(APPLE AND CAPSTONE_LIBRARY)
-        # Use full path on macOS
-        target_link_libraries(haywire PRIVATE ${CAPSTONE_LIBRARY})
-    else()
-        target_link_libraries(haywire PRIVATE ${CAPSTONE_LIBRARIES})
-    endif()
+    target_link_directories(haywire PRIVATE ${CAPSTONE_LIBRARY_DIRS})
+    target_link_libraries(haywire PRIVATE ${CAPSTONE_LIBRARIES})
 endif()
 
 # Auto-sign on macOS for debugging privileges
