@@ -163,8 +163,15 @@ void MemoryRenderer::RenderHexElement(
                      (src[3] << 24);
 
     // Calculate colors from the actual memory bytes
-    uint32_t bgColor = PackRGBA(src[2], src[1], src[0], 255);
-    uint32_t fgColor = CalcHiContrastOpposite(bgColor);
+    // Special case: make all-zeros very dim (dark gray on black)
+    uint32_t bgColor, fgColor;
+    if (value == 0) {
+        bgColor = 0xFF000000;  // Black background
+        fgColor = 0xFF202020;  // Very dark gray text - barely visible
+    } else {
+        bgColor = PackRGBA(src[2], src[1], src[0], 255);
+        fgColor = CalcHiContrastOpposite(bgColor);
+    }
 
     // Draw 8 hex nibbles (2 per byte) across 32 pixels + 1 separator
     for (int nibbleIdx = 7; nibbleIdx >= 0; --nibbleIdx) {
@@ -264,10 +271,10 @@ void MemoryRenderer::RenderInstructionElement(
     InstructionInfo info;
     bool valid = renderer.Disassemble(src, address, info);
 
-    // Get category color (special case for UDF - make it muted gray)
+    // Get category color (special case for UDF - make it very muted gray)
     uint32_t catColor;
     if (valid && info.mnemonic == "udf") {
-        catColor = 0xFF404040;  // Dark gray - blend into background
+        catColor = 0xFF202020;  // Very dark gray - blend into background (50% dimmer)
     } else {
         catColor = InstructionRenderer::GetCategoryColor(info.category);
     }
