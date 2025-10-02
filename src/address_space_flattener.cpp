@@ -160,8 +160,6 @@ void AddressSpaceFlattener::EnableLazyPALookup(KernelViewportTranslator* transla
               << (numPages * sizeof(uint64_t) / (1024.0 * 1024.0)) << " MB allocated)\n";
 
     // If PTEs provided, pre-populate the cache
-    std::cout << "***** DEBUG: ptes pointer = " << (void*)ptes
-              << ", size = " << (ptes ? ptes->size() : 0) << "\n";
     if (ptes && !ptes->empty()) {
         static const uint64_t UNMAPPED_SENTINEL = 0xFFFFFFFFFFFFFFFFULL;
 

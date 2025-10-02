@@ -287,7 +287,6 @@ int main(int argc, char** argv) {
                 std::cout << "------------------------------------------------\n";
                 
                 // Set PID first so targetPid is set when LoadMemoryMap calls EnableLazyPALookup
-                std::cout << "***** DEBUG: About to call LoadMemoryMap with " << ptes.size() << " PTEs\n";
                 visualizer.SetProcessPid(pid);
                 visualizer.LoadMemoryMap(regions, &ptes);
                 
