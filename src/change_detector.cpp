@@ -229,9 +229,6 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
     size_t size = 0;
     std::vector<uint8_t> buffer;  // For VA mode
 
-    // Timing: measure read time
-    auto read_start = std::chrono::high_resolution_clock::now();
-
     if (va_mode_enabled_ && crunched_reader_) {
         // VA mode: Use direct pointer via PA lookup table (zero-copy!)
         uint64_t flat_address = chunk.offset;
@@ -299,19 +296,6 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
         }
     } else {
         return;  // No reader available
-    }
-
-    auto read_end = std::chrono::high_resolution_clock::now();
-    auto read_us = std::chrono::duration_cast<std::chrono::microseconds>(read_end - read_start).count();
-
-    // Log slow reads (> 1ms)
-    static uint64_t total_read_us = 0;
-    static int read_count = 0;
-    total_read_us += read_us;
-    read_count++;
-    if (read_us > 1000 || read_count % 1000 == 0) {
-        std::cout << "***** [TIMING] ScanChunk read: " << read_us << "us (avg: "
-                  << (total_read_us / read_count) << "us over " << read_count << " scans)\n";
     }
 
     // Check if zero
