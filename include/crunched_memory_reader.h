@@ -38,9 +38,13 @@ public:
         this->qemu = qemu;
     }
     QemuConnection* GetConnection() const { return qemu; }
-    void SetPID(int pid) { 
-        this->targetPid = pid; 
+    void SetPID(int pid) {
+        this->targetPid = pid;
+        InitializeRenderCache();
     }
+
+    // Initialize rendering PA cache (called when PID changes)
+    void InitializeRenderCache();
     
     // Read from crunched address space
     // flatAddress: Position in flattened space (0 to totalMappedSize)
@@ -86,7 +90,7 @@ private:
     // std::shared_ptr<BeaconTranslator> beaconTranslator;  // OBSOLETE
     QemuConnection* qemu;
     int targetPid;
-    
+
     // Read cache for efficiency
     struct CacheEntry {
         uint64_t flatStart;
@@ -95,6 +99,11 @@ private:
     };
     std::vector<CacheEntry> cache;
     static constexpr size_t MAX_CACHE_ENTRIES = 10;
+
+    // Rendering-specific VA→PA lookup table (lock-free, sized to crunched space)
+    // Indexed by (flatAddress / 4096), value is PA of that page (0 = not yet translated)
+    mutable std::vector<uint64_t> renderPACache;
+    static constexpr size_t PAGE_SIZE = 4096;
     
     // Helper to read a single region
     bool ReadRegion(const AddressSpaceFlattener::MappedRegion& region,

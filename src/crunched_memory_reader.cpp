@@ -161,24 +161,90 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
     return totalRead;
 }
 
+void CrunchedMemoryReader::InitializeRenderCache() {
+    // Only used in VA mode
+    if (!flattener || !translator || targetPid <= 0) {
+        renderPACache.clear();
+        return;
+    }
+
+    uint64_t crunchedSize = flattener->GetFlatSize();
+    size_t numPages = (crunchedSize + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    // Allocate cache but don't translate yet (lazy)
+    renderPACache.clear();
+    renderPACache.resize(numPages, 0);  // 0 = not yet translated
+
+    std::cout << "Rendering PA cache: " << numPages << " pages ("
+              << (numPages * sizeof(uint64_t) / (1024.0 * 1024.0)) << " MB)\n";
+}
+
 const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
     if (!flattener || !qemu) {
         return nullptr;
     }
 
-    // Use PA lookup table for instant translation
-    uint64_t physAddr = flattener->GetPhysicalAddress(flatAddress);
-    if (physAddr == 0) {
-        return nullptr;  // Not mapped
-    }
+    // Check if we're in VA mode (have translator and PID)
+    if (translator && targetPid > 0 && !renderPACache.empty()) {
+        // VA mode: Use rendering PA cache (lock-free, lazy translation)
+        size_t pageIdx = flatAddress / PAGE_SIZE;
+        if (pageIdx >= renderPACache.size()) {
+            return nullptr;  // Out of bounds
+        }
 
-    // Get memory backend and return direct pointer
-    auto* backend = qemu->GetMemoryBackend();
-    if (!backend || !backend->IsAvailable()) {
-        return nullptr;
-    }
+        uint64_t physAddr = renderPACache[pageIdx];
 
-    return backend->GetDirectPointer(physAddr);
+        // Lazy translation: translate on first access
+        if (physAddr == 0) {
+            // Find which region this flat address belongs to
+            const auto* region = flattener->GetRegionForFlat(flatAddress);
+            if (!region) {
+                return nullptr;  // Not in any region
+            }
+
+            // Calculate VA from flat address
+            uint64_t offsetInRegion = flatAddress - region->flatStart;
+            uint64_t va = region->virtualStart + offsetInRegion;
+
+            // Translate VA to PA (page-aligned)
+            uint64_t pageVA = (va / PAGE_SIZE) * PAGE_SIZE;
+            physAddr = translator->TranslateAddress(targetPid, pageVA);
+
+            // Cache the result (even if 0, to avoid repeated failed translations)
+            if (physAddr != 0) {
+                renderPACache[pageIdx] = physAddr;
+            }
+        }
+
+        if (physAddr == 0) {
+            return nullptr;  // Page not mapped
+        }
+
+        // Add offset within page
+        physAddr += (flatAddress % PAGE_SIZE);
+
+        // Get memory backend and return direct pointer
+        auto* backend = qemu->GetMemoryBackend();
+        if (!backend || !backend->IsAvailable()) {
+            return nullptr;
+        }
+
+        return backend->GetDirectPointer(physAddr);
+    } else {
+        // PA mode or old path: Use AddressSpaceFlattener's PA lookup
+        uint64_t physAddr = flattener->GetPhysicalAddress(flatAddress);
+        if (physAddr == 0) {
+            return nullptr;  // Not mapped
+        }
+
+        // Get memory backend and return direct pointer
+        auto* backend = qemu->GetMemoryBackend();
+        if (!backend || !backend->IsAvailable()) {
+            return nullptr;
+        }
+
+        return backend->GetDirectPointer(physAddr);
+    }
 }
 
 CrunchedMemoryReader::PositionInfo CrunchedMemoryReader::GetPositionInfo(uint64_t flatAddress) const {
