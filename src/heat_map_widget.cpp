@@ -184,10 +184,10 @@ bool HeatMapWidget::Draw(float width, float height, uint64_t current_offset, uin
         // Get color for this chunk
         Color color = GetChunkColor(chunk);
 
-        // Draw chunk pixel
+        // Draw chunk pixel (no gap - fill entire pixel)
         draw_list->AddRectFilled(
             ImVec2(x, y),
-            ImVec2(x + pixel_size_ - 1, y + pixel_size_ - 1),
+            ImVec2(x + pixel_size_, y + pixel_size_),
             IM_COL32(color.r, color.g, color.b, color.a)
         );
     }
