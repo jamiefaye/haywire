@@ -289,7 +289,7 @@ void MemoryRenderer::RenderInstructionElement(
         }
     }
 
-    // Build text: uppercase mnemonic + operands
+    // Build text: uppercase mnemonic + operands, or data representation
     std::string text;
     if (valid) {
         // Convert mnemonic to uppercase
@@ -302,7 +302,30 @@ void MemoryRenderer::RenderInstructionElement(
             text += " " + info.operands;
         }
     } else {
-        text = ".word";
+        // Not a valid instruction - check if it looks like ASCII text
+        bool allPrintable = true;
+        for (int i = 0; i < 4; ++i) {
+            uint8_t b = src[i];
+            if (b != 0 && (b < 32 || b > 126)) {
+                allPrintable = false;
+                break;
+            }
+        }
+
+        if (allPrintable && src[0] != 0) {
+            // Show as ASCII string in quotes
+            text = "\"";
+            for (int i = 0; i < 4 && src[i] != 0; ++i) {
+                text += (char)src[i];
+            }
+            text += "\"";
+        } else {
+            // Show as hex value (little-endian)
+            uint32_t value = (src[0] << 0) | (src[1] << 8) | (src[2] << 16) | (src[3] << 24);
+            char hexBuf[16];
+            snprintf(hexBuf, sizeof(hexBuf), "0x%08X", value);
+            text = hexBuf;
+        }
     }
 
     // Draw text starting at x=7 (after 6px icon + 1px spacing)
