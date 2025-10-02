@@ -2703,8 +2703,20 @@ void MemoryVisualizer::DrawCorrelationStripe() {
                 float x = pos.x + peak * xScale;
                 char label[32];
                 snprintf(label, sizeof(label), "%d", peak);
-                drawList->AddText(ImVec2(x + 2, pos.y + 2),
-                                 IM_COL32(255, 255, 0, 255), label);
+
+                // Calculate text size for background
+                ImVec2 textSize = ImGui::CalcTextSize(label);
+                ImVec2 labelPos(x + 2, pos.y + 2);
+
+                // Draw semi-transparent background to make label readable
+                drawList->AddRectFilled(
+                    ImVec2(labelPos.x - 2, labelPos.y - 1),
+                    ImVec2(labelPos.x + textSize.x + 2, labelPos.y + textSize.y + 1),
+                    IM_COL32(0, 0, 0, 180)  // Dark background with 70% opacity
+                );
+
+                // Draw the label text
+                drawList->AddText(labelPos, IM_COL32(255, 255, 0, 255), label);
             }
         }
     }
