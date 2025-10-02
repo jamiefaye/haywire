@@ -49,22 +49,33 @@ bool InstructionRenderer::Disassemble(const uint8_t* data, uint64_t address,
         cs_free(insn, count);
         return true;
     } else {
-        // Disassembly failed - treat as invalid/garbage
+        // Disassembly failed - treat as data, show as hex
         out.address = address;
         std::memcpy(out.bytes, data, 4);
-        out.mnemonic = "???";
-        out.operands = "";
+
+        // Format as hex like HEX_PIXEL format: 8 hex digits
+        uint32_t value = *(uint32_t*)data;
+        char hexbuf[16];
+        snprintf(hexbuf, sizeof(hexbuf), "%08X", value);
+
+        out.mnemonic = ".word";  // ARM assembly directive for data
+        out.operands = hexbuf;
         out.category = InstructionCategory::INVALID;
         out.valid = false;
-        
+
         return false;
     }
 #else
-    // No Capstone - return invalid
+    // No Capstone - show as hex data
     out.address = address;
     std::memcpy(out.bytes, data, 4);
-    out.mnemonic = "NO_CAPSTONE";
-    out.operands = "";
+
+    uint32_t value = *(uint32_t*)data;
+    char hexbuf[16];
+    snprintf(hexbuf, sizeof(hexbuf), "%08X", value);
+
+    out.mnemonic = ".word";
+    out.operands = hexbuf;
     out.category = InstructionCategory::INVALID;
     out.valid = false;
     return false;
@@ -180,7 +191,7 @@ uint32_t InstructionRenderer::GetCategoryColor(InstructionCategory cat) {
         case InstructionCategory::COMPARE:    return 0xFFC832DC;  // Magenta
         case InstructionCategory::SIMD_FP:    return 0xFFA050DC;  // Purple
         case InstructionCategory::SYSTEM:     return 0xFF808080;  // Gray
-        case InstructionCategory::INVALID:    return 0xFF404040;  // Dark gray
+        case InstructionCategory::INVALID:    return 0xFF5A4A3C;  // Brown (data color)
         default:                              return 0xFF808080;
     }
 }
@@ -223,7 +234,7 @@ static const uint8_t ICON_SYSTEM[6] = {
 };
 
 static const uint8_t ICON_INVALID[6] = {
-    0b1111, 0b1001, 0b1001, 0b1001, 0b1111, 0b0000  // □ (box)
+    0b1010, 0b0101, 0b1010, 0b0101, 0b1010, 0b0101  // Hex/data pattern (checkerboard)
 };
 
 const uint8_t* InstructionRenderer::GetCategoryIcon(InstructionCategory cat) {
