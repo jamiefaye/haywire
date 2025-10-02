@@ -737,7 +737,23 @@ void MemoryVisualizer::DrawMemoryBitmap() {
                           ImGuiWindowFlags_NoScrollbar);
 
         // Calculate viewport size in bytes for heat map
-        uint64_t viewSize = viewport.width * viewport.height * viewport.format.bytesPerPixel;
+        // For expanded formats (HEX_PIXEL, CHAR_8BIT), account for display size per element
+        uint64_t viewSize;
+        if (viewport.format.type == PixelFormat::HEX_PIXEL) {
+            // HEX_PIXEL: 4 bytes displayed as 33×7 pixels
+            int elementsWide = viewport.width / 33;
+            int elementsHigh = viewport.height / 7;
+            viewSize = elementsWide * elementsHigh * 4;
+        } else if (viewport.format.type == PixelFormat::CHAR_8BIT) {
+            // CHAR_8BIT: 1 byte displayed as 6×8 pixels
+            int elementsWide = viewport.width / 6;
+            int elementsHigh = viewport.height / 8;
+            viewSize = elementsWide * elementsHigh * 1;
+        } else {
+            // Standard formats: 1:1 pixel mapping
+            viewSize = viewport.width * viewport.height * viewport.format.bytesPerPixel;
+        }
+        viewSize = std::max(viewSize, (uint64_t)4096);  // Minimum 1 page
 
         // Convert physical address to file offset for change detector
         uint64_t fileOffset = viewport.baseAddress;
