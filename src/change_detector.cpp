@@ -241,50 +241,13 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
 
         size = std::min(chunk_size_, (size_t)(crunched_size - flat_address));
 
-        // Try direct pointer first (fast path using PA lookup)
+        // Try direct pointer (zero-copy access to mmap'd memory)
         data = crunched_reader_->GetDirectPointer(flat_address);
 
-        static int direct_ptr_success = 0;
-        static int direct_ptr_fail = 0;
-
         if (!data) {
-            direct_ptr_fail++;
-            if (direct_ptr_fail <= 10 || direct_ptr_fail % 1000 == 0) {
-                std::cout << "***** GetDirectPointer failed at flat 0x" << std::hex << flat_address << std::dec
-                          << " (success: " << direct_ptr_success << ", fail: " << direct_ptr_fail << ")\n";
-            }
-
-            // Quick check: if PA lookup returns 0, page is unmapped - treat as zero and skip slow path
-            auto* flattener = crunched_reader_->GetFlattener();
-            if (flattener) {
-                uint64_t testPA = flattener->GetPhysicalAddress(flat_address);
-                if (testPA == 0) {
-                    // Page not mapped - treat entire chunk as zeros
-                    static std::vector<uint8_t> zero_buffer;
-                    if (zero_buffer.size() < size) {
-                        zero_buffer.resize(size, 0);
-                    }
-                    data = zero_buffer.data();
-                } else {
-                    // PA exists but GetDirectPointer failed (probably outside memory backend range)
-                    // Fall back to slow copy path
-                    buffer.resize(size);
-                    try {
-                        size_t bytes_read = crunched_reader_->ReadCrunchedMemory(flat_address, size, buffer);
-                        if (bytes_read == 0) {
-                            return;
-                        }
-                        data = buffer.data();
-                        size = bytes_read;
-                    } catch (...) {
-                        return;
-                    }
-                }
-            } else {
-                return;  // No flattener available
-            }
-        } else {
-            direct_ptr_success++;
+            // GetDirectPointer failed - page unmapped or outside memory backend range
+            // Skip this chunk (don't fall back to expensive QMP calls)
+            return;
         }
     } else if (memory_reader_) {
         // PA mode: Read from physical memory file
