@@ -100,13 +100,14 @@ private:
     std::vector<CacheEntry> cache;
     static constexpr size_t MAX_CACHE_ENTRIES = 10;
 
-    // Rendering-specific VA→PA lookup table (lock-free, sized to crunched space)
-    // Indexed by (flatAddress / 4096), value is PA of that page
-    // Special values: 0 = not yet translated, 1 = unmapped/bad (skip immediately)
-    mutable std::vector<uint64_t> renderPACache;
+    // Rendering-specific flat→VA→PA lookup table (lock-free, O(1) access)
+    struct PageCacheEntry {
+        uint64_t va;        // Virtual address (built eagerly from regions)
+        uint64_t pa;        // Physical address (lazy translation)
+        uint8_t flags;      // 0 = valid, 1 = unmapped (could be timer for retry later)
+    };
+    mutable std::vector<PageCacheEntry> renderPageCache;
     static constexpr size_t PAGE_SIZE = 4096;
-    static constexpr uint64_t PA_NOT_TRANSLATED = 0;
-    static constexpr uint64_t PA_UNMAPPED = 1;  // Page exists but not mapped, skip it
     
     // Helper to read a single region
     bool ReadRegion(const AddressSpaceFlattener::MappedRegion& region,

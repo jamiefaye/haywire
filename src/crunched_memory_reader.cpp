@@ -164,19 +164,36 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
 void CrunchedMemoryReader::InitializeRenderCache() {
     // Only used in VA mode
     if (!flattener || !translator || targetPid <= 0) {
-        renderPACache.clear();
+        renderPageCache.clear();
         return;
     }
 
     uint64_t crunchedSize = flattener->GetFlatSize();
     size_t numPages = (crunchedSize + PAGE_SIZE - 1) / PAGE_SIZE;
 
-    // Allocate cache but don't translate yet (lazy)
-    renderPACache.clear();
-    renderPACache.resize(numPages, 0);  // 0 = not yet translated
+    // Build VA lookup table eagerly (O(1) flat→VA, no more binary search!)
+    renderPageCache.clear();
+    renderPageCache.resize(numPages);
 
-    std::cout << "Rendering PA cache: " << numPages << " pages ("
-              << (numPages * sizeof(uint64_t) / (1024.0 * 1024.0)) << " MB)\n";
+    const auto& regions = flattener->GetRegions();
+    for (const auto& region : regions) {
+        // For each page in this region, store its VA
+        uint64_t regionPages = (region.FlatSize() + PAGE_SIZE - 1) / PAGE_SIZE;
+        size_t startPageIdx = region.flatStart / PAGE_SIZE;
+
+        for (size_t i = 0; i < regionPages; i++) {
+            size_t pageIdx = startPageIdx + i;
+            if (pageIdx < numPages) {
+                uint64_t pageVA = region.virtualStart + (i * PAGE_SIZE);
+                renderPageCache[pageIdx].va = pageVA;
+                renderPageCache[pageIdx].pa = 0;  // Will translate lazily
+                renderPageCache[pageIdx].flags = 0;
+            }
+        }
+    }
+
+    std::cout << "Rendering page cache: " << numPages << " pages ("
+              << (numPages * sizeof(PageCacheEntry) / (1024.0 * 1024.0)) << " MB)\n";
 }
 
 const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
@@ -185,42 +202,34 @@ const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
     }
 
     // Check if we're in VA mode (have translator and PID)
-    if (translator && targetPid > 0 && !renderPACache.empty()) {
-        // VA mode: Use rendering PA cache (lock-free, lazy translation)
+    if (translator && targetPid > 0 && !renderPageCache.empty()) {
+        // VA mode: Use rendering page cache (O(1) flat→VA→PA, no binary search!)
         size_t pageIdx = flatAddress / PAGE_SIZE;
-        if (pageIdx >= renderPACache.size()) {
+        if (pageIdx >= renderPageCache.size()) {
             return nullptr;  // Out of bounds
         }
 
-        uint64_t physAddr = renderPACache[pageIdx];
+        auto& entry = renderPageCache[pageIdx];
 
         // Check for cached unmapped page (marked as bad)
-        if (physAddr == PA_UNMAPPED) {
+        if (entry.flags != 0) {
             return nullptr;  // Previously determined to be unmapped, skip immediately
         }
 
+        uint64_t physAddr = entry.pa;
+
         // Lazy translation: translate on first access
-        if (physAddr == PA_NOT_TRANSLATED) {
-            // Find which region this flat address belongs to
-            const auto* region = flattener->GetRegionForFlat(flatAddress);
-            if (!region) {
-                return nullptr;  // Not in any region
-            }
-
-            // Calculate VA from flat address
-            uint64_t offsetInRegion = flatAddress - region->flatStart;
-            uint64_t va = region->virtualStart + offsetInRegion;
-
-            // Translate VA to PA (page-aligned)
-            uint64_t pageVA = (va / PAGE_SIZE) * PAGE_SIZE;
+        if (physAddr == 0) {
+            // VA is already cached from initialization (O(1) lookup!)
+            uint64_t pageVA = (entry.va / PAGE_SIZE) * PAGE_SIZE;
             physAddr = translator->TranslateAddress(targetPid, pageVA);
 
-            // Cache the result - mark unmapped pages with sentinel
+            // Cache the result - mark unmapped pages with flag
             if (physAddr != 0) {
-                renderPACache[pageIdx] = physAddr;
+                entry.pa = physAddr;
             } else {
                 // Mark as unmapped so we skip it immediately next time
-                renderPACache[pageIdx] = PA_UNMAPPED;
+                entry.flags = 1;
                 return nullptr;
             }
         }
