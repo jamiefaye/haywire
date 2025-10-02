@@ -2108,15 +2108,23 @@ void MemoryVisualizer::DrawMagnifier() {
         }
     }
     
-    // Set initial size but allow resizing (wider to accommodate hex display)
-    ImGui::SetNextWindowSize(ImVec2(550, 500), ImGuiCond_FirstUseEver);
-    
+    // Determine window size based on hex data visibility
+    static bool showHexData = false;
+    static bool prevShowHexData = false;
+
+    // Set window size dynamically based on hex state
+    // Don't use ImGuiCond - set it every frame to ensure proper sizing
+    float baseHeight = 520.0f; // Enough for search bar, controls, magnified area, and bottom info
+    float windowHeight = showHexData ? baseHeight + 250.0f : baseHeight;
+    ImGui::SetNextWindowSize(ImVec2(550, windowHeight));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(400, windowHeight), ImVec2(FLT_MAX, windowHeight));
+
     // Bring to front when requested
     if (bringToFront) {
         ImGui::SetNextWindowFocus();
         bringToFront = false;
     }
-    
+
     if (!ImGui::Begin("Magnifier", &showMagnifier, windowFlags)) {
         ImGui::End();
         return;
@@ -2211,30 +2219,9 @@ void MemoryVisualizer::DrawMagnifier() {
     
     ImGui::Separator();
 
-    // Static state for hex data visibility
-    static bool showHexData = false;
-    static bool prevShowHexData = false;
-
-    // Adjust window size when hex data is toggled
-    if (showHexData != prevShowHexData) {
-        ImVec2 currentSize = ImGui::GetWindowSize();
-        if (showHexData) {
-            // Expand window to accommodate hex data
-            ImGui::SetWindowSize(ImVec2(currentSize.x, currentSize.y + 250.0f));
-        } else {
-            // Shrink window when hiding hex data
-            ImGui::SetWindowSize(ImVec2(currentSize.x, currentSize.y - 250.0f));
-        }
-        prevShowHexData = showHexData;
-    }
-
-    // Calculate magnified area size - fixed height for consistency
-    ImVec2 contentRegion = ImGui::GetContentRegionAvail();
-    float magnifiedAreaWidth = contentRegion.x - 10;
-    // Use most of the content region for magnified area, leaving space for controls and hex toggle
-    float magnifiedAreaHeight = contentRegion.y - 40.0f; // Reserve 40px for bottom info
-    magnifiedAreaHeight = std::max(magnifiedAreaHeight, 100.0f); // Minimum height
-    magnifiedAreaWidth = std::max(magnifiedAreaWidth, 100.0f); // Minimum width
+    // Calculate magnified area size - use a fixed size for the magnified view
+    float magnifiedAreaWidth = 530.0f; // Fixed width for magnified area
+    float magnifiedAreaHeight = 350.0f; // Fixed height for magnified area
     
     // Calculate how many source pixels we can show
     int sourcePixelsX = magnifiedAreaWidth / magnifierZoom;
