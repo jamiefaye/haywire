@@ -88,12 +88,13 @@ public:
         return active->size();
     }
 
-    // Clear all entries
+    // Clear all entries and reset to single-buffered mode
     void Clear() {
         tableA.clear();
-        if (doubleBuffered) {
-            tableB.clear();
-        }
+        tableB.clear();
+        activeTable = &tableA;
+        writingTable = nullptr;
+        doubleBuffered = false;
     }
 
     // Writer API: Begin update cycle (for PTE walker thread)

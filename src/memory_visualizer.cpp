@@ -113,9 +113,8 @@ void MemoryVisualizer::SetTranslator(std::shared_ptr<ViewportTranslator> transla
 
 void MemoryVisualizer::SetProcessPid(int pid) {
     targetPid = pid;
-    if (crunchedReader) {
-        crunchedReader->SetPID(pid);
-    }
+    // DON'T call SetPID on crunchedReader here - it will initialize cache with stale regions
+    // We'll call ReinitializeCrunchedReader() after LoadMemoryMap builds new regions
     // Update bitmap viewer manager's PID and VA components
     if (bitmapViewerManager) {
         bitmapViewerManager->SetCurrentPID(pid);
@@ -137,6 +136,13 @@ void MemoryVisualizer::SetProcessPid(int pid) {
 
     // NOTE: PA lookup table is now built in LoadMemoryMap() with PTEs pre-populated
     // No need to call EnableLazyPALookup here anymore
+}
+
+void MemoryVisualizer::ReinitializeCrunchedReader() {
+    if (crunchedReader && targetPid > 0) {
+        std::cerr << "Reinitializing crunched reader with new flattener regions for PID " << targetPid << "\n";
+        crunchedReader->SetPID(targetPid);  // This rebuilds renderPageCache with current flattener regions
+    }
 }
 
 void MemoryVisualizer::CreateTexture() {
@@ -1054,11 +1060,13 @@ void MemoryVisualizer::DrawControls() {
     if (ImGui::Checkbox("Heat Map", &showHeatMap)) {
         // Start/stop change detector based on checkbox
         if (changeDetector_) {
+            #ifndef HAYWIRE_DEBUG_NO_THREADS
             if (showHeatMap) {
                 changeDetector_->Start();
             } else {
                 changeDetector_->Stop();
             }
+            #endif
         }
     }
     if (ImGui::IsItemHovered()) {
@@ -3386,21 +3394,43 @@ void MemoryVisualizer::SetViewport(const ViewportSettings& settings) {
 void MemoryVisualizer::LoadMemoryMap(const std::vector<GuestMemoryRegion>& regions,
                                      const std::unordered_map<uint64_t, uint64_t>* ptes) {
     if (addressFlattener) {
+        // Clear current memory buffer to prevent stale data access during rebuild
+        {
+            std::lock_guard<std::mutex> lock(memoryMutex);
+            currentMemory.data.clear();
+            pendingMemory.data.clear();
+        }
+
+        // Clear viewport translator's cache for this PID (stale translations cause blank displays)
+        if (viewportTranslator && targetPid > 0) {
+            viewportTranslator->ClearCache(targetPid);
+        }
+
         addressFlattener->BuildFromRegions(regions);
         std::cerr << "Loaded memory map with " << regions.size() << " regions\n";
 
         // Build PA lookup table for fast flat->PA translation
         if (viewportTranslator && targetPid > 0) {
+            // Stop old patrol thread first (was for old PID, would corrupt new cache)
+            addressFlattener->StopPTEPatrol();
+
             addressFlattener->EnableLazyPALookup(viewportTranslator.get(), targetPid, ptes);
 
             // Start PTE patrol thread (1 Hz background scan for mapping changes)
+            // Disable in debug builds to improve debugger performance
+            #ifndef HAYWIRE_DEBUG_NO_THREADS
             addressFlattener->StartPTEPatrol(1);
+            #endif
         }
 
         // Update change detector to use VA mode (now that flattener has regions built)
         if (changeDetector_ && targetPid > 0 && useVirtualAddresses) {
             changeDetector_->SetVAMode(true, crunchedReader.get());
         }
+
+        // Trigger immediate refresh by resetting timer (don't wait for next auto-refresh cycle)
+        std::cerr << "LoadMemoryMap: Resetting refresh timer to trigger immediate display update\n";
+        lastRefresh = std::chrono::steady_clock::time_point{};  // Reset to epoch - forces immediate refresh
     }
 }
 

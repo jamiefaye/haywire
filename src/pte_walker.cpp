@@ -108,6 +108,12 @@ void PTEWalker::ScanAllPTEs() {
 
     // Walk all pages in flat address space
     for (size_t pageIdx = 0; pageIdx < numPages; pageIdx++) {
+        // Check stop flag every 1000 pages to allow quick shutdown
+        if (pageIdx % 1000 == 0 && !running_.load()) {
+            std::cout << "PTEWalker: Scan interrupted at page " << pageIdx << "/" << numPages << "\n";
+            return;  // Exit early without committing partial update
+        }
+
         uint64_t flatAddr = pageIdx * PAGE_SIZE;
 
         // Find which region this belongs to (skip gaps)

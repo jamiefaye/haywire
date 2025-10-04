@@ -64,8 +64,9 @@ public:
     void SetTranslator(std::shared_ptr<ViewportTranslator> translator);
     // void SetBeaconTranslator(std::shared_ptr<BeaconTranslator> beaconTranslator);  // OBSOLETE
     void SetProcessPid(int pid);
+    void ReinitializeCrunchedReader();  // Call AFTER LoadMemoryMap to rebuild caches with new regions
     void SetGuestAgent(GuestAgent* agent) { guestAgent = agent; }
-    
+
     // Load memory map for navigation
     void LoadMemoryMap(const std::vector<GuestMemoryRegion>& regions,
                        const std::unordered_map<uint64_t, uint64_t>* ptes = nullptr);
