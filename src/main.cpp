@@ -288,12 +288,10 @@ int main(int argc, char** argv) {
                 
                 // Set PID first so targetPid is set when LoadMemoryMap calls EnableLazyPALookup
                 // But DON'T initialize render cache yet - that needs new flattener regions
-                std::cout << "DEBUG: About to call SetProcessPid(" << pid << ") with " << regions.size() << " regions and " << ptes.size() << " PTEs\n";
                 visualizer.SetProcessPid(pid);
                 visualizer.LoadMemoryMap(regions, &ptes);
                 // NOW initialize render cache (after flattener has new regions)
                 visualizer.ReinitializeCrunchedReader();
-                std::cout << "DEBUG: LoadMemoryMap and cache initialization completed\n";
                 
                 // Also load sections into the overview
                 overview.LoadProcessSections(regions);
