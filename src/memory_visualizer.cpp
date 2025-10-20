@@ -1526,20 +1526,31 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
             float startY = sliderPos.y + ((maxSliderValue - region.flatEnd/sliderUnit) / (float)maxSliderValue) * sliderHeight;
             float endY = sliderPos.y + ((maxSliderValue - region.flatStart/sliderUnit) / (float)maxSliderValue) * sliderHeight;
             
-            // Much stronger, more vibrant colors
+            // Color by ownership type (matching status bar)
             uint32_t color;
-            if (region.name.find("[heap]") != std::string::npos) {
-                color = IM_COL32(0, 255, 0, 255);  // Bright green for heap
-            } else if (region.name.find("[stack]") != std::string::npos) {
-                color = IM_COL32(255, 255, 0, 255);  // Bright yellow for stack
-            } else if (region.name.find(".so") != std::string::npos || 
-                       region.name.find(".dylib") != std::string::npos) {
-                color = IM_COL32(255, 0, 255, 255);  // Bright magenta for libraries
-            } else if (region.name.find("/bin/") != std::string::npos ||
-                       region.name.find("/usr/") != std::string::npos) {
-                color = IM_COL32(255, 128, 0, 255);  // Orange for executables
-            } else {
-                color = IM_COL32(100, 100, 100, 255);  // Medium gray for other regions
+            switch (region.ownershipType) {
+                case AddressSpaceFlattener::MappedRegion::EXECUTABLE:
+                    color = IM_COL32(255, 50, 50, 255);  // Red
+                    break;
+                case AddressSpaceFlattener::MappedRegion::SHARED_LIB:
+                    color = IM_COL32(50, 255, 255, 255);  // Cyan
+                    break;
+                case AddressSpaceFlattener::MappedRegion::HEAP:
+                    color = IM_COL32(255, 255, 50, 255);  // Yellow
+                    break;
+                case AddressSpaceFlattener::MappedRegion::STACK:
+                    color = IM_COL32(255, 150, 50, 255);  // Orange
+                    break;
+                case AddressSpaceFlattener::MappedRegion::FILE_BACKED:
+                    color = IM_COL32(50, 255, 50, 255);  // Green
+                    break;
+                case AddressSpaceFlattener::MappedRegion::VDSO:
+                case AddressSpaceFlattener::MappedRegion::VVAR:
+                    color = IM_COL32(255, 50, 255, 255);  // Magenta
+                    break;
+                default:
+                    color = IM_COL32(100, 100, 255, 255);  // Light blue for unknown/anonymous
+                    break;
             }
             
             drawList->AddRectFilled(
@@ -1614,6 +1625,32 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
                 
                 ImGui::BeginTooltip();
                 ImGui::Text("%s", displayName.c_str());
+
+                // Show ownership type with color
+                const char* typeName = region->GetTypeName();
+                ImVec4 typeColor;
+                switch (region->ownershipType) {
+                    case AddressSpaceFlattener::MappedRegion::EXECUTABLE:
+                        typeColor = ImVec4(1.0f, 0.2f, 0.2f, 1.0f); // Red
+                        break;
+                    case AddressSpaceFlattener::MappedRegion::SHARED_LIB:
+                        typeColor = ImVec4(0.2f, 1.0f, 1.0f, 1.0f); // Cyan
+                        break;
+                    case AddressSpaceFlattener::MappedRegion::HEAP:
+                        typeColor = ImVec4(1.0f, 1.0f, 0.2f, 1.0f); // Yellow
+                        break;
+                    case AddressSpaceFlattener::MappedRegion::STACK:
+                        typeColor = ImVec4(1.0f, 0.6f, 0.2f, 1.0f); // Orange
+                        break;
+                    case AddressSpaceFlattener::MappedRegion::FILE_BACKED:
+                        typeColor = ImVec4(0.2f, 1.0f, 0.2f, 1.0f); // Green
+                        break;
+                    default:
+                        typeColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f); // Gray
+                        break;
+                }
+                ImGui::TextColored(typeColor, "Type: %s", typeName);
+
                 ImGui::Text("VA: 0x%llx", virtualAddr);
                 ImGui::Text("Size: %.1f MB", (region->virtualEnd - region->virtualStart) / (1024.0 * 1024.0));
                 ImGui::EndTooltip();
