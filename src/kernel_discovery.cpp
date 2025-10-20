@@ -1371,12 +1371,7 @@ private:
 
         // Anonymous mappings (no filename)
         if (flags & VM_GROWSDOWN) {
-            // Stack grows downward
-            return MemorySection::STACK;
-        }
-
-        // High address ranges are typically stack
-        if (start > 0x700000000000ULL) {
+            // Stack grows downward - VM_GROWSDOWN is the definitive stack indicator
             return MemorySection::STACK;
         }
 
@@ -1385,7 +1380,12 @@ private:
             return MemorySection::HEAP;
         }
 
-        // Default for anonymous
+        // Read-only anonymous mappings
+        if (!(flags & VM_WRITE) && !(flags & VM_EXEC)) {
+            return MemorySection::ANONYMOUS;  // Could be guard pages, etc.
+        }
+
+        // Everything else anonymous
         return MemorySection::ANONYMOUS;
     }
 
