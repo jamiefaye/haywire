@@ -63,10 +63,25 @@ const std::vector<std::string> KNOWN_PROCESSES = {
 class KernelDiscovery {
 public:
     struct MemorySection {
+        enum Type {
+            UNKNOWN = 0,
+            ANONYMOUS,      // Heap, anonymous mmap
+            FILE_BACKED,    // Mapped file (not code/lib)
+            SHARED_LIB,     // Shared library (.so)
+            EXECUTABLE,     // Executable code
+            STACK,          // Thread stack
+            HEAP,           // Heap pages
+            VDSO,           // Virtual DSO
+            VVAR,           // Virtual var
+        };
+
         uint64_t start;             // Start virtual address
         uint64_t end;               // End virtual address
         uint64_t flags;             // VM flags
         std::string name;           // Mapped file name (if any)
+        Type type;                  // Classification of this section
+
+        MemorySection() : start(0), end(0), flags(0), type(UNKNOWN) {}
     };
 
     struct PTE {
@@ -1318,8 +1333,60 @@ private:
                 ExtractFileName(vmFile, section.name);
             }
 
+            // Classify the section based on flags and filename
+            section.type = ClassifySection(vmStart, vmEnd, vmFlags, section.name);
+
             sections.push_back(section);
         }
+    }
+
+    // VM flag constants (from Linux kernel)
+    static constexpr uint64_t VM_READ    = 0x00000001;
+    static constexpr uint64_t VM_WRITE   = 0x00000002;
+    static constexpr uint64_t VM_EXEC    = 0x00000004;
+    static constexpr uint64_t VM_SHARED  = 0x00000008;
+    static constexpr uint64_t VM_GROWSDOWN = 0x00000100;
+
+    MemorySection::Type ClassifySection(uint64_t start, uint64_t end, uint64_t flags, const std::string& filename) {
+        // Check for special kernel-provided mappings by filename
+        if (!filename.empty()) {
+            if (filename == "[vdso]") return MemorySection::VDSO;
+            if (filename == "[vvar]") return MemorySection::VVAR;
+            if (filename == "[stack]" || filename.find("[stack:") == 0) return MemorySection::STACK;
+            if (filename == "[heap]") return MemorySection::HEAP;
+
+            // Shared libraries (.so files)
+            if (filename.find(".so") != std::string::npos) {
+                return MemorySection::SHARED_LIB;
+            }
+
+            // Executable code (has exec permission and is a file)
+            if (flags & VM_EXEC) {
+                return MemorySection::EXECUTABLE;
+            }
+
+            // Regular file-backed mapping
+            return MemorySection::FILE_BACKED;
+        }
+
+        // Anonymous mappings (no filename)
+        if (flags & VM_GROWSDOWN) {
+            // Stack grows downward
+            return MemorySection::STACK;
+        }
+
+        // High address ranges are typically stack
+        if (start > 0x700000000000ULL) {
+            return MemorySection::STACK;
+        }
+
+        // Writable, non-executable regions are likely heap
+        if ((flags & VM_WRITE) && !(flags & VM_EXEC)) {
+            return MemorySection::HEAP;
+        }
+
+        // Default for anonymous
+        return MemorySection::ANONYMOUS;
     }
 
     void ExtractFileName(uint64_t vmFile, std::string& filename) {
