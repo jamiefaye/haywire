@@ -14,14 +14,45 @@ namespace Haywire {
 class AddressSpaceFlattener {
 public:
     struct MappedRegion {
+        enum OwnershipType {
+            UNKNOWN = 0,
+            ANONYMOUS,      // Heap, anonymous mmap
+            FILE_BACKED,    // Mapped file (not code/lib)
+            SHARED_LIB,     // Shared library (.so)
+            EXECUTABLE,     // Executable code
+            STACK,          // Thread stack
+            HEAP,           // Heap pages
+            VDSO,           // Virtual DSO
+            VVAR,           // Virtual var
+        };
+
         uint64_t virtualStart;   // Original VA
         uint64_t virtualEnd;
         uint64_t flatStart;      // Position in flattened space
         uint64_t flatEnd;
         std::string name;
+        OwnershipType ownershipType;  // What this region is used for
+
+        MappedRegion() : virtualStart(0), virtualEnd(0), flatStart(0), flatEnd(0), ownershipType(UNKNOWN) {}
 
         uint64_t Size() const { return virtualEnd - virtualStart; }
         uint64_t FlatSize() const { return flatEnd - flatStart; }
+
+        // Get human-readable type name
+        const char* GetTypeName() const {
+            switch (ownershipType) {
+                case UNKNOWN: return "Unknown";
+                case ANONYMOUS: return "Anonymous";
+                case FILE_BACKED: return "File-backed";
+                case SHARED_LIB: return "Shared Library";
+                case EXECUTABLE: return "Executable";
+                case STACK: return "Stack";
+                case HEAP: return "Heap";
+                case VDSO: return "vDSO";
+                case VVAR: return "vvar";
+                default: return "???";
+            }
+        }
     };
 
     AddressSpaceFlattener();

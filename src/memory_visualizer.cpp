@@ -649,17 +649,45 @@ void MemoryVisualizer::DrawFormulaBar() {
         const auto* region = addressFlattener->GetRegionForFlat(viewport.baseAddress);
         if (region) {
             ImGui::SameLine();
-            
+
             // Truncate region name if too long
             std::string regionName = region->name;
             if (regionName.length() > 20) {
                 regionName = regionName.substr(0, 17) + "...";
             }
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "[%s]", regionName.c_str());
-            
+
             if (ImGui::IsItemHovered() && region->name.length() > 20) {
                 ImGui::SetTooltip("%s", region->name.c_str());
             }
+
+            // Show ownership type
+            ImGui::SameLine();
+            const char* typeName = region->GetTypeName();
+
+            // Color code by type
+            ImVec4 typeColor;
+            switch (region->ownershipType) {
+                case AddressSpaceFlattener::MappedRegion::EXECUTABLE:
+                    typeColor = ImVec4(1.0f, 0.2f, 0.2f, 1.0f); // Red
+                    break;
+                case AddressSpaceFlattener::MappedRegion::SHARED_LIB:
+                    typeColor = ImVec4(0.2f, 1.0f, 1.0f, 1.0f); // Cyan
+                    break;
+                case AddressSpaceFlattener::MappedRegion::HEAP:
+                    typeColor = ImVec4(1.0f, 1.0f, 0.2f, 1.0f); // Yellow
+                    break;
+                case AddressSpaceFlattener::MappedRegion::STACK:
+                    typeColor = ImVec4(1.0f, 0.6f, 0.2f, 1.0f); // Orange
+                    break;
+                case AddressSpaceFlattener::MappedRegion::FILE_BACKED:
+                    typeColor = ImVec4(0.2f, 1.0f, 0.2f, 1.0f); // Green
+                    break;
+                default:
+                    typeColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f); // Gray
+                    break;
+            }
+            ImGui::TextColored(typeColor, "(%s)", typeName);
         }
         
         // Show PA if available

@@ -272,7 +272,7 @@ int main(int argc, char** argv) {
                     GuestMemoryRegion region;
                     region.start = section.va_start;
                     region.end = section.va_end;
-                    
+
                     // Convert permissions bitfield to string
                     std::string perms;
                     perms += (section.perms & 0x1) ? 'r' : '-';  // PROT_READ
@@ -280,8 +280,9 @@ int main(int argc, char** argv) {
                     perms += (section.perms & 0x4) ? 'x' : '-';  // PROT_EXEC
                     perms += (section.perms & 0x8) ? 'p' : 's';  // MAP_PRIVATE/SHARED
                     region.permissions = perms;
-                    
+
                     region.name = section.path;
+                    region.ownershipType = static_cast<GuestMemoryRegion::OwnershipType>(section.ownership_type);
                     regions.push_back(region);
                 }
                 std::cout << "------------------------------------------------\n";

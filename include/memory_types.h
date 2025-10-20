@@ -11,6 +11,7 @@ struct SectionEntry {
     uint64_t va_start;
     uint64_t va_end;
     uint32_t perms;
+    uint32_t ownership_type;  // Ownership classification (0=unknown, 1=anon, 2=file, 3=lib, 4=exec, 5=stack, 6=heap, 7=vdso, 8=vvar)
     char path[64];
 } __attribute__((packed));
 

@@ -40,7 +40,8 @@ void AddressSpaceFlattener::BuildFromRegions(const std::vector<GuestMemoryRegion
         mapped.flatStart = currentFlatPos;
         mapped.flatEnd = currentFlatPos + (region.end - region.start);
         mapped.name = region.name;
-        
+        mapped.ownershipType = static_cast<AddressSpaceFlattener::MappedRegion::OwnershipType>(region.ownershipType);
+
         regions.push_back(mapped);
         
         uint64_t regionSize = region.end - region.start;

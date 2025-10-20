@@ -252,6 +252,9 @@ bool KernelDiscoveryBackend::GetProcessSections(uint32_t pid, std::vector<Sectio
         if (sec.flags & 0x4) perms |= 1;  // VM_EXEC -> executable
         entry.perms = perms;
 
+        // Copy ownership type (enum values match between MemorySection::Type and our ownership_type field)
+        entry.ownership_type = static_cast<uint32_t>(sec.type);
+
         // Copy name to path field (truncate if too long)
         std::memset(entry.path, 0, sizeof(entry.path));
         if (!sec.name.empty()) {

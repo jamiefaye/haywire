@@ -61,10 +61,23 @@ struct GuestProcessInfo {
 };
 
 struct GuestMemoryRegion {
+    enum OwnershipType {
+        UNKNOWN = 0,
+        ANONYMOUS = 1,
+        FILE_BACKED = 2,
+        SHARED_LIB = 3,
+        EXECUTABLE = 4,
+        STACK = 5,
+        HEAP = 6,
+        VDSO = 7,
+        VVAR = 8
+    };
+
     uint64_t start;
     uint64_t end;
     std::string permissions;
     std::string name;
+    OwnershipType ownershipType = UNKNOWN;
 };
 
 struct PagemapEntry {
