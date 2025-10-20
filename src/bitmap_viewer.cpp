@@ -195,21 +195,21 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
         ImGui::SameLine(100);
         ImGui::SetNextItemWidth(80);
         
-        // Build format list matching web version
+        // Build format list matching PixelFormat::Type enum order
         const char* formats[] = {
-            "Grayscale", "RGB565", "RGB", "RGBA",
-            "BGR", "BGRA", "ARGB", "ABGR",
+            "RGB", "RGBA", "BGR", "BGRA",
+            "ARGB", "ABGR", "RGB565", "Grayscale",
             "Binary", "Hex Pixel", "Char 8-bit", "ARM64 Insn",
             "R|G|B|A", "B|G|R|A", "A|R|G|B", "A|B|G|R"
         };
-        
+
         // Map format index and split state to menu item index
         int menuIndex;
-        if (viewer.splitComponents && viewer.formatIndex >= 3 && viewer.formatIndex <= 7) {
-            if (viewer.formatIndex == 3) menuIndex = 12;      // RGBA -> R|G|B|A
-            else if (viewer.formatIndex == 5) menuIndex = 13; // BGRA -> B|G|R|A
-            else if (viewer.formatIndex == 6) menuIndex = 14; // ARGB -> A|R|G|B
-            else if (viewer.formatIndex == 7) menuIndex = 15; // ABGR -> A|B|G|R
+        if (viewer.splitComponents && viewer.formatIndex >= 1 && viewer.formatIndex <= 5) {
+            if (viewer.formatIndex == 1) menuIndex = 12;      // RGBA -> R|G|B|A
+            else if (viewer.formatIndex == 3) menuIndex = 13; // BGRA -> B|G|R|A
+            else if (viewer.formatIndex == 4) menuIndex = 14; // ARGB -> A|R|G|B
+            else if (viewer.formatIndex == 5) menuIndex = 15; // ABGR -> A|B|G|R
             else menuIndex = viewer.formatIndex;
         } else {
             menuIndex = viewer.formatIndex;
@@ -229,34 +229,18 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                     if (i >= 12) {
                         viewer.splitComponents = true;
                         // Map split menu items back to base format
-                        if (i == 12) viewer.formatIndex = 3;      // R|G|B|A -> RGBA
-                        else if (i == 13) viewer.formatIndex = 5; // B|G|R|A -> BGRA
-                        else if (i == 14) viewer.formatIndex = 6; // A|R|G|B -> ARGB
-                        else if (i == 15) viewer.formatIndex = 7; // A|B|G|R -> ABGR
+                        if (i == 12) viewer.formatIndex = 1;      // R|G|B|A -> RGBA
+                        else if (i == 13) viewer.formatIndex = 3; // B|G|R|A -> BGRA
+                        else if (i == 14) viewer.formatIndex = 4; // A|R|G|B -> ARGB
+                        else if (i == 15) viewer.formatIndex = 5; // A|B|G|R -> ABGR
                     } else {
                         // Regular formats
                         viewer.splitComponents = false;
                         viewer.formatIndex = i;
                     }
 
-                    // Map index to PixelFormat::Type (order: Grayscale, RGB565, RGB, RGBA, BGR, BGRA, ARGB, ABGR, Binary, Hex, Char, ARM64)
-                    PixelFormat::Type newType;
-                    switch(viewer.formatIndex) {
-                        case 0: newType = PixelFormat::GRAYSCALE; break;
-                        case 1: newType = PixelFormat::RGB565; break;
-                        case 2: newType = PixelFormat::RGB888; break;
-                        case 3: newType = PixelFormat::RGBA8888; break;
-                        case 4: newType = PixelFormat::BGR888; break;
-                        case 5: newType = PixelFormat::BGRA8888; break;
-                        case 6: newType = PixelFormat::ARGB8888; break;
-                        case 7: newType = PixelFormat::ABGR8888; break;
-                        case 8: newType = PixelFormat::BINARY; break;
-                        case 9: newType = PixelFormat::HEX_PIXEL; break;
-                        case 10: newType = PixelFormat::CHAR_8BIT; break;
-                        case 11: newType = PixelFormat::INSTRUCTION_ARM64; break;
-                        default: newType = PixelFormat::GRAYSCALE; break;
-                    }
-                    viewer.format = PixelFormat(newType);
+                    // Map index to PixelFormat::Type - now matches enum order directly
+                    viewer.format = PixelFormat(static_cast<PixelFormat::Type>(viewer.formatIndex));
 
                     // Update stride based on new format
                     if (viewer.format.type == PixelFormat::BINARY) {
@@ -336,19 +320,19 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
             // Format selector in popup
             ImGui::Separator();
             const char* popupFormats[] = {
-                "Grayscale", "RGB565", "RGB", "RGBA",
-                "BGR", "BGRA", "ARGB", "ABGR",
+                "RGB", "RGBA", "BGR", "BGRA",
+                "ARGB", "ABGR", "RGB565", "Grayscale",
                 "Binary", "Hex Pixel", "Char 8-bit", "ARM64 Insn",
                 "R|G|B|A", "B|G|R|A", "A|R|G|B", "A|B|G|R"
             };
 
             // Map format index and split state to menu item index
             int popupMenuIndex;
-            if (viewer.splitComponents && viewer.formatIndex >= 3 && viewer.formatIndex <= 7) {
-                if (viewer.formatIndex == 3) popupMenuIndex = 12;      // RGBA -> R|G|B|A
-                else if (viewer.formatIndex == 5) popupMenuIndex = 13; // BGRA -> B|G|R|A
-                else if (viewer.formatIndex == 6) popupMenuIndex = 14; // ARGB -> A|R|G|B
-                else if (viewer.formatIndex == 7) popupMenuIndex = 15; // ABGR -> A|B|G|R
+            if (viewer.splitComponents && viewer.formatIndex >= 1 && viewer.formatIndex <= 5) {
+                if (viewer.formatIndex == 1) popupMenuIndex = 12;      // RGBA -> R|G|B|A
+                else if (viewer.formatIndex == 3) popupMenuIndex = 13; // BGRA -> B|G|R|A
+                else if (viewer.formatIndex == 4) popupMenuIndex = 14; // ARGB -> A|R|G|B
+                else if (viewer.formatIndex == 5) popupMenuIndex = 15; // ABGR -> A|B|G|R
                 else popupMenuIndex = viewer.formatIndex;
             } else {
                 popupMenuIndex = viewer.formatIndex;
@@ -362,33 +346,17 @@ void BitmapViewerManager::DrawViewer(BitmapViewer& viewer) {
                         // Handle split variants (12-15)
                         if (i >= 12) {
                             viewer.splitComponents = true;
-                            if (i == 12) viewer.formatIndex = 3;      // R|G|B|A -> RGBA
-                            else if (i == 13) viewer.formatIndex = 5; // B|G|R|A -> BGRA
-                            else if (i == 14) viewer.formatIndex = 6; // A|R|G|B -> ARGB
-                            else if (i == 15) viewer.formatIndex = 7; // A|B|G|R -> ABGR
+                            if (i == 12) viewer.formatIndex = 1;      // R|G|B|A -> RGBA
+                            else if (i == 13) viewer.formatIndex = 3; // B|G|R|A -> BGRA
+                            else if (i == 14) viewer.formatIndex = 4; // A|R|G|B -> ARGB
+                            else if (i == 15) viewer.formatIndex = 5; // A|B|G|R -> ABGR
                         } else {
                             viewer.splitComponents = false;
                             viewer.formatIndex = i;
                         }
 
-                        // Map to PixelFormat::Type
-                        PixelFormat::Type newType;
-                        switch(viewer.formatIndex) {
-                            case 0: newType = PixelFormat::GRAYSCALE; break;
-                            case 1: newType = PixelFormat::RGB565; break;
-                            case 2: newType = PixelFormat::RGB888; break;
-                            case 3: newType = PixelFormat::RGBA8888; break;
-                            case 4: newType = PixelFormat::BGR888; break;
-                            case 5: newType = PixelFormat::BGRA8888; break;
-                            case 6: newType = PixelFormat::ARGB8888; break;
-                            case 7: newType = PixelFormat::ABGR8888; break;
-                            case 8: newType = PixelFormat::BINARY; break;
-                            case 9: newType = PixelFormat::HEX_PIXEL; break;
-                            case 10: newType = PixelFormat::CHAR_8BIT; break;
-                            case 11: newType = PixelFormat::INSTRUCTION_ARM64; break;
-                            default: newType = PixelFormat::GRAYSCALE; break;
-                        }
-                        viewer.format = PixelFormat(newType);
+                        // Map to PixelFormat::Type - now matches enum order directly
+                        viewer.format = PixelFormat(static_cast<PixelFormat::Type>(viewer.formatIndex));
 
                         // Update stride based on new format
                         if (viewer.format.type == PixelFormat::BINARY) {

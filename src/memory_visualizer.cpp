@@ -983,9 +983,9 @@ void MemoryVisualizer::DrawControls() {
     
     ImGui::SameLine();
     
-    // Build format list matching web version
-    const char* formats[] = { "Grayscale", "RGB565", "RGB", "RGBA",
-                              "BGR", "BGRA", "ARGB", "ABGR",
+    // Build format list matching PixelFormat::Type enum order
+    const char* formats[] = { "RGB", "RGBA", "BGR", "BGRA",
+                              "ARGB", "ABGR", "RGB565", "Grayscale",
                               "Binary", "Hex Pixel", "Char 8-bit", "ARM64 Insn",
                               "R|G|B|A", "B|G|R|A", "A|R|G|B", "A|B|G|R" };
     ImGui::PushItemWidth(120);
@@ -993,13 +993,12 @@ void MemoryVisualizer::DrawControls() {
     // Map format index and split state to menu item index
     // Indices 0-11: non-split formats, 12-15: split RGBA variants
     int menuIndex;
-    if (splitComponents && pixelFormatIndex >= 1 && pixelFormatIndex <= 4) {
-        // Split RGBA formats: RGBA(3)->12, BGRA(5)->13, ARGB(6)->14, ABGR(7)->15
-        // But our indices are: RGB(2)->skip, RGBA(3)->12, BGR(4)->skip, BGRA(5)->13
-        if (pixelFormatIndex == 3) menuIndex = 12;      // RGBA -> R|G|B|A
-        else if (pixelFormatIndex == 5) menuIndex = 13; // BGRA -> B|G|R|A
-        else if (pixelFormatIndex == 6) menuIndex = 14; // ARGB -> A|R|G|B
-        else if (pixelFormatIndex == 7) menuIndex = 15; // ABGR -> A|B|G|R
+    if (splitComponents && pixelFormatIndex >= 1 && pixelFormatIndex <= 5) {
+        // Split RGBA formats matching enum order:
+        if (pixelFormatIndex == 1) menuIndex = 12;      // RGBA -> R|G|B|A
+        else if (pixelFormatIndex == 3) menuIndex = 13; // BGRA -> B|G|R|A
+        else if (pixelFormatIndex == 4) menuIndex = 14; // ARGB -> A|R|G|B
+        else if (pixelFormatIndex == 5) menuIndex = 15; // ABGR -> A|B|G|R
         else menuIndex = pixelFormatIndex;
     } else {
         menuIndex = pixelFormatIndex;
@@ -1019,10 +1018,10 @@ void MemoryVisualizer::DrawControls() {
                 if (i >= 12) {
                     splitComponents = true;
                     // Map split menu items back to base format
-                    if (i == 12) pixelFormatIndex = 3;      // R|G|B|A -> RGBA
-                    else if (i == 13) pixelFormatIndex = 5; // B|G|R|A -> BGRA
-                    else if (i == 14) pixelFormatIndex = 6; // A|R|G|B -> ARGB
-                    else if (i == 15) pixelFormatIndex = 7; // A|B|G|R -> ABGR
+                    if (i == 12) pixelFormatIndex = 1;      // R|G|B|A -> RGBA
+                    else if (i == 13) pixelFormatIndex = 3; // B|G|R|A -> BGRA
+                    else if (i == 14) pixelFormatIndex = 4; // A|R|G|B -> ARGB
+                    else if (i == 15) pixelFormatIndex = 5; // A|B|G|R -> ABGR
                 } else {
                     // Regular formats
                     splitComponents = false;

@@ -9,7 +9,6 @@ namespace Haywire {
 MICRO_TIMER_DECL(timer_ReadCrunchedMemory, 100);
 MICRO_TIMER_DECL(timer_GetRegionForFlat, 1000);
 MICRO_TIMER_DECL(timer_TranslateAddress, 1000);
-MICRO_TIMER_DECL(timer_GetDirectPointer, 1000);
 
 CrunchedMemoryReader::CrunchedMemoryReader()
     : flattener(nullptr), translator(nullptr), // beaconTranslator removed
@@ -206,10 +205,7 @@ void CrunchedMemoryReader::InitializeRenderCache() {
 }
 
 const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
-    MICRO_TIMER_START(timer_GetDirectPointer);
-
     if (!flattener || !qemu) {
-        MICRO_TIMER_STOP(timer_GetDirectPointer);
         return nullptr;
     }
 
@@ -252,30 +248,25 @@ const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
         // Get memory backend and return direct pointer
         auto* backend = qemu->GetMemoryBackend();
         if (!backend || !backend->IsAvailable()) {
-            MICRO_TIMER_STOP(timer_GetDirectPointer);
             return nullptr;
         }
 
         const uint8_t* ptr = backend->GetDirectPointer(physAddr);
-        MICRO_TIMER_STOP(timer_GetDirectPointer);
         return ptr;
     } else {
         // PA mode or old path: Use AddressSpaceFlattener's PA lookup
         uint64_t physAddr = flattener->GetPhysicalAddress(flatAddress);
         if (physAddr == 0) {
-            MICRO_TIMER_STOP(timer_GetDirectPointer);
             return nullptr;  // Not mapped
         }
 
         // Get memory backend and return direct pointer
         auto* backend = qemu->GetMemoryBackend();
         if (!backend || !backend->IsAvailable()) {
-            MICRO_TIMER_STOP(timer_GetDirectPointer);
             return nullptr;
         }
 
         const uint8_t* ptr = backend->GetDirectPointer(physAddr);
-        MICRO_TIMER_STOP(timer_GetDirectPointer);
         return ptr;
     }
 }
