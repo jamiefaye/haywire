@@ -70,6 +70,14 @@ public:
     // Get process memory sections (VMAs)
     bool GetProcessSections(uint32_t pid, std::vector<SectionEntry>& sections);
 
+    // Get memory sections for ALL processes (for PageDatabase)
+    bool GetProcessMemorySections(uint32_t pid, std::vector<SectionEntry>& sections) {
+        return GetProcessSections(pid, sections);
+    }
+
+    // Discover all processes (for PageDatabase)
+    bool DiscoverProcesses(std::vector<ProcessInfo>& processes);
+
     // Get process PTEs for crunched view
     bool GetProcessPTEs(uint32_t pid, std::unordered_map<uint64_t, uint64_t>& ptes);
 

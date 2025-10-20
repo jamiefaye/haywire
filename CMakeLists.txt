@@ -105,6 +105,9 @@ add_executable(haywire
     src/memory_file_reader.cpp
     # beacon files completely removed - using memory_file_reader instead
     src/kernel_discovery_backend.cpp
+    # Page database and memory view system
+    src/page_database.cpp
+    src/memory_view.cpp
     # Change detection and heat map
     src/change_detector.cpp
     src/heat_map_widget.cpp
@@ -169,6 +172,45 @@ endif()
 
 # Copy assets to build directory
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+
+# Test executables
+
+# Test memory view system
+add_executable(test_memory_view
+    src/test_memory_view.cpp
+    src/page_database.cpp
+    src/memory_view.cpp
+    src/kernel_discovery_backend.cpp
+    src/guest_agent.cpp
+    src/qemu_connection.cpp
+    src/memory_backend.cpp
+    src/memory_utils.cpp
+    src/gdb_connection.cpp
+    src/memory_mapper.cpp
+    src/mmap_reader.cpp
+    src/kernel_memory_reader.cpp
+    src/crunched_memory_reader.cpp
+    src/address_space_flattener.cpp
+    src/pte_walker.cpp
+    src/pagemap_cache.cpp
+    src/kernel_viewport_translator.cpp
+    src/memory_file_reader.cpp
+    ${IMGUI_SOURCES}
+)
+
+target_include_directories(test_memory_view PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+)
+
+target_link_libraries(test_memory_view PRIVATE
+    glfw
+    OpenGL::GL
+    nlohmann_json::nlohmann_json
+    Threads::Threads
+    ${PLATFORM_LIBS}
+)
 
 # Test executables moved to test_attempts/ directory
 

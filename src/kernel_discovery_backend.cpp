@@ -184,6 +184,19 @@ std::map<uint32_t, ProcessInfo> KernelDiscoveryBackend::GetAllProcessInfo() {
     return result;
 }
 
+bool KernelDiscoveryBackend::DiscoverProcesses(std::vector<ProcessInfo>& processes) {
+    processes.clear();
+
+    for (const auto& [pid, proc] : pidMap) {
+        ProcessInfo info;
+        if (GetProcessInfo(pid, info)) {
+            processes.push_back(info);
+        }
+    }
+
+    return !processes.empty();
+}
+
 bool KernelDiscoveryBackend::SelectProcess(uint32_t pid) {
     auto it = pidMap.find(pid);
     if (it == pidMap.end()) {
