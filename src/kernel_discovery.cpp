@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <iomanip>
+#include <fstream>
 #include <vector>
 #include <map>
 #include <set>
@@ -152,10 +153,45 @@ public:
         return true;
     }
 
+    bool LoadCachedSwapperPGD() {
+        std::ifstream cache("/tmp/haywire-swapper-pgd.txt");
+        if (!cache.is_open()) {
+            return false;
+        }
+
+        cache >> std::hex >> kernelInfo.swapper_pgd >> kernelInfo.current_task;
+        if (!cache.good()) {
+            return false;
+        }
+
+        std::cout << "Loaded cached swapper PGD: 0x" << std::hex
+                  << kernelInfo.swapper_pgd << std::dec << std::endl;
+        std::cout << "Loaded cached current_task: 0x" << std::hex
+                  << kernelInfo.current_task << std::dec << std::endl;
+        return true;
+    }
+
+    void SaveSwapperPGDCache() {
+        std::ofstream cache("/tmp/haywire-swapper-pgd.txt");
+        if (cache.is_open()) {
+            cache << std::hex << kernelInfo.swapper_pgd << " "
+                  << kernelInfo.current_task << std::endl;
+            std::cout << "Cached swapper PGD to /tmp/haywire-swapper-pgd.txt" << std::endl;
+        }
+    }
+
     bool DiscoverKernel() {
         std::cout << "\n=== Kernel Discovery ===" << std::endl;
 
-        // Use singleton QMP connection
+        // Try loading from cache first (allows multiple concurrent instances)
+        if (LoadCachedSwapperPGD()) {
+            std::cout << "Using cached kernel info (QMP not needed)" << std::endl;
+            return true;
+        }
+
+        std::cout << "No cache found, querying via QMP..." << std::endl;
+
+        // Cache miss - need to query via QMP
         QemuConnection& qemu = QemuConnection::getInstance();
         if (qemu.IsQMPConnected()) {
             std::cout << "Using shared QMP connection for kernel info..." << std::endl;
@@ -164,6 +200,10 @@ public:
                 std::cout << "QMP query successful" << std::endl;
                 std::cout << "Got swapper PGD from QMP: 0x" << std::hex << kernelInfo.swapper_pgd << std::dec << std::endl;
                 std::cout << "Got current_task from QMP: 0x" << std::hex << kernelInfo.current_task << std::dec << std::endl;
+
+                // Cache for next time (allows subsequent instances to skip QMP)
+                SaveSwapperPGDCache();
+
                 return true;
             } else {
                 std::cerr << "ERROR: QMP query failed - cannot get swapper PGD" << std::endl;
@@ -172,12 +212,10 @@ public:
             }
         } else {
             std::cerr << "ERROR: QMP not connected - cannot get swapper PGD" << std::endl;
-            std::cerr << "Cannot proceed without QMP connection" << std::endl;
+            std::cerr << "Hint: First instance needs QMP to discover swapper PGD" << std::endl;
+            std::cerr << "      Subsequent instances can use cached value" << std::endl;
             return false;
         }
-
-        // No fallback - we require QMP to work properly
-        return false;
     }
 
     bool DiscoverProcesses() {
