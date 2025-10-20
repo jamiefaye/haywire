@@ -9,9 +9,11 @@
 
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include "page_database.h"
 #include "memory_view.h"
 #include "kernel_discovery_backend.h"
+#include "qemu_connection.h"
 
 using namespace Haywire;
 
@@ -52,6 +54,18 @@ void PrintViewInfo(const MemoryView& view, const std::string& title) {
 int main() {
     std::cout << "Memory View Test Program\n";
     std::cout << "========================\n\n";
+
+    // Initialize QMP connection first (singleton required by kernel discovery)
+    QemuConnection& qemu = QemuConnection::getInstance();
+    if (!qemu.AutoConnect()) {
+        std::cerr << "WARNING: QMP auto-connect failed, trying manual connection...\n";
+        if (!qemu.ConnectQMP("localhost", 4445)) {
+            std::cerr << "FATAL: Could not connect to QMP on localhost:4445\n";
+            std::cerr << "Make sure QEMU is running with: -qmp tcp:localhost:4445,server=on,wait=off\n";
+            return 1;
+        }
+    }
+    std::cout << "QMP connected successfully\n\n";
 
     // Initialize kernel discovery
     auto kernelDiscovery = std::make_shared<KernelDiscoveryBackend>();

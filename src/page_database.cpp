@@ -101,12 +101,16 @@ size_t PageDatabase::ScanAllProcesses(KernelDiscoveryBackend* backend) {
 
     size_t attributedCount = 0;
 
-    // For each process, get its memory sections
+    // For each process, get its memory sections and PTEs
     for (const auto& proc : processes) {
         std::vector<SectionEntry> sections;
         if (!backend->GetProcessMemorySections(proc.pid, sections)) {
             continue;
         }
+
+        // Get PTEs (VA->PA mappings) for this process
+        std::unordered_map<uint64_t, uint64_t> ptes;
+        backend->GetProcessPTEs(proc.pid, ptes);
 
         // For each section, mark pages as attributed
         for (const auto& section : sections) {
@@ -127,23 +131,51 @@ size_t PageDatabase::ScanAllProcesses(KernelDiscoveryBackend* backend) {
             // Get filename
             std::string filename(section.path);
 
-            // Iterate through all pages in this section
-            // Note: We don't have PTEs yet, so we're just marking the VMA range
-            // In future, we could walk PTEs to find which pages are actually mapped
+            // Convert permissions
+            uint32_t flags = 0;
+            if (section.perms & 0x01) flags |= 0x01;  // VM_READ
+            if (section.perms & 0x02) flags |= 0x02;  // VM_WRITE
+            if (section.perms & 0x04) flags |= 0x04;  // VM_EXEC
+            if (section.perms & 0x08) flags |= 0x08;  // VM_SHARED
+
+            // Iterate through all pages in this VMA
             uint64_t vaStart = section.va_start;
             uint64_t vaEnd = section.va_end;
 
             for (uint64_t va = vaStart; va < vaEnd; va += 4096) {
-                // We don't have VA->PA translation yet (would need PTE walk)
-                // For now, just build reverse lookup for VMA tracking
-                // Physical attribution will be added when we integrate PTE walking
+                // Look up PA for this VA
+                auto it = ptes.find(va);
+                if (it == ptes.end()) {
+                    // Page not mapped (not in PTEs) - skip it
+                    continue;
+                }
 
+                uint64_t pa = it->second;
+
+                // Check if PA is within RAM bounds
+                if (pa < ramBase || pa >= ramBase + ramSize) {
+                    // Outside RAM (kernel structures, etc.) - skip
+                    continue;
+                }
+
+                // Attribute this physical page
+                size_t pageIndex = PhysToIndex(pa);
+                if (pageIndex >= pages.size()) {
+                    continue;  // Shouldn't happen, but be safe
+                }
+
+                PageMetadata& page = pages[pageIndex];
+                page.virtualAddr = va;
+                page.pid = proc.pid;
+                page.ownershipType = ownershipType;
+                page.flags = flags;
+                page.filename = filename;
+
+                // Add to reverse lookup
                 uint64_t key = MakeVirtualKey(proc.pid, va);
-                // Store section info for this virtual page
-                // (We'll populate physical mapping when PTE walking is added)
+                virtualLookup[key] = pageIndex;
 
-                // For now, just track that this VA exists in this PID
-                // This allows us to answer "what VMAs exist?" even without PA mapping
+                attributedCount++;
             }
         }
     }
