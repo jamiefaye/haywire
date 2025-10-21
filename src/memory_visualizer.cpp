@@ -145,6 +145,23 @@ void MemoryVisualizer::ReinitializeCrunchedReader() {
     }
 }
 
+void MemoryVisualizer::EnableVAMode(bool enable) {
+    if (useVirtualAddresses != enable) {
+        useVirtualAddresses = enable;
+
+        // Update change detector to match VA/PA mode
+        if (changeDetector_) {
+            changeDetector_->SetVAMode(useVirtualAddresses, crunchedReader.get());
+        }
+
+        needsUpdate = true;
+    }
+}
+
+bool MemoryVisualizer::IsVAModeEnabled() const {
+    return useVirtualAddresses;
+}
+
 void MemoryVisualizer::CreateTexture() {
     if (memoryTexture) {
         glDeleteTextures(1, &memoryTexture);

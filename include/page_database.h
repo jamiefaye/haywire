@@ -166,6 +166,12 @@ public:
     // Check if a PID has been scanned
     bool IsPIDScanned(uint32_t pid) const;
 
+    // Get process name for a PID (returns empty string if not found)
+    std::string GetProcessName(uint32_t pid) const;
+
+    // Get all known PIDs and their names
+    std::unordered_map<uint32_t, std::string> GetAllProcessNames() const;
+
     // Query scan status
     bool IsScanning() const;
     bool IsFullScanComplete() const;
@@ -195,6 +201,7 @@ private:
     std::atomic<size_t> scannedProcessCount{0};
     std::atomic<size_t> totalProcessCount{0};
     std::unordered_set<uint32_t> scannedPIDs;  // PIDs we've scanned
+    std::unordered_map<uint32_t, std::string> processNames;  // PID → process name
 
     // Helper methods
     size_t ScanSingleProcess(const ProcessInfo& proc, KernelDiscoveryBackend* backend);

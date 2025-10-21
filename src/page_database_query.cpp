@@ -100,10 +100,11 @@ void PageDatabaseQuery::Render() {
         desc << "Query: ";
         switch (params.filterType) {
             case 0: desc << "PID " << params.selectedPID; break;
-            case 1: desc << "By Ownership Type"; break;
-            case 2: desc << "By Flags"; break;
-            case 3: desc << "Unattributed Pages"; break;
-            case 4: desc << "All Pages"; break;
+            case 1: desc << "Name '" << params.namePattern << "' (" << params.matchingPIDs.size() << " processes)"; break;
+            case 2: desc << "By Ownership Type"; break;
+            case 3: desc << "By Flags"; break;
+            case 4: desc << "Unattributed Pages"; break;
+            case 5: desc << "All Pages"; break;
         }
         desc << " (" << results.totalPages << " pages)";
 
@@ -126,10 +127,11 @@ void PageDatabaseQuery::Render() {
 void PageDatabaseQuery::RenderFilterControls() {
     ImGui::Text("Filter Type:");
     ImGui::RadioButton("By PID", &params.filterType, 0); ImGui::SameLine();
-    ImGui::RadioButton("By Ownership Type", &params.filterType, 1); ImGui::SameLine();
-    ImGui::RadioButton("By Flags", &params.filterType, 2);
-    ImGui::RadioButton("Unattributed Only", &params.filterType, 3); ImGui::SameLine();
-    ImGui::RadioButton("All Pages", &params.filterType, 4);
+    ImGui::RadioButton("By Name", &params.filterType, 1); ImGui::SameLine();
+    ImGui::RadioButton("By Ownership", &params.filterType, 2);
+    ImGui::RadioButton("By Flags", &params.filterType, 3); ImGui::SameLine();
+    ImGui::RadioButton("Unattributed", &params.filterType, 4); ImGui::SameLine();
+    ImGui::RadioButton("All Pages", &params.filterType, 5);
 
     ImGui::Spacing();
 
@@ -149,7 +151,39 @@ void PageDatabaseQuery::RenderFilterControls() {
             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "→ Invalid PID");
         }
     }
-    else if (params.filterType == 1) {  // By Ownership Type
+    else if (params.filterType == 1) {  // By Name (with wildcards)
+        ImGui::Text("Process Name Pattern (supports * and ?):");
+        if (ImGui::InputText("##name", params.namePattern, sizeof(params.namePattern))) {
+            // Update matching PIDs as user types
+            UpdateMatchingPIDs();
+        }
+
+        if (strlen(params.namePattern) > 0) {
+            if (params.matchingPIDs.empty()) {
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f),
+                                 "No processes match '%s'", params.namePattern);
+            } else {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f),
+                                 "Matched %zu processes:", params.matchingPIDs.size());
+                ImGui::Indent();
+                // Show first 10 matching processes
+                int shown = 0;
+                for (uint32_t pid : params.matchingPIDs) {
+                    if (shown >= 10) {
+                        ImGui::Text("... and %zu more", params.matchingPIDs.size() - 10);
+                        break;
+                    }
+                    ImGui::Text("PID %u", pid);
+                    shown++;
+                }
+                ImGui::Unindent();
+            }
+        } else {
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+                             "Examples: vlc, *firefox*, chrome*, *");
+        }
+    }
+    else if (params.filterType == 2) {  // By Ownership Type
         ImGui::Text("Select ownership types to include:");
         ImGui::Columns(2, "ownership_cols", false);
 
@@ -165,7 +199,7 @@ void PageDatabaseQuery::RenderFilterControls() {
         }
         ImGui::Columns(1);
     }
-    else if (params.filterType == 2) {  // By Flags
+    else if (params.filterType == 3) {  // By Flags
         ImGui::Text("Required flags (all must be set):");
         ImGui::Checkbox("Readable", &params.requireRead);
         ImGui::SameLine();
@@ -180,6 +214,16 @@ void PageDatabaseQuery::RenderFilterControls() {
         ImGui::SameLine();
         ImGui::Checkbox("Forbid Execute", &params.forbidExec);
     }
+
+    // Display options (shown for all filter types)
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Text("Display Options:");
+    ImGui::Checkbox("Deduplicate shared pages (show each page once)", &params.deduplicateSharedPages);
+    ImGui::Text("Sort by:");
+    ImGui::RadioButton("Physical Address", &params.sortMode, 0); ImGui::SameLine();
+    ImGui::RadioButton("PID", &params.sortMode, 1); ImGui::SameLine();
+    ImGui::RadioButton("Virtual Address", &params.sortMode, 2);
 }
 
 void PageDatabaseQuery::RenderResults() {
@@ -344,7 +388,13 @@ FilterCriteria PageDatabaseQuery::BuildFilterCriteria() const {
             filter.includePid0 = false;
             break;
 
-        case 1:  // By Ownership Type
+        case 1:  // By Name (with wildcards)
+            filter.type = FilterCriteria::BY_PID;
+            filter.pids = params.matchingPIDs;  // Use all matching PIDs
+            filter.includePid0 = false;
+            break;
+
+        case 2:  // By Ownership Type
             filter.type = FilterCriteria::BY_OWNERSHIP;
             for (int i = 0; i < 11; i++) {
                 if (params.ownershipFilters[i]) {
@@ -354,7 +404,7 @@ FilterCriteria PageDatabaseQuery::BuildFilterCriteria() const {
             }
             break;
 
-        case 2:  // By Flags
+        case 3:  // By Flags
             filter.type = FilterCriteria::BY_FLAGS;
             filter.requiredFlags = 0;
             filter.forbiddenFlags = 0;
@@ -368,12 +418,12 @@ FilterCriteria PageDatabaseQuery::BuildFilterCriteria() const {
             if (params.forbidExec) filter.forbiddenFlags |= 0x04;
             break;
 
-        case 3:  // Unattributed only
+        case 4:  // Unattributed only
             filter.type = FilterCriteria::BY_ATTRIBUTION;
             filter.attributionMode = FilterCriteria::UNATTRIBUTED_ONLY;
             break;
 
-        case 4:  // All pages
+        case 5:  // All pages
         default:
             filter.type = FilterCriteria::NONE;
             break;
@@ -397,6 +447,51 @@ const char* PageDatabaseQuery::GetOwnershipTypeName(PageMetadata::OwnershipType 
         case PageMetadata::KERNEL_DATA: return "Kernel Data";
         default: return "Unknown";
     }
+}
+
+// Wildcard pattern matching (supports * and ?)
+bool PageDatabaseQuery::MatchesWildcard(const char* str, const char* pattern) const {
+    while (*pattern) {
+        if (*pattern == '*') {
+            pattern++;
+            if (!*pattern) return true;  // * at end matches everything
+
+            // Try to match rest of pattern with remaining string
+            while (*str) {
+                if (MatchesWildcard(str, pattern)) return true;
+                str++;
+            }
+            return false;
+        } else if (*pattern == '?' || *pattern == *str) {
+            pattern++;
+            str++;
+        } else {
+            return false;
+        }
+    }
+    return !*str;
+}
+
+// Find all PIDs matching the name pattern
+void PageDatabaseQuery::UpdateMatchingPIDs() {
+    params.matchingPIDs.clear();
+
+    if (!pageDB || strlen(params.namePattern) == 0) {
+        return;
+    }
+
+    // Get all process names from database
+    auto processNames = pageDB->GetAllProcessNames();
+
+    // For each process, check if the name matches the pattern
+    for (const auto& [pid, name] : processNames) {
+        if (MatchesWildcard(name.c_str(), params.namePattern)) {
+            params.matchingPIDs.push_back(pid);
+        }
+    }
+
+    // Sort PIDs for consistent display
+    std::sort(params.matchingPIDs.begin(), params.matchingPIDs.end());
 }
 
 } // namespace Haywire

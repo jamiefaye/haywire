@@ -427,6 +427,9 @@ int main(int argc, char** argv) {
         visualizer.LoadMemoryMap(regions, &ptes);
         visualizer.ReinitializeCrunchedReader();
 
+        // Switch to VA mode automatically for query results
+        visualizer.EnableVAMode(true);
+
         // Also load into overview
         overview.SetProcessMode(true, 0);
         overview.LoadProcessSections(regions);

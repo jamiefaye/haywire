@@ -81,7 +81,11 @@ public:
     // Process name display
     void SetCurrentProcessName(const std::string& name) { currentProcessName = name; }
     const std::string& GetCurrentProcessName() const { return currentProcessName; }
-    
+
+    // VA/PA mode control
+    void EnableVAMode(bool enable);
+    bool IsVAModeEnabled() const;
+
     // PNG export
     bool ExportToPNG(const std::string& filename);
     

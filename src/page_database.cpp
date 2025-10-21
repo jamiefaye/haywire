@@ -511,6 +511,12 @@ size_t PageDatabase::ScanSingleProcess(const ProcessInfo& proc, KernelDiscoveryB
 
     std::cout << "[PageDB] PID " << proc.pid << ": Attributed " << attributed << " pages\n";
 
+    // Store process name for querying
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        processNames[proc.pid] = proc.name;
+    }
+
     // Mark this PID as scanned
     {
         std::lock_guard<std::mutex> lock(mutex);
@@ -676,6 +682,20 @@ void PageDatabase::StopBackgroundScanning() {
         scanner->Stop();
         scanner.reset();
     }
+}
+
+std::string PageDatabase::GetProcessName(uint32_t pid) const {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto it = processNames.find(pid);
+    if (it != processNames.end()) {
+        return it->second;
+    }
+    return "";
+}
+
+std::unordered_map<uint32_t, std::string> PageDatabase::GetAllProcessNames() const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return processNames;
 }
 
 } // namespace Haywire

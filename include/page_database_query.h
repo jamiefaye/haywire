@@ -53,11 +53,15 @@ private:
     // Query parameters
     struct QueryParams {
         // Filter type selection
-        int filterType;  // 0=By PID, 1=By Ownership, 2=By Flags, 3=Unattributed, 4=All
+        int filterType;  // 0=By PID, 1=By Name, 2=By Ownership, 3=By Flags, 4=Unattributed, 5=All
 
         // By PID filter
         int selectedPID;
         char pidInput[16];
+
+        // By Name filter (with wildcard support)
+        char namePattern[64];
+        std::vector<uint32_t> matchingPIDs;  // PIDs that match the name pattern
 
         // By Ownership filter
         bool ownershipFilters[11];  // One for each PageMetadata::OwnershipType
@@ -74,10 +78,15 @@ private:
         bool showAttributed;
         bool showUnattributed;
 
+        // Display options
+        bool deduplicateSharedPages;  // If true, show each page once even if owned by multiple PIDs
+        int sortMode;  // 0=By Physical Addr, 1=By PID, 2=By Virtual Addr
+
         QueryParams() {
-            filterType = 4;  // All pages by default
+            filterType = 5;  // All pages by default
             selectedPID = 0;
             pidInput[0] = '\0';
+            namePattern[0] = '\0';
 
             // Enable all ownership types by default
             for (int i = 0; i < 11; i++) {
@@ -93,6 +102,9 @@ private:
 
             showAttributed = true;
             showUnattributed = true;
+
+            deduplicateSharedPages = false;  // Show all by default
+            sortMode = 0;  // Physical address by default
         }
     };
 
@@ -125,6 +137,12 @@ private:
 
     // Helper to get ownership type name
     const char* GetOwnershipTypeName(PageMetadata::OwnershipType type) const;
+
+    // Wildcard matching (supports * and ?)
+    bool MatchesWildcard(const char* str, const char* pattern) const;
+
+    // Find all PIDs matching the name pattern
+    void UpdateMatchingPIDs();
 };
 
 } // namespace Haywire
