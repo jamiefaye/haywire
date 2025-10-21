@@ -23,6 +23,8 @@
 #include "kernel_discovery_backend.h"
 #include "pid_selector.h"
 #include "memory_mapper.h"
+#include "page_database.h"
+#include "memory_view.h"
 #include "binary_loader.h"
 #include "file_memory_source.h"
 #include "mapped_file_memory_source.h"
@@ -134,6 +136,31 @@ int main(int argc, char** argv) {
 
             // Set kernel discovery for PID selector
             pidSelector.SetKernelDiscovery(kernelDiscovery);
+
+            // Initialize master page database
+            std::cout << "\nInitializing master page database...\n";
+            auto pageDatabase = std::make_shared<PageDatabase>();
+
+            // Get RAM bounds from memory mapper
+            uint64_t ramBase = 0x40000000;  // Standard ARM64 QEMU RAM base
+            uint64_t ramSize = 4ULL * 1024 * 1024 * 1024;  // Default to 4GB
+
+            // Try to get actual RAM size from memory mapper
+            auto* firstRAM = memoryMapper->GetFirstRAMRegion();
+            if (firstRAM) {
+                ramBase = firstRAM->gpa_start;
+                ramSize = firstRAM->size;
+                std::cout << "Detected RAM: base=0x" << std::hex << ramBase
+                          << " size=" << std::dec << (ramSize / (1024*1024*1024)) << "GB\n";
+            } else {
+                std::cout << "Using default RAM configuration: 4GB at 0x40000000\n";
+            }
+
+            pageDatabase->Initialize(ramBase, ramSize);
+
+            // Note: Initial scan deferred - will be done on-demand or in background
+            // to avoid blocking GUI startup
+            std::cout << "Page database initialized (scan deferred to avoid blocking UI)\n";
         } else {
             std::cerr << "FATAL: Failed to initialize kernel discovery\n";
             std::cerr << "Cannot get swapper PGD from QMP - exiting\n";
