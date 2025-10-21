@@ -86,7 +86,10 @@ int main() {
     pageDB.Initialize(ramBase, ramSize);
 
     std::cout << "Scanning all processes...\n";
-    size_t attributedCount = pageDB.ScanAllProcesses(kernelDiscovery.get());
+
+    // Test with different thread counts
+    int numThreads = 8;  // Use 8 threads (adjust based on your CPU)
+    size_t attributedCount = pageDB.ScanAllProcesses(kernelDiscovery.get(), numThreads);
 
     std::cout << "\nPage Database built:\n";
     auto dbStats = pageDB.GetStats();

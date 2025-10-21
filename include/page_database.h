@@ -11,6 +11,8 @@ namespace Haywire {
 
 // Forward declarations
 class KernelDiscoveryBackend;
+struct ProcessInfo;
+struct SectionEntry;
 
 /**
  * PageMetadata - Tracks everything we know about a single 4KB page
@@ -85,8 +87,9 @@ public:
     void Initialize(uint64_t ramBase, uint64_t ramSize);
 
     // Scan all processes to populate page metadata
+    // numThreads: number of worker threads (default: 4, use 0 for auto-detect)
     // Returns number of pages attributed
-    size_t ScanAllProcesses(KernelDiscoveryBackend* backend);
+    size_t ScanAllProcesses(KernelDiscoveryBackend* backend, int numThreads = 4);
 
     // Get metadata for a physical address (returns nullptr if invalid)
     const PageMetadata* GetPageByPhysical(uint64_t physAddr) const;
@@ -144,6 +147,18 @@ private:
     uint64_t MakeVirtualKey(uint32_t pid, uint64_t virtualAddr) const {
         return (static_cast<uint64_t>(pid) << 32) | (virtualAddr >> 12);
     }
+
+    // Multi-threaded scanning helpers
+    size_t ScanProcessRange(KernelDiscoveryBackend* backend,
+                           const std::vector<ProcessInfo>& processes,
+                           size_t start, size_t end);
+
+    size_t AttributeProcessPages(const ProcessInfo& proc,
+                                const std::vector<SectionEntry>& sections,
+                                const std::unordered_map<uint64_t, uint64_t>& ptes);
+
+    PageMetadata::OwnershipType ConvertOwnershipType(uint32_t sectionType);
+    uint32_t ConvertFlags(uint32_t sectionPerms);
 };
 
 } // namespace Haywire
