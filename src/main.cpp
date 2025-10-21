@@ -25,6 +25,7 @@
 #include "memory_mapper.h"
 #include "page_database.h"
 #include "memory_view.h"
+#include "page_database_query.h"
 #include "binary_loader.h"
 #include "file_memory_source.h"
 #include "mapped_file_memory_source.h"
@@ -116,6 +117,10 @@ int main(int argc, char** argv) {
 
     // std::shared_ptr<BeaconTranslator> beaconTranslator;  // OBSOLETE
     PIDSelector pidSelector;
+    PageDatabaseQuery pageDBQuery;
+
+    // Page database (accessible from main loop for UI updates)
+    auto pageDatabase = std::make_shared<PageDatabase>();
 
     // Initialize VA translation backend
     bool kernelDiscoveryInitialized = false;
@@ -139,7 +144,6 @@ int main(int argc, char** argv) {
 
             // Initialize master page database
             std::cout << "\nInitializing master page database...\n";
-            auto pageDatabase = std::make_shared<PageDatabase>();
 
             // Get RAM bounds from memory mapper
             uint64_t ramBase = 0x40000000;  // Standard ARM64 QEMU RAM base
@@ -158,9 +162,13 @@ int main(int argc, char** argv) {
 
             pageDatabase->Initialize(ramBase, ramSize);
 
-            // Note: Initial scan deferred - will be done on-demand or in background
-            // to avoid blocking GUI startup
-            std::cout << "Page database initialized (scan deferred to avoid blocking UI)\n";
+            // Start background scanner to populate database progressively
+            std::cout << "Starting background page database scanner...\n";
+            pageDatabase->StartBackgroundScanning(kernelDiscovery.get(), 0);  // 0 = disable rescan
+            std::cout << "Page database initialized - scanning in background\n";
+
+            // Wire up page database query window
+            pageDBQuery.SetPageDatabase(pageDatabase);
         } else {
             std::cerr << "FATAL: Failed to initialize kernel discovery\n";
             std::cerr << "Cannot get swapper PGD from QMP - exiting\n";
@@ -206,6 +214,11 @@ int main(int argc, char** argv) {
         pidSelector.Show();
     };
 
+    // Wire up the Query button to open the Page Database Query
+    visualizer.onQueryButtonClick = [&pageDBQuery]() {
+        pageDBQuery.Show();
+    };
+
     // Beacon translator check - OBSOLETE
     // if (!useKernelDiscovery && beaconTranslator) {
     //     std::cout << "Beacon translator created and connected to visualizer\n";
@@ -238,12 +251,30 @@ int main(int argc, char** argv) {
                 std::cout << "Warning: Guest agent not connected, cannot refresh camera data\n";
             }
 
-            // Load process sections from kernel discovery
-            std::vector<SectionEntry> sections;
-            bool gotSections = false;
+            // Request priority scan for this PID (non-blocking, queues in background)
+            if (pageDatabase) {
+                pageDatabase->RequestPriorityScan(pid);
+            }
 
-            if (useKernelDiscovery && kernelDiscovery) {
+            // Load process sections - try PageDatabase first, fall back to fresh scan
+            std::vector<SectionEntry> sections;
+            std::unordered_map<uint64_t, uint64_t> ptes;
+            bool gotSections = false;
+            bool usedDatabase = false;
+
+            // Try to use cached data from PageDatabase
+            if (pageDatabase && pageDatabase->IsPIDScanned(pid)) {
+                gotSections = pageDatabase->GetPIDData(pid, sections, ptes);
+                if (gotSections) {
+                    usedDatabase = true;
+                    std::cout << "[Using PageDatabase cache for PID " << pid << "]\n";
+                }
+            }
+
+            // Fall back to fresh scan if not in database
+            if (!gotSections && useKernelDiscovery && kernelDiscovery) {
                 gotSections = kernelDiscovery->GetProcessSections(pid, sections);
+                std::cout << "[Fresh scan for PID " << pid << " - not yet in PageDatabase]\n";
             }
             
             if (gotSections) {
@@ -282,14 +313,19 @@ int main(int argc, char** argv) {
                               << " " << section.path << "\n";
                 }
                 std::cout << "------------------------------------------------\n";
-                
-                // Also get and display PTEs from kernel discovery
-                std::unordered_map<uint64_t, uint64_t> ptes;
-                if (useKernelDiscovery && kernelDiscovery && kernelDiscovery->GetProcessPTEs(pid, ptes)) {
+
+                // Get PTEs - either from database (already fetched) or fresh scan
+                if (!usedDatabase) {
+                    // Need to fetch PTEs via fresh scan
+                    if (useKernelDiscovery && kernelDiscovery && kernelDiscovery->GetProcessPTEs(pid, ptes)) {
+                        std::cout << "\n=== Page Table Entries for PID " << pid << " ===\n";
+                        std::cout << "Found " << ptes.size() << " PTEs (fresh scan)\n";
+                        std::cout << "------------------------------------------------\n";
+                    }
+                } else {
+                    // PTEs already fetched from database
                     std::cout << "\n=== Page Table Entries for PID " << pid << " ===\n";
-                    std::cout << "Found " << ptes.size() << " PTEs\n";
-                    
-                    // VA->PA logging removed (too verbose)
+                    std::cout << "Found " << ptes.size() << " PTEs (from PageDatabase)\n";
                     std::cout << "------------------------------------------------\n";
                 }
                 
@@ -356,7 +392,54 @@ int main(int argc, char** argv) {
                 std::cout << "Waiting for camera data for PID " << pid << "\n";
             }
         });
-    
+
+    // Set callback for Page Database Query results
+    pageDBQuery.SetViewResultsCallback([&](const std::vector<SectionEntry>& sections,
+                                             const std::unordered_map<uint64_t, uint64_t>& ptes,
+                                             const std::string& description) {
+        std::cout << "\n=== Loading Query Results into Visualizer ===\n";
+        std::cout << description << "\n";
+        std::cout << "Sections: " << sections.size() << ", PTEs: " << ptes.size() << "\n";
+
+        // Convert SectionEntry to GuestMemoryRegion
+        std::vector<GuestMemoryRegion> regions;
+        for (const auto& section : sections) {
+            GuestMemoryRegion region;
+            region.start = section.va_start;
+            region.end = section.va_end;
+
+            // Convert permissions bitfield to string
+            std::string perms;
+            perms += (section.perms & 0x1) ? 'r' : '-';
+            perms += (section.perms & 0x2) ? 'w' : '-';
+            perms += (section.perms & 0x4) ? 'x' : '-';
+            perms += (section.perms & 0x8) ? 'p' : 's';
+            region.permissions = perms;
+
+            region.name = section.path;
+            region.ownershipType = static_cast<GuestMemoryRegion::OwnershipType>(section.ownership_type);
+            regions.push_back(region);
+        }
+
+        // Load into visualizer (use PID 0 for query results)
+        visualizer.SetProcessPid(0);  // Mark as query view, not specific PID
+        visualizer.SetCurrentProcessName(description);  // Show query description instead of process name
+        visualizer.LoadMemoryMap(regions, &ptes);
+        visualizer.ReinitializeCrunchedReader();
+
+        // Also load into overview
+        overview.SetProcessMode(true, 0);
+        overview.LoadProcessSections(regions);
+
+        // Navigate to first region
+        if (!regions.empty()) {
+            uint64_t startAddr = regions[0].start;
+            visualizer.NavigateToAddress(startAddr);
+        }
+
+        std::cout << "Query results loaded successfully\n";
+    });
+
     // Create viewport translator using kernel discovery
     std::shared_ptr<ViewportTranslator> translator;
 
@@ -463,6 +546,9 @@ int main(int argc, char** argv) {
                 if (ImGui::MenuItem("Process Selector", "P")) {
                     pidSelector.Show();
                 }
+                if (ImGui::MenuItem("Page Database Query", "Q")) {
+                    pageDBQuery.Show();
+                }
                 ImGui::Separator();
                 ImGui::MenuItem("Metrics", nullptr, &show_metrics);
                 ImGui::EndMenu();
@@ -495,16 +581,50 @@ int main(int argc, char** argv) {
             if (ImGui::IsKeyPressed(ImGuiKey_P) && !ImGui::GetIO().WantTextInput) {
                 pidSelector.ToggleVisible();
             }
-            
+
+            // Q hotkey for Query window
+            if (ImGui::IsKeyPressed(ImGuiKey_Q) && !ImGui::GetIO().WantTextInput) {
+                pageDBQuery.ToggleVisible();
+            }
+
             // Handle F1 for help
             if (ImGui::IsKeyPressed(ImGuiKey_F1)) {
                 show_help = !show_help;
             }
             
             ImGui::EndChild();
-            
+
+            // Page Database scan status indicator (compact, just below control bar)
+            if (pageDatabase && kernelDiscoveryInitialized) {
+                bool isScanning = pageDatabase->IsScanning();
+                bool isComplete = pageDatabase->IsFullScanComplete();
+                size_t scanned = pageDatabase->GetScannedProcessCount();
+                size_t total = pageDatabase->GetTotalProcessCount();
+
+                if (isScanning || !isComplete) {
+                    ImGui::BeginChild("PageDBStatus", ImVec2(0, 20), false);
+
+                    if (isComplete) {
+                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[PageDB Ready]");
+                        ImGui::SameLine();
+                        ImGui::Text("Indexed %zu processes", total);
+                    } else {
+                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[PageDB Scanning]");
+                        ImGui::SameLine();
+                        ImGui::Text("%zu/%zu processes", scanned, total);
+                        if (total > 0) {
+                            ImGui::SameLine();
+                            float progress = (float)scanned / (float)total;
+                            ImGui::ProgressBar(progress, ImVec2(200, 0));
+                        }
+                    }
+
+                    ImGui::EndChild();
+                }
+            }
+
             // Bottom section with two panes - child windows will use remaining space automatically
-            
+
             if (show_overview) {
                 // Left pane: Memory Sections
                 ImGui::BeginChild("SectionsPane", ImVec2(300, 0), false);  // false = no border, 0 = use remaining height
@@ -674,6 +794,9 @@ int main(int argc, char** argv) {
         
         // Draw PID selector window if visible
         pidSelector.Draw();
+
+        // Draw Page Database Query window if visible
+        pageDBQuery.Render();
 
         // Binary loader dialog
         if (show_binary_loader) {

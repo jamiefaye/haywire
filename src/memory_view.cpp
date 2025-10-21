@@ -12,14 +12,20 @@ bool FilterCriteria::Matches(const PageMetadata& page) const {
             return true;
 
         case BY_PID: {
-            // Check if page PID is in our list
-            if (page.pid == 0) {
-                return includePid0;
+            // Check if page has any matching PID
+            if (page.pids.empty()) {
+                return includePid0;  // Unattributed page
             }
             if (pids.empty()) {
-                return true;  // Empty list = all PIDs
+                return true;  // Empty filter list = all PIDs
             }
-            return std::find(pids.begin(), pids.end(), page.pid) != pids.end();
+            // Check if any of the page's PIDs match any of the filter PIDs
+            for (uint32_t pagePid : page.pids) {
+                if (std::find(pids.begin(), pids.end(), pagePid) != pids.end()) {
+                    return true;  // Found a match
+                }
+            }
+            return false;  // No match
         }
 
         case BY_OWNERSHIP: {
@@ -87,10 +93,14 @@ bool SortCriteria::Compare(const PageMetadata& a, const PageMetadata& b) const {
                 if (x.virtualAddr > y.virtualAddr) return 1;
                 return 0;
 
-            case PID:
-                if (x.pid < y.pid) return -1;
-                if (x.pid > y.pid) return 1;
+            case PID: {
+                // Use first PID for sorting (most pages have one PID anyway)
+                uint32_t xPid = x.pids.empty() ? 0 : x.pids[0];
+                uint32_t yPid = y.pids.empty() ? 0 : y.pids[0];
+                if (xPid < yPid) return -1;
+                if (xPid > yPid) return 1;
                 return 0;
+            }
 
             case OWNERSHIP_TYPE:
                 if (x.ownershipType < y.ownershipType) return -1;
@@ -142,18 +152,38 @@ void MemoryView::BuildFromDatabase(const PageDatabase* db,
     currentSort = sort;
 
     pages.clear();
+    pageStorage.clear();
 
     if (!database) return;
 
     // Get all pages from database
-    const auto& allPages = database->GetAllPages();
+    auto allPages = database->GetAllPages();
 
-    // Filter pages
+    // Copy filtered pages into our storage
+    size_t matchCount = 0;
+    size_t pid3101Count = 0;
     for (const auto& page : allPages) {
+        if (page.hasProcess(3101)) pid3101Count++;
         if (filter.Matches(page)) {
-            pages.push_back(&page);
+            pageStorage.push_back(page);
+            matchCount++;
         }
     }
+
+    if (filter.type == FilterCriteria::BY_PID && !filter.pids.empty()) {
+        std::cout << "[MemoryView] Filter debug: Looking for PID " << filter.pids[0]
+                  << ", found " << pid3101Count << " pages with PID 3101 in database"
+                  << ", matched " << matchCount << " pages\n";
+    }
+
+    // Build pointer list from storage
+    for (const auto& page : pageStorage) {
+        pages.push_back(&page);
+    }
+
+    std::cout << "[MemoryView] Built view: " << allPages.size() << " total pages, "
+              << pageStorage.size() << " after filter, "
+              << pages.size() << " pointers created\n";
 
     // Sort pages
     std::sort(pages.begin(), pages.end(),
@@ -201,14 +231,17 @@ void MemoryView::CoalesceIntoRegions(std::vector<GuestMemoryRegion>& regions) co
         }
         // For virtual address sorting, merge consecutive VA pages in same process
         else if (currentSort.primaryKey == SortCriteria::VIRTUAL_ADDR) {
+            // Pages are in same process if they share any PID
+            bool samePIDs = page->pids == pages[i-1]->pids;
             canMerge = (page->virtualAddr == currentRegion.end &&
-                       page->pid == pages[i-1]->pid &&
+                       samePIDs &&
                        page->filename == currentRegion.name &&
                        page->flags == pages[i-1]->flags);
         }
         // For PID sorting, merge pages in same process with same properties
         else if (currentSort.primaryKey == SortCriteria::PID) {
-            canMerge = (page->pid == pages[i-1]->pid &&
+            bool samePIDs = page->pids == pages[i-1]->pids;
+            canMerge = (samePIDs &&
                        page->ownershipType == currentRegion.ownershipType &&
                        page->filename == currentRegion.name);
         }
@@ -249,8 +282,9 @@ MemoryView::ViewStats MemoryView::GetStats() const {
     std::unordered_set<uint32_t> pids;
 
     for (const auto* page : pages) {
-        if (page->pid != 0) {
-            pids.insert(page->pid);
+        // Add all PIDs from this page
+        for (uint32_t pid : page->pids) {
+            pids.insert(pid);
         }
         stats.pagesByType[page->ownershipType]++;
     }

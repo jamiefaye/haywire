@@ -108,6 +108,7 @@ add_executable(haywire
     # Page database and memory view system
     src/page_database.cpp
     src/memory_view.cpp
+    src/page_database_query.cpp
     # Change detection and heat map
     src/change_detector.cpp
     src/heat_map_widget.cpp

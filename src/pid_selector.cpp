@@ -100,14 +100,9 @@ void PIDSelector::Draw() {
     if (ImGui::Button("Refresh")) {
         RefreshPIDList();
     }
-    
-    // Camera selection
-    ImGui::Text("Target Camera:");
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Camera 1", selectedCamera == 1)) selectedCamera = 1;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Camera 2", selectedCamera == 2)) selectedCamera = 2;
-    
+
+    // Camera selection removed - no longer needed with kernel discovery
+
     // Current focus - no longer using camera system
     // if (beaconReader) {
     //     uint32_t cam1Focus = beaconReader->GetCameraFocus(1);
@@ -181,7 +176,7 @@ void PIDSelector::Draw() {
     ImGui::Separator();
     
     // Info text
-    ImGui::TextDisabled("Click any row to select and focus camera on that process");
+    ImGui::TextDisabled("Click any row to select that process");
     
     ImGui::SameLine();
     ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 80);
@@ -319,7 +314,7 @@ void PIDSelector::DrawProcessRow(const ProcessDisplayEntry& entry, bool isSelect
 
 void PIDSelector::HandleSelection(uint32_t pid) {
     std::cout << "\n=== PIDSelector::HandleSelection ===\n";
-    std::cout << "Selected PID " << pid << " for camera " << selectedCamera << "\n";
+    std::cout << "Selected PID " << pid << "\n";
     
     // Find the process name
     std::string processName = "Unknown";

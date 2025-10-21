@@ -199,7 +199,10 @@ private:
     FilterCriteria currentFilter;
     SortCriteria currentSort;
 
-    // Filtered and sorted page list (pointers into database)
+    // Storage for page data (owned by this view to keep data alive)
+    std::vector<PageMetadata> pageStorage;
+
+    // Filtered and sorted page list (pointers into pageStorage)
     std::vector<const PageMetadata*> pages;
 
     // Helper: group consecutive pages into regions

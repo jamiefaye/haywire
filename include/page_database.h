@@ -3,9 +3,13 @@
 #include <cstdint>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
 #include <mutex>
 #include <memory>
+#include <atomic>
+#include <iostream>
+#include <algorithm>
 
 namespace Haywire {
 
@@ -20,7 +24,7 @@ struct SectionEntry;
 struct PageMetadata {
     uint64_t physicalAddr;      // Physical address (0x40000000 + offset)
     uint64_t virtualAddr;       // Virtual address (0 if unattributed)
-    uint32_t pid;               // Owning process (0 if unattributed)
+    std::vector<uint32_t> pids; // Owning processes (empty if unattributed, multiple for shared pages)
 
     enum OwnershipType {
         UNATTRIBUTED = 0,       // Not claimed by any process VMA
@@ -43,11 +47,19 @@ struct PageMetadata {
 
     // Constructor
     PageMetadata()
-        : physicalAddr(0), virtualAddr(0), pid(0),
+        : physicalAddr(0), virtualAddr(0),
           ownershipType(UNATTRIBUTED), flags(0) {}
 
     // Helper methods
-    bool isAttributed() const { return pid != 0; }
+    bool isAttributed() const { return !pids.empty(); }
+    bool hasProcess(uint32_t pid) const {
+        return std::find(pids.begin(), pids.end(), pid) != pids.end();
+    }
+    void addProcess(uint32_t pid) {
+        if (!hasProcess(pid)) {
+            pids.push_back(pid);
+        }
+    }
     bool isReadable() const { return flags & 0x01; }
     bool isWritable() const { return flags & 0x02; }
     bool isExecutable() const { return flags & 0x04; }
@@ -79,6 +91,9 @@ struct PageMetadata {
  * Enables filtering, sorting, and accounting for memory attribution.
  */
 class PageDatabase {
+    // Allow BackgroundScanner to access private members
+    friend class BackgroundScanner;
+
 public:
     PageDatabase();
     ~PageDatabase();
@@ -97,8 +112,22 @@ public:
     // Get metadata for a virtual address in a specific process
     const PageMetadata* GetPageByVirtual(uint32_t pid, uint64_t virtAddr) const;
 
-    // Get all pages (for filtering/sorting)
-    const std::vector<PageMetadata>& GetAllPages() const { return pages; }
+    // Get all pages (for filtering/sorting) - returns a copy for thread safety
+    std::vector<PageMetadata> GetAllPages() const {
+        std::lock_guard<std::mutex> lock(mutex);
+
+        // Debug: Count PIDs
+        size_t pid3101Count = 0;
+        for (const auto& page : pages) {
+            if (page.hasProcess(3101)) pid3101Count++;
+        }
+        if (pid3101Count > 0) {
+            std::cout << "[PageDB::GetAllPages] Returning " << pages.size() << " total pages, "
+                      << pid3101Count << " have PID 3101\n";
+        }
+
+        return pages;
+    }
 
     // Statistics
     struct Stats {
@@ -113,9 +142,35 @@ public:
     // Clear and reset database
     void Clear();
 
-    // Background scanning (future: periodic refresh)
-    void StartBackgroundScanning(KernelDiscoveryBackend* backend, int intervalMs = 5000);
+    // Background scanning with priority queue
+    // rescanIntervalSec: how often to do a full rescan (default 30 seconds, 0 = no rescan)
+    void StartBackgroundScanning(KernelDiscoveryBackend* backend, int rescanIntervalSec = 30);
     void StopBackgroundScanning();
+
+    // Scan a single PID immediately (blocks until complete)
+    // Returns number of pages attributed
+    size_t ScanSinglePID(uint32_t pid, KernelDiscoveryBackend* backend);
+
+    // Request priority scan for a PID (non-blocking, queues for background thread)
+    void RequestPriorityScan(uint32_t pid);
+
+    // Get all pages for a specific PID (returns empty if PID not scanned yet)
+    std::vector<const PageMetadata*> GetPagesForPID(uint32_t pid) const;
+
+    // Get data for a PID in format compatible with visualizer
+    // Returns sections and PTEs (sections are coalesced from pages)
+    bool GetPIDData(uint32_t pid,
+                    std::vector<SectionEntry>& sections,
+                    std::unordered_map<uint64_t, uint64_t>& ptes) const;
+
+    // Check if a PID has been scanned
+    bool IsPIDScanned(uint32_t pid) const;
+
+    // Query scan status
+    bool IsScanning() const;
+    bool IsFullScanComplete() const;
+    size_t GetScannedProcessCount() const;
+    size_t GetTotalProcessCount() const;
 
 private:
     // Page storage: indexed by (physAddr - ramBase) / 4096
@@ -135,7 +190,14 @@ private:
     // Background scanning
     std::unique_ptr<class BackgroundScanner> scanner;
 
+    // Scan state tracking
+    std::atomic<bool> fullScanComplete{false};
+    std::atomic<size_t> scannedProcessCount{0};
+    std::atomic<size_t> totalProcessCount{0};
+    std::unordered_set<uint32_t> scannedPIDs;  // PIDs we've scanned
+
     // Helper methods
+    size_t ScanSingleProcess(const ProcessInfo& proc, KernelDiscoveryBackend* backend);
     size_t PhysToIndex(uint64_t physAddr) const {
         return (physAddr - ramBase) / 4096;
     }

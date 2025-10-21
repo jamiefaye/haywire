@@ -5,14 +5,19 @@
 #include <thread>
 #include <chrono>
 #include <cstring>
+#include <queue>
+#include <unordered_set>
+#include <condition_variable>
+#include <atomic>
+#include <iostream>
 
 namespace Haywire {
 
-// Background scanner thread
+// Background scanner thread with priority queue
 class BackgroundScanner {
 public:
-    BackgroundScanner(PageDatabase* db, KernelDiscoveryBackend* backend, int intervalMs)
-        : database(db), backend(backend), intervalMs(intervalMs), running(false) {}
+    BackgroundScanner(PageDatabase* db, KernelDiscoveryBackend* backend, int rescanIntervalSec = 30)
+        : database(db), backend(backend), rescanIntervalSec(rescanIntervalSec), running(false) {}
 
     ~BackgroundScanner() {
         Stop();
@@ -27,23 +32,164 @@ public:
     void Stop() {
         if (!running) return;
         running = false;
+        cv.notify_all();  // Wake up thread if sleeping
         if (thread.joinable()) {
             thread.join();
         }
     }
 
+    // Add a PID to priority queue (scanned before background PIDs)
+    void RequestPriorityScan(uint32_t pid) {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        if (scannedPIDs.find(pid) == scannedPIDs.end()) {
+            priorityQueue.push(pid);
+            cv.notify_one();
+        }
+    }
+
+    bool IsScanning() const { return running.load(); }
+
 private:
     PageDatabase* database;
     KernelDiscoveryBackend* backend;
-    int intervalMs;
-    bool running;
+    int rescanIntervalSec;
+    std::atomic<bool> running{false};
     std::thread thread;
 
+    // Priority queue for on-demand PID scans
+    std::queue<uint32_t> priorityQueue;
+    std::unordered_set<uint32_t> scannedPIDs;  // Track what we've scanned
+    std::mutex queueMutex;
+    std::condition_variable cv;
+
+    std::chrono::steady_clock::time_point lastFullScanTime;
+
     void ScanLoop() {
-        while (running) {
-            database->ScanAllProcesses(backend);
-            std::this_thread::sleep_for(std::chrono::milliseconds(intervalMs));
+        std::cout << "[PageDB] Background scanner started (rescan every " << rescanIntervalSec << "s)\n";
+
+        lastFullScanTime = std::chrono::steady_clock::now();
+
+        // Get initial process list
+        std::vector<ProcessInfo> allProcesses;
+        {
+            std::lock_guard<std::mutex> lock(queueMutex);
+            if (!backend->DiscoverProcesses(allProcesses)) {
+                std::cerr << "[PageDB] Failed to discover processes\n";
+                return;
+            }
+            database->totalProcessCount.store(allProcesses.size());
+            std::cout << "[PageDB] Found " << allProcesses.size() << " total processes\n";
         }
+
+        size_t backgroundIndex = 0;
+
+        while (running) {
+            uint32_t pidToScan = 0;
+            bool isPriority = false;
+
+            // Check priority queue first
+            {
+                std::unique_lock<std::mutex> lock(queueMutex);
+
+                if (!priorityQueue.empty()) {
+                    pidToScan = priorityQueue.front();
+                    priorityQueue.pop();
+                    isPriority = true;
+                } else if (backgroundIndex < allProcesses.size()) {
+                    // Continue background scan
+                    pidToScan = allProcesses[backgroundIndex].pid;
+                    backgroundIndex++;
+                } else {
+                    // All done - mark complete and check if we should rescan
+                    if (!database->fullScanComplete.load()) {
+                        database->fullScanComplete.store(true);
+                        std::cout << "[PageDB] Full scan complete! Scanned "
+                                  << database->scannedProcessCount.load() << " processes\n";
+                    }
+
+                    // Check if it's time to rescan (skip if interval is 0)
+                    if (rescanIntervalSec > 0) {
+                        auto now = std::chrono::steady_clock::now();
+                        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                            now - lastFullScanTime).count();
+
+                        if (elapsed >= rescanIntervalSec) {
+                        // Time to rescan - rediscover processes and start over
+                        std::cout << "[PageDB] Starting periodic rescan (" << elapsed << "s elapsed)\n";
+
+                        std::vector<ProcessInfo> newProcesses;
+                        if (backend->DiscoverProcesses(newProcesses)) {
+                            // Don't clear - just update as we rescan
+                            allProcesses = std::move(newProcesses);
+                            database->totalProcessCount.store(allProcesses.size());
+                            backgroundIndex = 0;
+                            scannedPIDs.clear();
+                            database->scannedProcessCount.store(0);
+                            database->fullScanComplete.store(false);
+                            lastFullScanTime = now;
+                            std::cout << "[PageDB] Rescan: updating database, found " << allProcesses.size() << " processes\n";
+                            continue;  // Start scanning immediately
+                        } else {
+                            std::cerr << "[PageDB] Rescan failed to discover processes\n";
+                        }
+                        }
+                    }
+
+                    // Wait for priority requests or shutdown
+                    cv.wait_for(lock, std::chrono::seconds(1));
+                    continue;
+                }
+            }
+
+            // Skip if already scanned
+            {
+                std::lock_guard<std::mutex> lock(queueMutex);
+                if (scannedPIDs.find(pidToScan) != scannedPIDs.end()) {
+                    continue;
+                }
+            }
+
+            // Find the ProcessInfo for this PID
+            ProcessInfo procToScan;
+            bool found = false;
+            for (const auto& proc : allProcesses) {
+                if (proc.pid == pidToScan) {
+                    procToScan = proc;
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) continue;
+
+            // Scan this process
+            if (isPriority) {
+                std::cout << "[PageDB] Priority scan PID " << pidToScan
+                          << " (" << procToScan.name << ")\n";
+            }
+
+            size_t attributed = database->ScanSingleProcess(procToScan, backend);
+
+            // Mark as scanned
+            {
+                std::lock_guard<std::mutex> lock(queueMutex);
+                scannedPIDs.insert(pidToScan);
+                database->scannedProcessCount.fetch_add(1);
+            }
+
+            if (isPriority || (database->scannedProcessCount.load() % 10 == 0)) {
+                std::cout << "[PageDB] Progress: " << database->scannedProcessCount.load()
+                          << "/" << database->totalProcessCount.load()
+                          << " processes (" << attributed << " pages from PID " << pidToScan << ")\n";
+            }
+
+            // Small delay to avoid monopolizing CPU
+            if (!isPriority) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        }
+
+        std::cout << "[PageDB] Background scanner stopped\n";
     }
 };
 
@@ -69,7 +215,7 @@ void PageDatabase::Initialize(uint64_t ramBase, uint64_t ramSize) {
     for (size_t i = 0; i < numPages; i++) {
         pages[i].physicalAddr = IndexToPhys(i);
         pages[i].virtualAddr = 0;
-        pages[i].pid = 0;
+        pages[i].pids.clear();
         pages[i].ownershipType = PageMetadata::UNATTRIBUTED;
         pages[i].flags = 0;
         pages[i].filename.clear();
@@ -97,7 +243,7 @@ size_t PageDatabase::ScanAllProcesses(KernelDiscoveryBackend* backend, int numTh
         // Reset all pages to unattributed
         for (auto& page : pages) {
             page.virtualAddr = 0;
-            page.pid = 0;
+            page.pids.clear();
             page.ownershipType = PageMetadata::UNATTRIBUTED;
             page.flags = 0;
             page.filename.clear();
@@ -204,7 +350,7 @@ size_t PageDatabase::AttributeProcessPages(const ProcessInfo& proc,
             PageMetadata meta;
             meta.physicalAddr = pa;
             meta.virtualAddr = va;
-            meta.pid = proc.pid;
+            meta.pids.push_back(proc.pid);  // Start with this PID
             meta.ownershipType = ownershipType;
             meta.flags = flags;
             meta.filename = filename;
@@ -219,8 +365,31 @@ size_t PageDatabase::AttributeProcessPages(const ProcessInfo& proc,
         std::lock_guard<std::mutex> lock(mutex);
 
         for (const auto& update : updates) {
-            pages[update.pageIndex] = update.meta;
+            PageMetadata& existing = pages[update.pageIndex];
+
+            // If page is unattributed, use the new metadata entirely
+            if (!existing.isAttributed()) {
+                pages[update.pageIndex] = update.meta;
+            } else {
+                // Page already attributed - add this PID to the list if not already present
+                existing.addProcess(proc.pid);
+                // Keep first attribution's metadata (type, flags, filename)
+            }
+
             virtualLookup[update.virtualKey] = update.pageIndex;
+        }
+
+        // Verify first few pages were actually set
+        if (proc.pid == 3101 && updates.size() > 0) {
+            std::cout << "[PageDB] Verification: PID 3101, updated " << updates.size() << " pages\n";
+            const auto& firstPage = pages[updates[0].pageIndex];
+            std::cout << "[PageDB] First page: index=" << updates[0].pageIndex
+                      << " pids=[";
+            for (size_t i = 0; i < firstPage.pids.size(); i++) {
+                if (i > 0) std::cout << ",";
+                std::cout << firstPage.pids[i];
+            }
+            std::cout << "] va=0x" << std::hex << firstPage.virtualAddr << std::dec << "\n";
         }
     }
 
@@ -296,7 +465,10 @@ PageDatabase::Stats PageDatabase::GetStats() const {
         if (page.isAttributed()) {
             stats.attributedPages++;
             stats.pagesByType[page.ownershipType]++;
-            stats.pagesByPID[page.pid]++;
+            // Count page for each owning PID
+            for (uint32_t pid : page.pids) {
+                stats.pagesByPID[pid]++;
+            }
         } else {
             stats.unattributedPages++;
         }
@@ -310,7 +482,7 @@ void PageDatabase::Clear() {
 
     for (auto& page : pages) {
         page.virtualAddr = 0;
-        page.pid = 0;
+        page.pids.clear();
         page.ownershipType = PageMetadata::UNATTRIBUTED;
         page.flags = 0;
         page.filename.clear();
@@ -319,10 +491,183 @@ void PageDatabase::Clear() {
     virtualLookup.clear();
 }
 
-void PageDatabase::StartBackgroundScanning(KernelDiscoveryBackend* backend, int intervalMs) {
+// Scan a single process (helper method)
+size_t PageDatabase::ScanSingleProcess(const ProcessInfo& proc, KernelDiscoveryBackend* backend) {
+    // Get sections and PTEs for this process
+    std::vector<SectionEntry> sections;
+    if (!backend->GetProcessMemorySections(proc.pid, sections)) {
+        std::cout << "[PageDB] Failed to get sections for PID " << proc.pid << "\n";
+        return 0;
+    }
+
+    std::unordered_map<uint64_t, uint64_t> ptes;
+    backend->GetProcessPTEs(proc.pid, ptes);
+
+    std::cout << "[PageDB] PID " << proc.pid << ": " << sections.size()
+              << " sections, " << ptes.size() << " PTEs\n";
+
+    // Attribute pages for this process
+    size_t attributed = AttributeProcessPages(proc, sections, ptes);
+
+    std::cout << "[PageDB] PID " << proc.pid << ": Attributed " << attributed << " pages\n";
+
+    // Mark this PID as scanned
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        scannedPIDs.insert(proc.pid);
+    }
+
+    return attributed;
+}
+
+// Scan a single PID immediately (blocking)
+size_t PageDatabase::ScanSinglePID(uint32_t pid, KernelDiscoveryBackend* backend) {
+    if (!backend) return 0;
+
+    // Get process info
+    ProcessInfo proc;
+    if (!backend->GetProcessInfo(pid, proc)) {
+        return 0;
+    }
+
+    std::cout << "[PageDB] Immediate scan PID " << pid << " (" << proc.name << ")\n";
+    return ScanSingleProcess(proc, backend);
+}
+
+// Request priority scan (non-blocking)
+void PageDatabase::RequestPriorityScan(uint32_t pid) {
+    if (scanner) {
+        scanner->RequestPriorityScan(pid);
+    }
+}
+
+// Get all pages for a specific PID
+std::vector<const PageMetadata*> PageDatabase::GetPagesForPID(uint32_t pid) const {
+    std::lock_guard<std::mutex> lock(mutex);
+
+    std::vector<const PageMetadata*> result;
+    for (const auto& page : pages) {
+        if (page.hasProcess(pid)) {
+            result.push_back(&page);
+        }
+    }
+    return result;
+}
+
+// Get PID data in visualizer format
+bool PageDatabase::GetPIDData(uint32_t pid,
+                               std::vector<SectionEntry>& sections,
+                               std::unordered_map<uint64_t, uint64_t>& ptes) const {
+    sections.clear();
+    ptes.clear();
+
+    // Check if this PID has been scanned
+    if (!IsPIDScanned(pid)) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex);
+
+    // Collect all pages for this PID, sorted by virtual address
+    std::vector<const PageMetadata*> pidPages;
+    for (const auto& page : pages) {
+        if (page.hasProcess(pid) && page.virtualAddr != 0) {
+            pidPages.push_back(&page);
+        }
+    }
+
+    if (pidPages.empty()) {
+        return false;
+    }
+
+    // Sort by virtual address
+    std::sort(pidPages.begin(), pidPages.end(),
+              [](const PageMetadata* a, const PageMetadata* b) {
+                  return a->virtualAddr < b->virtualAddr;
+              });
+
+    // Build PTEs (one entry per page)
+    for (const auto* page : pidPages) {
+        ptes[page->virtualAddr] = page->physicalAddr;
+    }
+
+    // Coalesce consecutive pages into sections
+    SectionEntry currentSection;
+    currentSection.va_start = pidPages[0]->virtualAddr;
+    currentSection.va_end = pidPages[0]->virtualAddr + 4096;
+    currentSection.ownership_type = static_cast<uint32_t>(pidPages[0]->ownershipType);
+    currentSection.perms = pidPages[0]->flags;
+    strncpy(currentSection.path, pidPages[0]->filename.c_str(), sizeof(currentSection.path) - 1);
+    currentSection.path[sizeof(currentSection.path) - 1] = '\0';
+
+    for (size_t i = 1; i < pidPages.size(); i++) {
+        const auto* page = pidPages[i];
+
+        // Can we merge this page into current section?
+        bool canMerge = (page->virtualAddr == currentSection.va_end &&
+                        page->ownershipType == static_cast<PageMetadata::OwnershipType>(currentSection.ownership_type) &&
+                        page->flags == currentSection.perms &&
+                        page->filename == currentSection.path);
+
+        if (canMerge) {
+            // Extend current section
+            currentSection.va_end = page->virtualAddr + 4096;
+        } else {
+            // Save current section and start new one
+            sections.push_back(currentSection);
+
+            currentSection.va_start = page->virtualAddr;
+            currentSection.va_end = page->virtualAddr + 4096;
+            currentSection.ownership_type = static_cast<uint32_t>(page->ownershipType);
+            currentSection.perms = page->flags;
+            strncpy(currentSection.path, page->filename.c_str(), sizeof(currentSection.path) - 1);
+            currentSection.path[sizeof(currentSection.path) - 1] = '\0';
+        }
+    }
+
+    // Save final section
+    sections.push_back(currentSection);
+
+    return !sections.empty();
+}
+
+// Check if a PID has been scanned
+bool PageDatabase::IsPIDScanned(uint32_t pid) const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return scannedPIDs.find(pid) != scannedPIDs.end();
+}
+
+// Query methods
+bool PageDatabase::IsScanning() const {
+    return scanner && scanner->IsScanning();
+}
+
+bool PageDatabase::IsFullScanComplete() const {
+    return fullScanComplete.load();
+}
+
+size_t PageDatabase::GetScannedProcessCount() const {
+    return scannedProcessCount.load();
+}
+
+size_t PageDatabase::GetTotalProcessCount() const {
+    return totalProcessCount.load();
+}
+
+void PageDatabase::StartBackgroundScanning(KernelDiscoveryBackend* backend, int rescanIntervalSec) {
     StopBackgroundScanning();
 
-    scanner = std::make_unique<BackgroundScanner>(this, backend, intervalMs);
+    // Reset scan state
+    fullScanComplete.store(false);
+    scannedProcessCount.store(0);
+    totalProcessCount.store(0);
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        scannedPIDs.clear();
+    }
+
+    scanner = std::make_unique<BackgroundScanner>(this, backend, rescanIntervalSec);
     scanner->Start();
 }
 

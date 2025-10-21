@@ -139,7 +139,7 @@ void MemoryVisualizer::SetProcessPid(int pid) {
 }
 
 void MemoryVisualizer::ReinitializeCrunchedReader() {
-    if (crunchedReader && targetPid > 0) {
+    if (crunchedReader && targetPid >= 0) {  // Allow PID 0 for query results
         std::cerr << "Reinitializing crunched reader with new flattener regions for PID " << targetPid << "\n";
         crunchedReader->SetPID(targetPid);  // This rebuilds renderPageCache with current flattener regions
     }
@@ -216,8 +216,8 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
             std::vector<uint8_t> buffer;
             bool readSuccess = false;
             
-            // Use crunched reader if in VA mode with a process
-            if (useVirtualAddresses && crunchedReader && targetPid > 0) {
+            // Use crunched reader if in VA mode with a process (or query results with PID 0)
+            if (useVirtualAddresses && crunchedReader && targetPid >= 0) {
                 // Ensure address is within flattened space bounds
                 uint64_t maxFlat = addressFlattener ? addressFlattener->GetFlatSize() : 0;
                 if (addr >= maxFlat && maxFlat > 0) {
@@ -598,7 +598,7 @@ void MemoryVisualizer::DrawFormulaBar() {
     std::stringstream addrDisplay;
     
     // Show current address based on mode
-    if (useVirtualAddresses && addressFlattener && targetPid > 0) {
+    if (useVirtualAddresses && addressFlattener && targetPid >= 0) {
         // In VA mode, show virtual address
         uint64_t va = addressFlattener->FlatToVirtual(currentAddr);
         addrDisplay << "v:" << std::hex << va;
@@ -1244,7 +1244,15 @@ void MemoryVisualizer::DrawControls() {
             onProcessSelectorClick();
         }
     }
-    
+
+    // Query button - right next to Select
+    ImGui::SameLine();
+    if (ImGui::Button("Query...")) {
+        if (onQueryButtonClick) {
+            onQueryButtonClick();
+        }
+    }
+
     // Display process name if available
     if (!currentProcessName.empty() && targetPid > 0) {
         ImGui::SameLine();
@@ -3466,7 +3474,7 @@ void MemoryVisualizer::LoadMemoryMap(const std::vector<GuestMemoryRegion>& regio
         }
 
         // Clear viewport translator's cache for this PID (stale translations cause blank displays)
-        if (viewportTranslator && targetPid > 0) {
+        if (viewportTranslator && targetPid >= 0) {  // Allow PID 0 for query results
             viewportTranslator->ClearCache(targetPid);
         }
 
@@ -3474,7 +3482,7 @@ void MemoryVisualizer::LoadMemoryMap(const std::vector<GuestMemoryRegion>& regio
         std::cerr << "Loaded memory map with " << regions.size() << " regions\n";
 
         // Build PA lookup table for fast flat->PA translation
-        if (viewportTranslator && targetPid > 0) {
+        if (viewportTranslator && targetPid >= 0) {  // Allow PID 0 for query results
             // Stop old patrol thread first (was for old PID, would corrupt new cache)
             addressFlattener->StopPTEPatrol();
 

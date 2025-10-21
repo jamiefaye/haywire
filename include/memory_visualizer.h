@@ -102,7 +102,10 @@ public:
     
     // Callback for process selector button
     std::function<void()> onProcessSelectorClick;
-    
+
+    // Callback for query button
+    std::function<void()> onQueryButtonClick;
+
     // Column mode state getter
     bool IsColumnModeEnabled() const { return columnMode; }
 
