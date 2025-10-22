@@ -746,50 +746,7 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
     size_t bytesPerPixel = viewer.format.bytesPerPixel;
     size_t totalBytes = viewer.stride * viewer.memHeight;
 
-    // First check if we have a memory data source (for file viewing)
-    if (memoryDataSource && memoryDataSource->IsAvailable()) {
-        // Use the unified memory data source interface
-        std::vector<uint8_t> buffer(totalBytes);
-
-        // For file sources, addresses are file offsets
-        uint64_t readAddress = viewer.memoryAddress.value;
-        if (viewer.memoryAddress.space == AddressSpace::SHARED) {
-            // Shared space addresses are already file offsets
-            readAddress = viewer.memoryAddress.value;
-        }
-
-        if (memoryDataSource->ReadMemory(readAddress, buffer.data(), totalBytes)) {
-            // Convert to pixels based on format
-            viewer.pixels.clear();
-
-            // Use the unified renderer
-            RenderConfig config;
-            config.displayWidth = viewer.memWidth;
-            config.displayHeight = viewer.memHeight;
-            config.baseAddress = viewer.anchorAddress.value;  // For instruction disassembly
-            config.stride = viewer.stride;
-            config.width = viewer.memWidth;
-            config.height = viewer.memHeight;
-            config.format = viewer.format;
-            config.splitComponents = viewer.splitComponents;
-            config.columnMode = viewer.columnMode;
-            config.columnWidth = viewer.columnWidth;
-            config.columnGap = viewer.columnGap;
-
-            viewer.pixels = MemoryRenderer::RenderMemory(
-                buffer.data(),
-                totalBytes,
-                config
-            );
-            return;
-        } else {
-            // Failed to read from data source
-            FillTestPattern(viewer);
-            return;
-        }
-    }
-
-    // If the address is in crunched space and we have a crunched reader, use it
+    // Priority 1: If the address is in crunched space, use crunched reader (handles VA mode)
     if (viewer.memoryAddress.space == AddressSpace::CRUNCHED &&
         crunchedReader && currentPid > 0) {
             // Allocate buffer for memory
@@ -826,11 +783,51 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
         }
         
         // Fall back to test pattern if read failed
-        printf("CrunchedReader failed for crunched address c:0x%llx (pid: %d, bytes: %zu)\n", 
+        printf("CrunchedReader failed for crunched address c:0x%llx (pid: %d, bytes: %zu)\n",
                viewer.memoryAddress.value, currentPid, totalBytes);
     }
-    
-    // For shared memory addresses - use memory file reader directly
+
+    // Priority 2: Check if we have a memory data source (for file viewing)
+    if (memoryDataSource && memoryDataSource->IsAvailable()) {
+        // Use the unified memory data source interface
+        std::vector<uint8_t> buffer(totalBytes);
+
+        // For file sources, addresses are file offsets
+        uint64_t readAddress = viewer.memoryAddress.value;
+        if (viewer.memoryAddress.space == AddressSpace::SHARED) {
+            // Shared space addresses are already file offsets
+            readAddress = viewer.memoryAddress.value;
+        }
+
+        if (memoryDataSource->ReadMemory(readAddress, buffer.data(), totalBytes)) {
+            // Convert to pixels based on format
+            viewer.pixels.clear();
+
+            // Use the unified renderer
+            RenderConfig config;
+            config.displayWidth = viewer.memWidth;
+            config.displayHeight = viewer.memHeight;
+            config.baseAddress = viewer.anchorAddress.value;  // For instruction disassembly
+            config.stride = viewer.stride;
+            config.width = viewer.memWidth;
+            config.height = viewer.memHeight;
+            config.format = viewer.format;
+            config.splitComponents = viewer.splitComponents;
+            config.columnMode = viewer.columnMode;
+            config.columnWidth = viewer.columnWidth;
+            config.columnGap = viewer.columnGap;
+
+            viewer.pixels = MemoryRenderer::RenderMemory(
+                buffer.data(),
+                totalBytes,
+                config
+            );
+            return;
+        }
+        // If read fails, fall through to try memoryFileReader
+    }
+
+    // Priority 3: For shared memory addresses - use memory file reader directly
     if (!memoryFileReader) {
         printf("No memory file reader available for memory extraction\n");
         // Fill with test pattern
