@@ -1024,20 +1024,37 @@ void MemoryVisualizer::DrawControls() {
         // when rows span across unmapped pages
         if (useVirtualAddresses && addressFlattener) {
             const size_t pageSize = 4096;
-            size_t rowBytes = viewport.stride * viewport.format.bytesPerPixel;
+            size_t bpp = viewport.format.bytesPerPixel;
+            size_t rowBytes = viewport.stride * bpp;
 
-            // If row doesn't align with page boundary, adjust stride
+            // If row doesn't align with page boundary, find next valid stride
             if (rowBytes % pageSize != 0) {
-                // Round up to next page boundary
-                size_t alignedRowBytes = ((rowBytes + pageSize - 1) / pageSize) * pageSize;
-                viewport.stride = alignedRowBytes / viewport.format.bytesPerPixel;
+                // For 3-byte formats (RGB/BGR), we need stride where (stride * 3) % 4096 == 0
+                // LCM(3, 4096) = 12288, so we need multiples of 4096 pixels
+                // For other formats, just round up byte count to page boundary
+
+                size_t alignedStride;
+                if (bpp == 3) {
+                    // Find next stride where (stride * 3) is page-aligned
+                    // Need: stride * 3 = N * 4096, so stride = N * 4096 / 3
+                    // Since 4096 % 3 != 0, we need N where (N * 4096) % 3 == 0
+                    // LCM(3, 4096) = 12288, so stride must be multiple of 4096
+                    alignedStride = ((viewport.stride + 4095) / 4096) * 4096;
+                } else {
+                    // Round up byte count to page boundary, then divide
+                    size_t alignedRowBytes = ((rowBytes + pageSize - 1) / pageSize) * pageSize;
+                    alignedStride = alignedRowBytes / bpp;
+                }
+
+                viewport.stride = alignedStride;
 
                 // Show warning if stride changed significantly
                 if (viewport.stride != viewport.width) {
                     static int warnCount = 0;
                     if (++warnCount <= 3) {
                         std::cerr << "VA Mode: Adjusted stride from " << viewport.width
-                                  << " to " << viewport.stride << " pixels for page alignment\n";
+                                  << " to " << viewport.stride << " pixels for page alignment"
+                                  << " (format requires " << bpp << " bytes/pixel)\n";
                     }
                 }
             }
@@ -1218,13 +1235,23 @@ void MemoryVisualizer::DrawControls() {
         if (useVirtualAddresses) {
             // Switching to VA mode - align stride to page boundaries
             const size_t pageSize = 4096;
-            size_t rowBytes = viewport.stride * viewport.format.bytesPerPixel;
+            size_t bpp = viewport.format.bytesPerPixel;
+            size_t rowBytes = viewport.stride * bpp;
+
             if (rowBytes % pageSize != 0) {
-                size_t alignedRowBytes = ((rowBytes + pageSize - 1) / pageSize) * pageSize;
-                viewport.stride = alignedRowBytes / viewport.format.bytesPerPixel;
+                size_t alignedStride;
+                if (bpp == 3) {
+                    // For 3-byte formats, stride must be multiple of 4096 pixels
+                    alignedStride = ((viewport.stride + 4095) / 4096) * 4096;
+                } else {
+                    // For other formats, round byte count up
+                    size_t alignedRowBytes = ((rowBytes + pageSize - 1) / pageSize) * pageSize;
+                    alignedStride = alignedRowBytes / bpp;
+                }
+                viewport.stride = alignedStride;
                 strideInput = viewport.stride;
                 std::cerr << "VA Mode: Aligned stride to " << viewport.stride
-                          << " pixels for page boundary alignment\n";
+                          << " pixels for page boundary alignment (format: " << bpp << " bpp)\n";
             }
 
             if (addressFlattener && addressFlattener->GetFlatSize() > 0) {
