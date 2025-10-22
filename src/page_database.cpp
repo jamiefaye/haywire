@@ -103,8 +103,10 @@ private:
                     // All done - mark complete and check if we should rescan
                     if (!database->fullScanComplete.load()) {
                         database->fullScanComplete.store(true);
+                        database->scanGeneration.fetch_add(1);  // Increment generation on completion
                         std::cout << "[PageDB] Full scan complete! Scanned "
-                                  << database->scannedProcessCount.load() << " processes\n";
+                                  << database->scannedProcessCount.load() << " processes (generation "
+                                  << database->scanGeneration.load() << ")\n";
                     }
 
                     // Check if it's time to rescan (skip if interval is 0)
@@ -658,6 +660,10 @@ size_t PageDatabase::GetScannedProcessCount() const {
 
 size_t PageDatabase::GetTotalProcessCount() const {
     return totalProcessCount.load();
+}
+
+size_t PageDatabase::GetScanGeneration() const {
+    return scanGeneration.load();
 }
 
 void PageDatabase::StartBackgroundScanning(KernelDiscoveryBackend* backend, int rescanIntervalSec) {

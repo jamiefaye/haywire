@@ -177,6 +177,7 @@ public:
     bool IsFullScanComplete() const;
     size_t GetScannedProcessCount() const;
     size_t GetTotalProcessCount() const;
+    size_t GetScanGeneration() const;  // Increments each time a full scan completes
 
 private:
     // Page storage: indexed by (physAddr - ramBase) / 4096
@@ -200,6 +201,7 @@ private:
     std::atomic<bool> fullScanComplete{false};
     std::atomic<size_t> scannedProcessCount{0};
     std::atomic<size_t> totalProcessCount{0};
+    std::atomic<size_t> scanGeneration{0};  // Increments each time a full scan completes
     std::unordered_set<uint32_t> scannedPIDs;  // PIDs we've scanned
     std::unordered_map<uint32_t, std::string> processNames;  // PID → process name
 
