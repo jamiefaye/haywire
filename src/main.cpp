@@ -605,40 +605,47 @@ int main(int argc, char** argv) {
                 size_t total = pageDatabase->GetTotalProcessCount();
                 size_t generation = pageDatabase->GetScanGeneration();
 
-                if (isScanning || !isComplete) {
-                    ImGui::BeginChild("PageDBStatus", ImVec2(0, 20), false);
+                // Define color progression for different scan generations
+                ImVec4 colors[] = {
+                    ImVec4(0.0f, 1.0f, 0.0f, 1.0f),  // Green (gen 1)
+                    ImVec4(0.0f, 0.8f, 1.0f, 1.0f),  // Cyan (gen 2)
+                    ImVec4(0.6f, 0.4f, 1.0f, 1.0f),  // Purple (gen 3)
+                    ImVec4(1.0f, 0.6f, 0.0f, 1.0f),  // Orange (gen 4)
+                };
+                ImVec4 color = colors[generation % 4];
 
-                    if (isComplete) {
-                        // Use color progression for different scan generations
-                        // This shows data is good even during rescans
-                        ImVec4 colors[] = {
-                            ImVec4(0.0f, 1.0f, 0.0f, 1.0f),  // Green (gen 0)
-                            ImVec4(0.0f, 0.8f, 1.0f, 1.0f),  // Cyan (gen 1)
-                            ImVec4(0.6f, 0.4f, 1.0f, 1.0f),  // Purple (gen 2)
-                            ImVec4(1.0f, 0.6f, 0.0f, 1.0f),  // Orange (gen 3)
-                        };
-                        ImVec4 color = colors[generation % 4];
+                ImGui::BeginChild("PageDBStatus", ImVec2(0, 20), false);
 
-                        ImGui::TextColored(color, "[PageDB Ready]");
+                if (isComplete) {
+                    // Scan complete - show ready with current generation color
+                    ImGui::TextColored(color, "[PageDB Ready]");
+                    ImGui::SameLine();
+                    ImGui::Text("Indexed %zu processes", total);
+                    if (generation > 0) {
                         ImGui::SameLine();
-                        ImGui::Text("Indexed %zu processes", total);
-                        if (generation > 0) {
-                            ImGui::SameLine();
-                            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(scan #%zu)", generation + 1);
-                        }
-                    } else {
-                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[PageDB Scanning]");
-                        ImGui::SameLine();
-                        ImGui::Text("%zu/%zu processes", scanned, total);
-                        if (total > 0) {
-                            ImGui::SameLine();
-                            float progress = (float)scanned / (float)total;
-                            ImGui::ProgressBar(progress, ImVec2(200, 0));
-                        }
+                        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(scan #%zu)", generation + 1);
                     }
+                } else {
+                    // Scanning - show progress with NEXT generation's color (previewing the change)
+                    ImVec4 nextColor = colors[(generation + 1) % 4];
 
-                    ImGui::EndChild();
+                    if (generation > 0) {
+                        // This is a rescan - show it's updating with next color
+                        ImGui::TextColored(nextColor, "[Rescanning]");
+                    } else {
+                        // First scan
+                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[PageDB Scanning]");
+                    }
+                    ImGui::SameLine();
+                    ImGui::Text("%zu/%zu processes", scanned, total);
+                    if (total > 0) {
+                        ImGui::SameLine();
+                        float progress = (float)scanned / (float)total;
+                        ImGui::ProgressBar(progress, ImVec2(200, 0));
+                    }
                 }
+
+                ImGui::EndChild();
             }
 
             // Bottom section with two panes - child windows will use remaining space automatically
