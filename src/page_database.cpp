@@ -127,7 +127,7 @@ private:
                             backgroundIndex = 0;
                             scannedPIDs.clear();
                             database->scannedProcessCount.store(0);
-                            database->fullScanComplete.store(false);
+                            // Keep fullScanComplete true - this is a rescan, not first scan
                             lastFullScanTime = now;
                             std::cout << "[PageDB] Rescan: updating database, found " << allProcesses.size() << " processes\n";
                             continue;  // Start scanning immediately
