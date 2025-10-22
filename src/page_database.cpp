@@ -186,8 +186,15 @@ private:
             }
 
             // Delay between PIDs to avoid monopolizing CPU
-            // Priority scans get shorter delay (50ms), background scans get longer (100ms)
-            int delayMs = isPriority ? 50 : 100;
+            // First scan: faster (10ms priority, 20ms background) to populate database quickly
+            // Rescans: slower (50ms priority, 100ms background) to be CPU-friendly
+            bool isFirstScan = (database->scanGeneration.load() == 0);
+            int delayMs;
+            if (isPriority) {
+                delayMs = isFirstScan ? 10 : 50;
+            } else {
+                delayMs = isFirstScan ? 20 : 100;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
         }
 
