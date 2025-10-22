@@ -89,9 +89,9 @@ void PageDatabaseQuery::Render() {
         }
 
         // Build PTEs from all pages in results
-        for (const auto* page : results.pages) {
-            if (page->virtualAddr != 0) {
-                ptes[page->virtualAddr] = page->physicalAddr;
+        for (const auto& page : results.pages) {  // Reference to copy, not pointer
+            if (page.virtualAddr != 0) {
+                ptes[page.virtualAddr] = page.physicalAddr;
             }
         }
 
@@ -252,30 +252,30 @@ void PageDatabaseQuery::RenderResults() {
 
             size_t showCount = std::min(results.pages.size(), size_t(100));
             for (size_t i = 0; i < showCount; i++) {
-                const auto* page = results.pages[i];
+                const auto& page = results.pages[i];  // Reference to copy, not pointer
 
-                ImGui::Text("0x%lx", page->physicalAddr); ImGui::NextColumn();
-                ImGui::Text("0x%lx", page->virtualAddr); ImGui::NextColumn();
+                ImGui::Text("0x%llx", page.physicalAddr); ImGui::NextColumn();
+                ImGui::Text("0x%llx", page.virtualAddr); ImGui::NextColumn();
 
                 // Display all PIDs comma-separated
                 std::string pidList;
-                for (size_t i = 0; i < page->pids.size(); i++) {
-                    if (i > 0) pidList += ",";
-                    pidList += std::to_string(page->pids[i]);
+                for (size_t j = 0; j < page.pids.size(); j++) {  // Use 'j' to avoid shadowing
+                    if (j > 0) pidList += ",";
+                    pidList += std::to_string(page.pids[j]);
                 }
                 ImGui::Text("%s", pidList.empty() ? "0" : pidList.c_str()); ImGui::NextColumn();
 
-                ImGui::Text("%s", GetOwnershipTypeName(page->ownershipType)); ImGui::NextColumn();
+                ImGui::Text("%s", GetOwnershipTypeName(page.ownershipType)); ImGui::NextColumn();
 
                 // Flags
                 char flags[5] = "----";
-                if (page->isReadable()) flags[0] = 'r';
-                if (page->isWritable()) flags[1] = 'w';
-                if (page->isExecutable()) flags[2] = 'x';
-                if (page->isShared()) flags[3] = 's';
+                if (page.isReadable()) flags[0] = 'r';
+                if (page.isWritable()) flags[1] = 'w';
+                if (page.isExecutable()) flags[2] = 'x';
+                if (page.isShared()) flags[3] = 's';
                 ImGui::Text("%s", flags); ImGui::NextColumn();
 
-                ImGui::Text("%s", page->filename.c_str()); ImGui::NextColumn();
+                ImGui::Text("%s", page.filename.c_str()); ImGui::NextColumn();
             }
 
             if (results.pages.size() > 100) {
@@ -360,17 +360,24 @@ void PageDatabaseQuery::ExecuteQuery() {
     MemoryView view;
     view.BuildFromDatabase(pageDB.get(), filter, sort);
 
-    results.pages = view.GetPages();
+    // Copy pages from view to results (thread-safe snapshot)
+    const auto& viewPages = view.GetPages();
+    results.pages.clear();
+    results.pages.reserve(viewPages.size());
+    for (const auto* page : viewPages) {
+        results.pages.push_back(*page);  // Make a copy
+    }
+
     results.totalPages = results.pages.size();
     results.totalBytes = results.totalPages * 4096;
 
     std::cout << "[Query] Filter returned " << results.totalPages << " pages\n";
 
     // Calculate statistics
-    for (const auto* page : results.pages) {
-        results.pagesByType[page->ownershipType]++;
+    for (const auto& page : results.pages) {  // Reference to copy, not pointer
+        results.pagesByType[page.ownershipType]++;
         // Count page for each owning PID
-        for (uint32_t pid : page->pids) {
+        for (uint32_t pid : page.pids) {
             results.pagesByPID[pid]++;
         }
     }

@@ -112,7 +112,7 @@ private:
 
     // Query results
     struct QueryResults {
-        std::vector<const PageMetadata*> pages;
+        std::vector<PageMetadata> pages;  // Store copies, not pointers (thread-safe)
         size_t totalPages;
         size_t totalBytes;
         std::unordered_map<PageMetadata::OwnershipType, size_t> pagesByType;
