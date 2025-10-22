@@ -273,25 +273,27 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                         // Direct memcpy from mmap'd memory (fast!)
                         std::memcpy(buffer.data() + offset, ptr, chunkSize);
                         bytesRead += chunkSize;
-                        offset += pageSize;
+                        offset += chunkSize;  // Advance by actual bytes copied
                     } else {
                         // Unmapped page - check if there's a run of unmapped pages
-                        // Scan cache to find run length (fast, no translations!)
-                        size_t runLength = pageSize;
-                        size_t remainingPages = (size - offset - pageSize) / pageSize;
+                        size_t bytesRemaining = size - offset;
+                        size_t runLength = std::min(pageSize, bytesRemaining);
 
-                        for (size_t i = 1; i <= remainingPages; i++) {
-                            // Fast cache check - doesn't trigger translation
-                            if (!crunchedReader->IsPageKnownUnmapped(addr + offset + i * pageSize)) {
-                                break;  // Hit a mapped page or unknown page, stop run
+                        // Scan ahead for more unmapped pages (only if we have full pages left)
+                        if (bytesRemaining >= pageSize) {
+                            size_t remainingPages = (bytesRemaining - pageSize) / pageSize;
+                            for (size_t i = 1; i <= remainingPages; i++) {
+                                if (!crunchedReader->IsPageKnownUnmapped(addr + offset + i * pageSize)) {
+                                    break;  // Hit a mapped page, stop run
+                                }
+                                runLength += pageSize;
                             }
-                            runLength += pageSize;
                         }
 
-                        // Fill entire run with zeros at once
+                        // Fill run with zeros
                         std::memset(buffer.data() + offset, 0, runLength);
-                        unmappedPages += runLength / pageSize;
-                        offset += runLength;
+                        unmappedPages += (runLength + pageSize - 1) / pageSize;
+                        offset += runLength;  // Advance by actual bytes filled
                     }
                 }
 
@@ -1018,48 +1020,7 @@ void MemoryVisualizer::DrawControls() {
     ImGui::PushItemWidth(80);  // Bigger width field
     if (ImGui::InputInt("##Width", &widthInput)) {
         viewport.width = std::max(1, widthInput);
-        viewport.stride = viewport.width;
-
-        // In VA mode, align stride to page boundaries to avoid artifacts
-        // when rows span across unmapped pages
-        if (useVirtualAddresses && addressFlattener) {
-            const size_t pageSize = 4096;
-            size_t bpp = viewport.format.bytesPerPixel;
-            size_t rowBytes = viewport.stride * bpp;
-
-            // If row doesn't align with page boundary, find next valid stride
-            if (rowBytes % pageSize != 0) {
-                // For 3-byte formats (RGB/BGR), we need stride where (stride * 3) % 4096 == 0
-                // LCM(3, 4096) = 12288, so we need multiples of 4096 pixels
-                // For other formats, just round up byte count to page boundary
-
-                size_t alignedStride;
-                if (bpp == 3) {
-                    // Find next stride where (stride * 3) is page-aligned
-                    // Need: stride * 3 = N * 4096, so stride = N * 4096 / 3
-                    // Since 4096 % 3 != 0, we need N where (N * 4096) % 3 == 0
-                    // LCM(3, 4096) = 12288, so stride must be multiple of 4096
-                    alignedStride = ((viewport.stride + 4095) / 4096) * 4096;
-                } else {
-                    // Round up byte count to page boundary, then divide
-                    size_t alignedRowBytes = ((rowBytes + pageSize - 1) / pageSize) * pageSize;
-                    alignedStride = alignedRowBytes / bpp;
-                }
-
-                viewport.stride = alignedStride;
-
-                // Show warning if stride changed significantly
-                if (viewport.stride != viewport.width) {
-                    static int warnCount = 0;
-                    if (++warnCount <= 3) {
-                        std::cerr << "VA Mode: Adjusted stride from " << viewport.width
-                                  << " to " << viewport.stride << " pixels for page alignment"
-                                  << " (format requires " << bpp << " bytes/pixel)\n";
-                    }
-                }
-            }
-        }
-
+        viewport.stride = viewport.width;  // Stride always equals width
         strideInput = viewport.stride;
         needsUpdate = true;  // Immediate update
     }
@@ -1233,27 +1194,7 @@ void MemoryVisualizer::DrawControls() {
         }
         
         if (useVirtualAddresses) {
-            // Switching to VA mode - align stride to page boundaries
-            const size_t pageSize = 4096;
-            size_t bpp = viewport.format.bytesPerPixel;
-            size_t rowBytes = viewport.stride * bpp;
-
-            if (rowBytes % pageSize != 0) {
-                size_t alignedStride;
-                if (bpp == 3) {
-                    // For 3-byte formats, stride must be multiple of 4096 pixels
-                    alignedStride = ((viewport.stride + 4095) / 4096) * 4096;
-                } else {
-                    // For other formats, round byte count up
-                    size_t alignedRowBytes = ((rowBytes + pageSize - 1) / pageSize) * pageSize;
-                    alignedStride = alignedRowBytes / bpp;
-                }
-                viewport.stride = alignedStride;
-                strideInput = viewport.stride;
-                std::cerr << "VA Mode: Aligned stride to " << viewport.stride
-                          << " pixels for page boundary alignment (format: " << bpp << " bpp)\n";
-            }
-
+            // Switching to VA mode
             if (addressFlattener && addressFlattener->GetFlatSize() > 0) {
                 // Get the first valid region's flat start
                 const auto* firstRegion = addressFlattener->GetRegionForFlat(0);
