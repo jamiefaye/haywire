@@ -185,10 +185,10 @@ private:
                           << " processes (" << attributed << " pages from PID " << pidToScan << ")\n";
             }
 
-            // Small delay to avoid monopolizing CPU
-            if (!isPriority) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
+            // Delay between PIDs to avoid monopolizing CPU
+            // Priority scans get shorter delay (50ms), background scans get longer (100ms)
+            int delayMs = isPriority ? 50 : 100;
+            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
         }
 
         std::cout << "[PageDB] Background scanner stopped\n";

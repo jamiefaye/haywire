@@ -616,32 +616,24 @@ int main(int argc, char** argv) {
 
                 ImGui::BeginChild("PageDBStatus", ImVec2(0, 20), false);
 
-                if (isComplete) {
-                    // Scan complete - show ready with current generation color
-                    ImGui::TextColored(color, "[PageDB Ready]");
-                    ImGui::SameLine();
-                    ImGui::Text("Indexed %zu processes", total);
-                    if (generation > 0) {
-                        ImGui::SameLine();
-                        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(scan #%zu)", generation + 1);
-                    }
-                } else {
-                    // Scanning - show progress with NEXT generation's color (previewing the change)
-                    ImVec4 nextColor = colors[(generation + 1) % 4];
-
-                    if (generation > 0) {
-                        // This is a rescan - show it's updating with next color
-                        ImGui::TextColored(nextColor, "[Rescanning]");
-                    } else {
-                        // First scan
-                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[PageDB Scanning]");
-                    }
+                if (generation == 0 && !isComplete) {
+                    // First scan only - show progress bar
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[PageDB Scanning]");
                     ImGui::SameLine();
                     ImGui::Text("%zu/%zu processes", scanned, total);
                     if (total > 0) {
                         ImGui::SameLine();
                         float progress = (float)scanned / (float)total;
                         ImGui::ProgressBar(progress, ImVec2(200, 0));
+                    }
+                } else {
+                    // After first scan - just show status with color progression
+                    ImGui::TextColored(color, "[PageDB Ready]");
+                    ImGui::SameLine();
+                    ImGui::Text("Indexed %zu processes", total);
+                    if (generation > 0) {
+                        ImGui::SameLine();
+                        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(scan #%zu)", generation + 1);
                     }
                 }
 
