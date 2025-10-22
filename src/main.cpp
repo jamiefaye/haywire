@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
 
             // Start background scanner to populate database progressively
             std::cout << "Starting background page database scanner...\n";
-            pageDatabase->StartBackgroundScanning(kernelDiscovery.get(), 0);  // 0 = disable rescan
+            pageDatabase->StartBackgroundScanning(kernelDiscovery.get(), 30);  // Rescan every 30 seconds
             std::cout << "Page database initialized - scanning in background\n";
 
             // Wire up page database query window
