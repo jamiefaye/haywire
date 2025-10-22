@@ -194,7 +194,9 @@ void PageDatabaseQuery::RenderFilterControls() {
         };
 
         for (int i = 0; i < 11; i++) {
+            ImGui::PushID(i);  // Make each checkbox have a unique ID
             ImGui::Checkbox(typeNames[i], &params.ownershipFilters[i]);
+            ImGui::PopID();
             if (i == 5) ImGui::NextColumn();  // Split at halfway point
         }
         ImGui::Columns(1);
