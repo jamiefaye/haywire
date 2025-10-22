@@ -150,6 +150,13 @@ void MemoryVisualizer::EnableVAMode(bool enable) {
     if (useVirtualAddresses != enable) {
         useVirtualAddresses = enable;
 
+        // Update bitmap viewer manager to match VA/PA mode
+        if (bitmapViewerManager) {
+            bitmapViewerManager->SetVAMode(useVirtualAddresses);
+            bitmapViewerManager->SetCrunchedReader(crunchedReader.get());
+            bitmapViewerManager->SetAddressFlattener(addressFlattener.get());
+        }
+
         // Update change detector to match VA/PA mode
         if (changeDetector_) {
             changeDetector_->SetVAMode(useVirtualAddresses, crunchedReader.get());
