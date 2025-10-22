@@ -263,14 +263,23 @@ void MemoryVisualizer::DrawControlBar(QemuConnection& qemu) {
                 size_t bytesRead = 0;
                 size_t unmappedPages = 0;
 
-                // Read in page-sized chunks using GetDirectPointer
+                // Read in page-aligned chunks using GetDirectPointer
+                // CRITICAL: GetDirectPointer returns pointer valid only to end of current page
                 const size_t pageSize = 4096;
                 for (size_t offset = 0; offset < size; ) {
-                    size_t chunkSize = std::min(pageSize, size - offset);
-                    const uint8_t* ptr = crunchedReader->GetDirectPointer(addr + offset);
+                    uint64_t currentFlatAddr = addr + offset;
+                    size_t offsetInPage = currentFlatAddr % pageSize;
+                    size_t bytesLeftInPage = pageSize - offsetInPage;
+                    size_t bytesLeftTotal = size - offset;
+
+                    // Clip to page boundary: can only read to end of current page
+                    size_t chunkSize = std::min(bytesLeftInPage, bytesLeftTotal);
+
+                    const uint8_t* ptr = crunchedReader->GetDirectPointer(currentFlatAddr);
 
                     if (ptr) {
                         // Direct memcpy from mmap'd memory (fast!)
+                        // ptr is only valid for chunkSize bytes (to end of page)
                         std::memcpy(buffer.data() + offset, ptr, chunkSize);
                         bytesRead += chunkSize;
                         offset += chunkSize;  // Advance by actual bytes copied

@@ -244,6 +244,12 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
 
         size = std::min(chunk_size_, (size_t)(crunched_size - flat_address));
 
+        // Clip to page boundary: GetDirectPointer only valid to end of current page
+        const size_t pageSize = 4096;
+        size_t offsetInPage = flat_address % pageSize;
+        size_t bytesLeftInPage = pageSize - offsetInPage;
+        size = std::min(size, bytesLeftInPage);
+
         // Try direct pointer (zero-copy access to mmap'd memory)
         data = crunched_reader_->GetDirectPointer(flat_address);
 
