@@ -10,6 +10,7 @@
 #include "change_detector.h"
 #include "heat_map_widget.h"
 #include "memory_file_reader.h"
+#include "page_database.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include <cstring>
@@ -1267,6 +1268,46 @@ void MemoryVisualizer::DrawControls() {
     if (ImGui::Button("Query...")) {
         if (onQueryButtonClick) {
             onQueryButtonClick();
+        }
+    }
+
+    // Page Database status indicator - right after Query button
+    if (pageDatabase && kernelDiscoveryInitialized) {
+        bool isScanning = pageDatabase->IsScanning();
+        bool isComplete = pageDatabase->IsFullScanComplete();
+        size_t scanned = pageDatabase->GetScannedProcessCount();
+        size_t total = pageDatabase->GetTotalProcessCount();
+        size_t generation = pageDatabase->GetScanGeneration();
+
+        // Define color progression for different scan generations
+        ImVec4 colors[] = {
+            ImVec4(0.0f, 1.0f, 0.0f, 1.0f),  // Green (gen 1)
+            ImVec4(0.0f, 0.8f, 1.0f, 1.0f),  // Cyan (gen 2)
+            ImVec4(0.6f, 0.4f, 1.0f, 1.0f),  // Purple (gen 3)
+            ImVec4(1.0f, 0.6f, 0.0f, 1.0f),  // Orange (gen 4)
+        };
+        ImVec4 color = colors[generation % 4];
+
+        ImGui::SameLine();
+        if (generation == 0 && !isComplete) {
+            // First scan only - show progress bar
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[PageDB Scanning]");
+            ImGui::SameLine();
+            ImGui::Text("%zu/%zu", scanned, total);
+            if (total > 0) {
+                ImGui::SameLine();
+                float progress = (float)scanned / (float)total;
+                ImGui::ProgressBar(progress, ImVec2(100, 0));
+            }
+        } else {
+            // After first scan - just show status with color progression
+            ImGui::TextColored(color, "[PageDB]");
+            ImGui::SameLine();
+            ImGui::Text("%zu procs", total);
+            if (generation > 0) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(#%zu)", generation + 1);
+            }
         }
     }
 

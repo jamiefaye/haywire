@@ -113,6 +113,10 @@ public:
     // Column mode state getter
     bool IsColumnModeEnabled() const { return columnMode; }
 
+    // Page Database for status display
+    void SetPageDatabase(class PageDatabase* db) { pageDatabase = db; }
+    void SetKernelDiscoveryInitialized(bool initialized) { kernelDiscoveryInitialized = initialized; }
+
     // Memory data source support
     void SetMemoryDataSource(std::shared_ptr<MemoryDataSource> dataSource);
     std::shared_ptr<MemoryDataSource> GetMemoryDataSource() const { return memoryDataSource_; }
@@ -279,6 +283,10 @@ private:
     std::unique_ptr<ChangeDetector> changeDetector_;
     std::unique_ptr<HeatMapWidget> heatMapWidget_;
     int heatMapChunkSizeIndex = 2;  // 0=4KB(page), 1=16KB, 2=64KB(default), 3=256KB, 4=1MB
+
+    // Page Database status
+    class PageDatabase* pageDatabase = nullptr;
+    bool kernelDiscoveryInitialized = false;
 };
 
 }
