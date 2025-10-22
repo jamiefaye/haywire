@@ -1019,6 +1019,30 @@ void MemoryVisualizer::DrawControls() {
     if (ImGui::InputInt("##Width", &widthInput)) {
         viewport.width = std::max(1, widthInput);
         viewport.stride = viewport.width;
+
+        // In VA mode, align stride to page boundaries to avoid artifacts
+        // when rows span across unmapped pages
+        if (useVirtualAddresses && addressFlattener) {
+            const size_t pageSize = 4096;
+            size_t rowBytes = viewport.stride * viewport.format.bytesPerPixel;
+
+            // If row doesn't align with page boundary, adjust stride
+            if (rowBytes % pageSize != 0) {
+                // Round up to next page boundary
+                size_t alignedRowBytes = ((rowBytes + pageSize - 1) / pageSize) * pageSize;
+                viewport.stride = alignedRowBytes / viewport.format.bytesPerPixel;
+
+                // Show warning if stride changed significantly
+                if (viewport.stride != viewport.width) {
+                    static int warnCount = 0;
+                    if (++warnCount <= 3) {
+                        std::cerr << "VA Mode: Adjusted stride from " << viewport.width
+                                  << " to " << viewport.stride << " pixels for page alignment\n";
+                    }
+                }
+            }
+        }
+
         strideInput = viewport.stride;
         needsUpdate = true;  // Immediate update
     }
@@ -1192,7 +1216,17 @@ void MemoryVisualizer::DrawControls() {
         }
         
         if (useVirtualAddresses) {
-            // Switching to VA mode
+            // Switching to VA mode - align stride to page boundaries
+            const size_t pageSize = 4096;
+            size_t rowBytes = viewport.stride * viewport.format.bytesPerPixel;
+            if (rowBytes % pageSize != 0) {
+                size_t alignedRowBytes = ((rowBytes + pageSize - 1) / pageSize) * pageSize;
+                viewport.stride = alignedRowBytes / viewport.format.bytesPerPixel;
+                strideInput = viewport.stride;
+                std::cerr << "VA Mode: Aligned stride to " << viewport.stride
+                          << " pixels for page boundary alignment\n";
+            }
+
             if (addressFlattener && addressFlattener->GetFlatSize() > 0) {
                 // Get the first valid region's flat start
                 const auto* firstRegion = addressFlattener->GetRegionForFlat(0);
