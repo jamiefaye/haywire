@@ -747,8 +747,8 @@ void BitmapViewerManager::ExtractMemory(BitmapViewer& viewer) {
     size_t totalBytes = viewer.stride * viewer.memHeight;
 
     // Priority 1: If the address is in crunched space, use crunched reader (handles VA mode)
-    if (viewer.memoryAddress.space == AddressSpace::CRUNCHED &&
-        crunchedReader && currentPid > 0) {
+    // Note: Works with PID 0 for query results (uses provided PTEs)
+    if (viewer.memoryAddress.space == AddressSpace::CRUNCHED && crunchedReader) {
             // Allocate buffer for memory
             std::vector<uint8_t> buffer(totalBytes);
         
