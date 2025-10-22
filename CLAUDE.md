@@ -529,6 +529,66 @@ class MemoryMapping {
 ## Contact/Issues
 
 File issues in the GitHub repository. This is a research project - use at your own risk!
+## Recent Progress (October 22, 2025)
+
+### Critical VA Mode Rendering Fixes
+
+**PageDatabase Query System:**
+- Multi-PID page tracking with wildcard name queries (e.g., `vlc*`, `*firefox*`)
+- Thread-safe query results using PageMetadata copies instead of pointers
+- Fixed race condition where background scanner could modify results during display
+- Deduplication and sorting options for shared pages
+- Generation-based color progression (Green→Cyan→Purple→Orange) for rescan feedback
+- Faster first scan (10ms/PID) with CPU-friendly rescans (100ms/PID)
+
+**Mini Bitmap Viewer Fixes:**
+- Fixed PID 0 support for query results (was checking `currentPid > 0`)
+- Fixed `EnableVAMode()` not updating bitmap viewer manager with crunched reader
+- Mini viewers now work correctly for both PID selector and query results
+- Removed test pattern fallback when crunched reader was available but not wired up
+
+**VA Mode Buffer Reading - Critical Bugs Fixed:**
+
+**Bug #1: Offset Advancement**
+```cpp
+// OLD (WRONG):
+chunkSize = min(pageSize, size - offset);  // e.g., 100 bytes
+memcpy(buffer + offset, ptr, chunkSize);
+offset += pageSize;  // ❌ Skipped 3996 bytes! Left gaps!
+
+// NEW (CORRECT):
+offset += chunkSize;  // ✅ Advance by actual bytes copied
+```
+Result: Buffer had uninitialized gaps causing visual artifacts
+
+**Bug #2: Page Boundary Clipping**
+```cpp
+// GetDirectPointer returns pointer valid only to end of current page
+// If flat addr = 4094 (2 bytes from page end), pointer only valid for 2 bytes!
+
+// NEW: Clip to page boundary
+offsetInPage = flatAddr % 4096;
+bytesLeftInPage = 4096 - offsetInPage;
+chunkSize = min(bytesLeftInPage, bytesNeeded);
+```
+Fixed in three call sites:
+- `memory_visualizer.cpp`: Viewport rendering (307KB buffer fills)
+- `change_detector.cpp`: Heat map chunk scanning
+- `qemu_connection.cpp`: Already safe (page-aligned calls only)
+
+**Key Insight from User:**
+- "Stride should equal width" - no fancy alignment needed
+- Rendering naturally handles pixels spanning page boundaries
+- Buffer just needs to be complete and contiguous (gaps filled with zeros)
+- RGB pixels can straddle pages as long as buffer has all bytes in order
+
+**Impact:**
+- Eliminated visual artifacts in VA mode (black stripes, corrupted rows)
+- Complete, contiguous buffers with proper zero-filling for unmapped pages
+- 3-byte formats (RGB/BGR) now render correctly across page boundaries
+- Mini viewers work reliably for query results
+- Heat map scans don't corrupt checksums with garbage data
+
 ## Recent Progress (October 2, 2025)
 
 ### Instruction Disassembly and Visualization
