@@ -3221,14 +3221,14 @@ void MemoryVisualizer::HandleInput() {
     if (ImGui::IsItemHovered()) {
         // Mouse wheel scrolls through memory addresses
         if (io.MouseWheel != 0) {
-            // Scroll by rows worth of memory
-            int64_t scrollDelta = io.MouseWheel * viewport.stride * 16;  // 16 rows at a time
-            
+            // Round wheel value to prevent sub-row misalignment from fractional scrolling
+            int64_t scrollDelta = (int64_t)round(io.MouseWheel) * viewport.stride * 16;  // 16 rows at a time
+
             // Shift for faster scrolling (64K chunks)
             if (io.KeyShift) {
-                scrollDelta = io.MouseWheel * 65536;
+                scrollDelta = (int64_t)round(io.MouseWheel) * 65536;
             }
-            
+
             // Update address - natural scrolling: wheel up = go up (earlier/lower addresses)
             int64_t newAddress = (int64_t)viewport.baseAddress - scrollDelta;  // Natural scrolling
             if (newAddress < 0) {
@@ -3236,8 +3236,11 @@ void MemoryVisualizer::HandleInput() {
                 newAddress = 0;
             }
             if (newAddress > 0x200000000ULL) newAddress = 0x200000000ULL;  // Cap at 8GB
-            
-            viewport.baseAddress = (uint64_t)newAddress;
+
+            // Align to stride boundary to prevent horizontal jiggling
+            uint64_t strideBytes = viewport.stride * viewport.format.bytesPerPixel;
+            uint64_t alignedAddress = ((uint64_t)newAddress / strideBytes) * strideBytes;
+            viewport.baseAddress = alignedAddress;
             
             // Update the address input field
             AddressSpace space = useVirtualAddresses ? AddressSpace::CRUNCHED : AddressSpace::PHYSICAL;

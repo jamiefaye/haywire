@@ -589,8 +589,8 @@ int main(int argc, char** argv) {
                 pidSelector.ToggleVisible();
             }
 
-            // Q hotkey for Query window
-            if (ImGui::IsKeyPressed(ImGuiKey_Q) && !ImGui::GetIO().WantTextInput) {
+            // D hotkey for Database query window
+            if (ImGui::IsKeyPressed(ImGuiKey_D) && !ImGui::GetIO().WantTextInput) {
                 pageDBQuery.ToggleVisible();
             }
 
