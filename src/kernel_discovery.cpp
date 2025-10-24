@@ -46,11 +46,12 @@ struct KernelOffsets {
     size_t mt_root = 0x48;         // Actual root node pointer at offset 8 in maple_tree
 
     // vm_area_struct offsets (in maple tree leaves)
+    // Updated for kernel 6.14.0-34 (offsets changed from -32)
     size_t vma_start = 0x00;       // vm_start
     size_t vma_end = 0x08;         // vm_end
     size_t vma_next = 0x10;        // vm_next (linked list)
-    size_t vma_flags = 0x50;       // vm_flags
-    size_t vma_file = 0x90;        // vm_file pointer
+    size_t vma_flags = 0x20;       // vm_flags (was 0x50, changed in 6.14.0-34)
+    size_t vma_file = 0x80;        // vm_file pointer (was 0x90, changed in 6.14.0-34)
 };
 
 // Known process names from web version
