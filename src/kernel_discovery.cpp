@@ -563,7 +563,10 @@ public:
             proc.pgd = pgdPA;  // Store the physical address
 
             // Try to walk maple tree for memory sections
+            std::cout << "[Discovery] PID " << proc.pid << " calling WalkMapleTree with mmPA=0x"
+                      << std::hex << mmPA << std::dec << "\n" << std::flush;
             WalkMapleTree(mmPA, proc.sections);
+            std::cout << "[Discovery] PID " << proc.pid << " got " << proc.sections.size() << " sections\n" << std::flush;
 
             // Walk page tables to extract PTEs
             WalkProcessPageTables(proc);
@@ -583,6 +586,46 @@ public:
 
         std::cout << "\nExtracted PGDs: " << successCount << " success, "
                   << failCount << " failed" << std::endl;
+
+        // Auto-recovery: If success rate is very low, swapper PGD might be stale
+        int totalAttempted = successCount + failCount;
+        if (totalAttempted > 10 && successCount < totalAttempted / 10) {
+            // Less than 10% success rate - swapper PGD is likely wrong
+            std::cerr << "\n=== WARNING: Very low success rate (" << successCount << "/" << totalAttempted
+                      << ") - swapper PGD may be stale ===" << std::endl;
+            std::cerr << "Attempting to refresh swapper PGD from QMP..." << std::endl;
+
+            // Delete cache and retry discovery
+            std::remove("/tmp/haywire-swapper-pgd.txt");
+
+            QemuConnection& qemu = QemuConnection::getInstance();
+            if (qemu.IsQMPConnected()) {
+                uint64_t newSwapperPGD = 0;
+                uint64_t newCurrentTask = 0;
+                if (qemu.QueryKernelInfo(0, newSwapperPGD, newCurrentTask)) {
+                    std::cout << "Got fresh swapper PGD from QMP: 0x" << std::hex << newSwapperPGD
+                              << " (was 0x" << kernelInfo.swapper_pgd << ")" << std::dec << std::endl;
+
+                    if (newSwapperPGD != kernelInfo.swapper_pgd) {
+                        std::cout << "Swapper PGD changed! Retrying discovery with new value..." << std::endl;
+                        kernelInfo.swapper_pgd = newSwapperPGD;
+                        kernelInfo.current_task = newCurrentTask;
+                        SaveSwapperPGDCache();
+
+                        // Retry the entire extraction phase with new swapper PGD
+                        ExtractProcessPGDs();
+                        return;  // ExtractProcessPGDs will print its own summary
+                    } else {
+                        std::cerr << "Swapper PGD unchanged - problem is elsewhere" << std::endl;
+                    }
+                } else {
+                    std::cerr << "Failed to query QMP for fresh swapper PGD" << std::endl;
+                }
+            } else {
+                std::cerr << "QMP not available - cannot refresh swapper PGD" << std::endl;
+            }
+            std::cerr << "=== Auto-recovery failed - proceeding with incomplete data ===" << std::endl;
+        }
     }
 
 private:
@@ -1183,17 +1226,21 @@ private:
         // Read maple tree root at mm_struct + 0x40
         uint64_t mtOffset = mmPA - 0x40000000 + 0x40;
         if (mtOffset + 0x10 > memorySize) {
+            std::cout << "[MapleTree] mtOffset out of bounds: " << std::hex << mtOffset << std::dec << "\n" << std::flush;
             return false;
         }
 
         // The actual root node is at offset 0x8 within maple_tree
         uint64_t rootPtrVA = *(uint64_t*)((uint8_t*)memBase + mtOffset + 0x8);
         if (!rootPtrVA || !IsKernelPointer(rootPtrVA)) {
+            std::cout << "[MapleTree] Invalid root pointer: " << std::hex << rootPtrVA << std::dec << "\n" << std::flush;
             return false;
         }
 
+        std::cout << "[MapleTree] Walking from root: " << std::hex << rootPtrVA << std::dec << "\n" << std::flush;
         // Walk the maple tree starting from root
         WalkMapleNode(rootPtrVA, sections, 0);
+        std::cout << "[MapleTree] Found " << sections.size() << " sections\n" << std::flush;
         return !sections.empty();
     }
 
