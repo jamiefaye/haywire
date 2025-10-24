@@ -236,24 +236,6 @@ int main(int argc, char** argv) {
             
             // Store process name in visualizer for display
             visualizer.SetCurrentProcessName(processName);
-            
-            // With companion_oneshot, we trigger a refresh with the target PID
-            // REMOVED: Guest agent
-            if (false) { // was: !useKernelDiscovery && qemu.IsGuestAgentConnected()
-                // std::cout << "Refreshing beacon data for PID " << pid << "...\n";
-                // beaconReader->RefreshCompanion(qemu.GetGuestAgent(), pid);
-
-                // Give it a moment to complete
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-                // OBSOLETE: Re-scan for updated beacon data
-                // if (!useKernelDiscovery) {
-                //     beaconReader->FindDiscovery();
-                // }
-            } else {
-                // Without QGA, we can't trigger oneshot companion
-                std::cout << "Warning: Guest agent not connected, cannot refresh camera data\n";
-            }
 
             // Request priority scan for this PID (non-blocking, queues in background)
             if (pageDatabase) {
@@ -393,7 +375,15 @@ int main(int argc, char** argv) {
                     visualizer.onProcessMapLoaded(pid, regions);
                 }
             } else {
-                std::cout << "Waiting for camera data for PID " << pid << "\n";
+                std::cerr << "\n=== ERROR: Failed to load PID " << pid << " ===\n";
+                std::cerr << "Could not get memory sections for this process.\n";
+                std::cerr << "Possible reasons:\n";
+                std::cerr << "  - Process has no user memory (kernel thread)\n";
+                std::cerr << "  - Memory map walk failed during discovery\n";
+                std::cerr << "  - Process not yet scanned by background scanner\n";
+                std::cerr << "\nThe background scanner will attempt to scan this PID.\n";
+                std::cerr << "Try selecting it again in a few seconds.\n";
+                std::cerr << "==========================================\n\n";
             }
         });
 
