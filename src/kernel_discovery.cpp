@@ -513,8 +513,10 @@ public:
         int successCount = 0;
         int failCount = 0;
 
-        // Check if we have swapper PGD, if not try heuristic discovery
-        if (kernelInfo.swapper_pgd == 0) {
+        // Check if we have swapper PGD from QMP/cache
+        uint64_t qmpSwapperPGD = kernelInfo.swapper_pgd;
+
+        if (qmpSwapperPGD == 0) {
             std::cout << "No swapper PGD from QMP - attempting heuristic discovery..." << std::endl;
             kernelInfo.swapper_pgd = FindSwapperPGD();
 
@@ -525,7 +527,22 @@ public:
 
             // Cache the discovered value for future use
             SaveSwapperPGDCache();
+        } else {
+            // We have QMP value - run heuristic for comparison/validation
+            std::cout << "Validating QMP swapper PGD with heuristic discovery..." << std::endl;
+            uint64_t heuristicPGD = FindSwapperPGD();
+
+            if (heuristicPGD != 0 && heuristicPGD != qmpSwapperPGD) {
+                std::cerr << "\n=== WARNING: Swapper PGD mismatch! ===" << std::endl;
+                std::cerr << "QMP says:       0x" << std::hex << qmpSwapperPGD << std::dec << std::endl;
+                std::cerr << "Heuristic says: 0x" << std::hex << heuristicPGD << std::dec << std::endl;
+                std::cerr << "Using QMP value (more authoritative)" << std::endl;
+                std::cerr << "====================================\n" << std::endl;
+            } else if (heuristicPGD == qmpSwapperPGD) {
+                std::cout << "✓ Heuristic validation confirms QMP swapper PGD" << std::endl;
+            }
         }
+
         std::cout << "Using swapper PGD: 0x" << std::hex << kernelInfo.swapper_pgd << std::dec << std::endl;
 
         for (auto& proc : processes) {
