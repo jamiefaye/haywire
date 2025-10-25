@@ -681,3 +681,105 @@ Fixed in three call sites:
 - Current version now matches this with proper 8/16/24/32-bit handling
 - Produces more satisfying autocorrelation displays
 
+
+## Recent Progress (October 24, 2025)
+
+### Kernel Profile System for Multi-Platform VM Support
+
+Implemented a comprehensive JSON-based kernel profile system that enables Haywire to work across different Linux kernels and VM platforms **without requiring SSH**.
+
+**Supported VM Platforms:**
+1. **QEMU/KVM** - memory-backend-file (already working)
+2. **VMware Workstation/Fusion** - .vmem memory files
+3. **VirtualBox** - .sav snapshot files
+4. **Hyper-V** - .bin memory dumps
+5. **Xen** - LibVMI support possible
+
+All platforms expose guest physical memory in a file or API that Haywire can access.
+
+**Key Components:**
+
+- **`kernel_profile_loader.h`** - Lightweight JSON parser (no external dependencies)
+  - Loads offsets for task_struct, mm_struct, vm_area_struct
+  - Supports hex and decimal values
+  - Simple, standalone implementation
+
+- **`profiles/ubuntu-6.14.0-34-arm64.json`** - Example profile
+  - All kernel structure offsets with types and sizes
+  - Metadata (kernel version, architecture, verification status)
+  - Human-readable notes for each offset
+
+- **`scripts/create_kernel_profile.py`** - Profile generator
+  - Parses pahole output → generates JSON
+  - Auto-detects kernel version and architecture
+  - Interactive or piped input
+
+- **`profiles/README.md`** - Complete documentation
+  - Step-by-step guides for all VM platforms
+  - No SSH required - uses VM console or shared folders
+  - Examples for VMware, VirtualBox, QEMU
+
+**Workflow for New Kernel (No SSH!):**
+
+1. Boot VM, access console (VMware console, QEMU -nographic, etc.)
+2. Login (whatever credentials you set)
+3. Install pahole: `sudo apt-get install dwarves`
+4. Extract offsets:
+   ```bash
+   pahole -C task_struct /sys/kernel/btf/vmlinux > /tmp/p.txt
+   pahole -C mm_struct /sys/kernel/btf/vmlinux >> /tmp/p.txt
+   pahole -C vm_area_struct /sys/kernel/btf/vmlinux >> /tmp/p.txt
+   ```
+5. **Copy-paste output to host** (VMware has clipboard, or use shared folders)
+6. Generate profile:
+   ```bash
+   python3 scripts/create_kernel_profile.py < p.txt > profiles/my-kernel.json
+   ```
+7. Done! Haywire can now introspect that kernel
+
+**Integration:**
+- KernelDiscovery constructor accepts optional profile path
+- Auto-detects profile from `profiles/` directory if exists
+- Falls back to built-in defaults for Ubuntu 6.14.0-34
+- Offsets loaded before memory mapping
+
+**Why No Public Databases?**
+- Checked Volatility ISF repositories (Abyss-W4tcher, leludo84, p0dalirius)
+- None have ARM64 kernels or recent 6.x versions
+- All x86_64 only, max kernel 5.15
+- Local extraction is actually simpler than SSH!
+
+**Key Insight:** BTF (BPF Type Format) data is embedded in all modern kernels (5.2+) at `/sys/kernel/btf/vmlinux`. No source code, headers, or symbols needed - just pahole and console access.
+
+### Comparative Testing for Swapper PGD Discovery
+
+Enhanced swapper_pgd discovery to work without QMP using functional validation:
+
+**Heuristic + Functional Testing Approach:**
+1. **Heuristic scan** finds PGD candidates based on patterns:
+   - Single user entry (100 points) - swapper signature
+   - Has PGD[256] for kernel text (+15 points)
+   - 2-20 kernel entries (+20 points)
+   - Rejects >16 user entries (-50 points)
+
+2. **Functional testing** validates candidates:
+   - Tests each candidate by translating mm_struct VAs to PAs
+   - Validates translations produce valid mm_struct structures
+   - Selects candidate with highest success rate
+
+3. **mm_struct validation** checks:
+   - mm_users > 0 and < 10000 (reasonable refcount)
+   - PGD pointer is valid kernel pointer
+   - Maple tree root (if present) is kernel pointer
+
+**Results from Testing:**
+- Heuristic found 5 candidates, all scored 135 (indistinguishable)
+- Functional testing: Candidate #1 had 95% success (19/20), all others 0%
+- Cross-validation with QMP: ✓ Both methods found same PGD (0x136dec000)
+
+**Benefits:**
+- Works without QMP connection
+- More reliable than pure heuristics
+- Automatically recovers from stale cached values
+- QMP results can be cross-validated
+
