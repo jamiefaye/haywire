@@ -1028,7 +1028,10 @@ void MemoryVisualizer::DrawControls() {
     ImGui::SameLine();
     ImGui::PushItemWidth(80);  // Bigger width field
     if (ImGui::InputInt("##Width", &widthInput)) {
-        viewport.width = std::max(1, widthInput);
+        // Clamp width to reasonable range (1-4096 pixels)
+        // Widths over 4096 can cause memory/performance issues
+        widthInput = std::max(1, std::min(4096, widthInput));
+        viewport.width = widthInput;
         viewport.stride = viewport.width;  // Stride always equals width
         strideInput = viewport.stride;
         needsUpdate = true;  // Immediate update
@@ -1342,7 +1345,8 @@ void MemoryVisualizer::DrawControls() {
         ImGui::SameLine();
         ImGui::PushItemWidth(100);  // Wider field
         if (ImGui::InputInt("##ColWidth", &columnWidth)) {
-            columnWidth = std::max(1, columnWidth);
+            // Clamp column width to reasonable range (1-4096 pixels)
+            columnWidth = std::max(1, std::min(4096, columnWidth));
             needsUpdate = true;
         }
         ImGui::PopItemWidth();
@@ -3065,10 +3069,10 @@ void MemoryVisualizer::HandleInput() {
                 strideInput = viewport.stride;
                 needsUpdate = true;
             }
-            if (rightKey && viewport.width < 2048) {
+            if (rightKey && viewport.width < 4096) {
                 // Increase width - 1 pixel normally, 8 with Shift
                 int step = shiftPressed ? 8 : 1;
-                viewport.width = std::min(2048, (int)viewport.width + step);
+                viewport.width = std::min(4096, (int)viewport.width + step);
                 widthInput = viewport.width;
                 viewport.stride = viewport.width * viewport.format.bytesPerPixel;
                 strideInput = viewport.stride;
