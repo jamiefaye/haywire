@@ -212,10 +212,13 @@ public:
                 return false;
             }
         } else {
-            std::cerr << "ERROR: QMP not connected - cannot get swapper PGD" << std::endl;
-            std::cerr << "Hint: First instance needs QMP to discover swapper PGD" << std::endl;
-            std::cerr << "      Subsequent instances can use cached value" << std::endl;
-            return false;
+            std::cerr << "QMP not connected - will try heuristic discovery after process scan" << std::endl;
+            std::cerr << "Note: Heuristic discovery requires processes to be discovered first" << std::endl;
+
+            // Don't fail here - we'll discover swapper_pgd after process scan
+            // Set a flag to indicate we need heuristic discovery
+            kernelInfo.swapper_pgd = 0;  // Mark as not yet discovered
+            return true;  // Continue anyway
         }
     }
 
@@ -510,10 +513,18 @@ public:
         int successCount = 0;
         int failCount = 0;
 
-        // Debug: Check if we have swapper PGD
+        // Check if we have swapper PGD, if not try heuristic discovery
         if (kernelInfo.swapper_pgd == 0) {
-            std::cout << "ERROR: No swapper PGD found, cannot translate kernel VAs" << std::endl;
-            return;
+            std::cout << "No swapper PGD from QMP - attempting heuristic discovery..." << std::endl;
+            kernelInfo.swapper_pgd = FindSwapperPGD();
+
+            if (kernelInfo.swapper_pgd == 0) {
+                std::cerr << "ERROR: Heuristic discovery failed - cannot translate kernel VAs" << std::endl;
+                return;
+            }
+
+            // Cache the discovered value for future use
+            SaveSwapperPGDCache();
         }
         std::cout << "Using swapper PGD: 0x" << std::hex << kernelInfo.swapper_pgd << std::dec << std::endl;
 
@@ -698,7 +709,7 @@ private:
                       return a.score > b.score;
                   });
 
-        std::cout << "Top swapper candidates:" << std::endl;
+        std::cout << "Top swapper candidates (by heuristic score):" << std::endl;
         for (int i = 0; i < std::min(5, (int)candidates.size()); i++) {
             const auto& c = candidates[i];
             std::cout << "  " << (i+1) << ". PA 0x" << std::hex << c.pa
@@ -708,6 +719,59 @@ private:
                       << " (" << c.reasons << ")" << std::endl;
         }
 
+        // COMPARATIVE TESTING: Test top candidates to see which actually works best
+        std::cout << "\nFunctional testing top candidates against discovered processes..." << std::endl;
+
+        int topN = std::min(10, (int)candidates.size());
+        uint64_t bestPGD = 0;
+        int bestSuccessCount = -1;
+
+        for (int i = 0; i < topN; i++) {
+            uint64_t candidatePGD = candidates[i].pa;
+            int successCount = 0;
+            int totalTested = 0;
+
+            // Test this candidate against all discovered user processes
+            for (const auto& proc : processes) {
+                if (proc.is_kernel_thread) continue;  // Skip kernel threads
+                if (proc.mm_addr == 0) continue;
+
+                totalTested++;
+
+                // Try to translate mm_struct VA to PA using this candidate
+                uint64_t mmPA = TranslateVA(proc.mm_addr, candidatePGD);
+
+                // Validate the translation produced a valid mm_struct
+                if (mmPA && ValidateMMStruct(mmPA)) {
+                    successCount++;
+                }
+
+                // Only test first 20 processes (enough for statistical significance)
+                if (totalTested >= 20) break;
+            }
+
+            if (totalTested > 0) {
+                int successRate = (successCount * 100) / totalTested;
+                std::cout << "  Candidate " << (i+1) << " (0x" << std::hex << candidatePGD
+                          << std::dec << "): " << successCount << "/" << totalTested
+                          << " (" << successRate << "%)" << std::endl;
+
+                if (successCount > bestSuccessCount) {
+                    bestSuccessCount = successCount;
+                    bestPGD = candidatePGD;
+                }
+            }
+        }
+
+        if (bestPGD != 0 && bestSuccessCount > 0) {
+            std::cout << "\nSelected swapper PGD via functional testing: 0x" << std::hex
+                      << bestPGD << std::dec
+                      << " (" << bestSuccessCount << " successful translations)" << std::endl;
+            return bestPGD;
+        }
+
+        // Fallback to heuristic score if functional testing inconclusive
+        std::cout << "\nFunctional testing inconclusive, using heuristic score..." << std::endl;
         uint64_t best = candidates[0].pa;
         std::cout << "Selected swapper PGD: 0x" << std::hex << best << std::dec << std::endl;
         return best;
@@ -787,6 +851,40 @@ private:
     bool IsKernelPointer(uint64_t ptr) {
         // Kernel pointers have top 16 bits = 0xFFFF
         return (ptr >> 48) == 0xFFFF;
+    }
+
+    bool ValidateMMStruct(uint64_t mmPA) {
+        // Check if physical address is in valid RAM range
+        if (mmPA < 0x40000000 || mmPA >= 0x40000000 + memorySize) {
+            return false;
+        }
+
+        uint64_t mmOffset = mmPA - 0x40000000;
+
+        // Check we have enough space to read mm_struct fields
+        if (mmOffset + 0x80 > memorySize) {
+            return false;
+        }
+
+        // Read mm_users at offset 0x74 - should be positive and reasonable
+        uint32_t mm_users = *(uint32_t*)((uint8_t*)memBase + mmOffset + 0x74);
+        if (mm_users == 0 || mm_users > 10000) {
+            return false;  // 0 means being torn down, >10000 is unrealistic
+        }
+
+        // Read PGD at offset 0x68 - should be a kernel pointer
+        uint64_t pgd = *(uint64_t*)((uint8_t*)memBase + mmOffset + 0x68);
+        if (!IsKernelPointer(pgd)) {
+            return false;
+        }
+
+        // Read maple tree root at offset 0x40 + 0x8
+        uint64_t mtRoot = *(uint64_t*)((uint8_t*)memBase + mmOffset + 0x40 + 0x8);
+        if (mtRoot != 0 && !IsKernelPointer(mtRoot)) {
+            return false;  // If present, should be kernel pointer
+        }
+
+        return true;
     }
 
     bool ValidateLinkedList(uint8_t* task) {
