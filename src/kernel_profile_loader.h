@@ -133,13 +133,14 @@ private:
         size_t fieldPos = json.find(field);
         if (fieldPos == std::string::npos) return 0;
 
-        // Find the offset within this field section (next 200 chars)
-        std::string section = json.substr(fieldPos, 200);
-        size_t pos = section.find(key);
+        // Find the offset within this field section (next 250 chars to be safe)
+        std::string section = json.substr(fieldPos, 250);
+
+        // Look specifically for "offset": to avoid finding "size" first
+        size_t pos = section.find("\"offset\":");
         if (pos == std::string::npos) return 0;
 
-        pos = section.find(":", pos + key.length());
-        if (pos == std::string::npos) return 0;
+        pos += 9;  // Skip past "offset":
 
         // Skip whitespace
         while (pos < section.length() && (section[pos] == ':' || section[pos] == ' ' || section[pos] == '\t')) pos++;
