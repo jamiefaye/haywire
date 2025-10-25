@@ -22,12 +22,11 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include "../include/qemu_connection.h"
-// #include <nlohmann/json.hpp>  // Not needed for basic testing
-// using json = nlohmann::json;
+#include "kernel_profile_loader.h"
 
 namespace Haywire {
 
-// Kernel structure offsets (from working web version kernel-discovery.ts)
+// Kernel structure offsets - can be loaded from profile JSON or use defaults
 struct KernelOffsets {
     // task_struct offsets (verified with pahole)
     size_t tasks_list = 0x680;     // struct list_head tasks at 1664
@@ -52,6 +51,28 @@ struct KernelOffsets {
     size_t vma_next = 0x10;        // vm_next (linked list)
     size_t vma_flags = 0x20;       // vm_flags (was 0x50, changed in 6.14.0-34)
     size_t vma_file = 0x80;        // vm_file pointer (was 0x90, changed in 6.14.0-34)
+
+    // Load from profile JSON
+    void LoadFromProfile(const KernelProfile& profile) {
+        tasks_list = profile.task_tasks;
+        tasks_next = profile.task_tasks;
+        tasks_prev = profile.task_tasks + 8;
+        pid = profile.task_pid;
+        comm = profile.task_comm;
+        mm = profile.task_mm;
+
+        mm_pgd = profile.mm_pgd;
+        mm_mt = profile.mm_mt;
+        mm_users = profile.mm_users;
+
+        vma_start = profile.vma_start;
+        vma_end = profile.vma_end;
+        vma_next = profile.vma_next;
+        vma_flags = profile.vma_flags;
+        vma_file = profile.vma_file;
+
+        std::cout << "Loaded offsets from kernel profile" << std::endl;
+    }
 };
 
 // Known process names from web version
@@ -115,8 +136,10 @@ public:
         KernelOffsets offsets;      // Detected/configured offsets
     };
 
-    KernelDiscovery(const std::string& memFile = "/tmp/haywire-vm-mem")
+    KernelDiscovery(const std::string& memFile = "/tmp/haywire-vm-mem",
+                    const std::string& profilePath = "")
         : memoryFile(memFile),
+          kernelProfilePath(profilePath),
           memFd(-1), memBase(nullptr) {}
 
     ~KernelDiscovery() {
@@ -124,6 +147,29 @@ public:
     }
 
     bool Initialize() {
+        // Load kernel profile if specified
+        if (!kernelProfilePath.empty()) {
+            KernelProfile profile;
+            if (KernelProfileLoader::LoadProfile(kernelProfilePath, profile)) {
+                kernelInfo.offsets.LoadFromProfile(profile);
+                std::cout << "Using kernel profile: " << kernelProfilePath << std::endl;
+            } else {
+                std::cerr << "Warning: Failed to load profile, using default offsets" << std::endl;
+            }
+        } else {
+            // Try to auto-detect profile
+            std::string autoProfile = KernelProfileLoader::DetectProfile("profiles");
+            if (!autoProfile.empty()) {
+                KernelProfile profile;
+                if (KernelProfileLoader::LoadProfile(autoProfile, profile)) {
+                    kernelInfo.offsets.LoadFromProfile(profile);
+                    std::cout << "Auto-detected kernel profile: " << autoProfile << std::endl;
+                }
+            } else {
+                std::cout << "No kernel profile specified, using built-in defaults" << std::endl;
+            }
+        }
+
         // Open memory file
         memFd = open(memoryFile.c_str(), O_RDONLY);
         if (memFd < 0) {
@@ -658,6 +704,7 @@ public:
 
 private:
     std::string memoryFile;
+    std::string kernelProfilePath;
     int memFd;
     void* memBase;
     size_t memorySize;
