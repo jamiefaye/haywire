@@ -1,0 +1,241 @@
+# Deploying Haywire on Windows (Native x86_64)
+
+## Goal
+
+Run Haywire on a Windows Intel/AMD system to analyze native x86_64 Linux VMs without emulation overhead.
+
+## Why Windows x86_64?
+
+**Performance Benefits:**
+- Native CPU execution (no ARM64 emulation)
+- Faster VM performance
+- More realistic production environment
+- Broader hardware compatibility
+
+**Use Cases:**
+- Security analysis of x86_64 Linux servers
+- Malware analysis in controlled VMs
+- Memory forensics on common platforms
+- CTF/training environments
+
+## Architecture Comparison
+
+| Platform | Host CPU | Guest CPU | Emulation | Speed |
+|----------|----------|-----------|-----------|-------|
+| macOS (current) | Apple Silicon ARM64 | Ubuntu ARM64 | None* | Good |
+| macOS + VMware | Apple Silicon ARM64 | Ubuntu ARM64 | Some† | Moderate |
+| Windows x86_64 | Intel/AMD x86_64 | Ubuntu x86_64 | None | **Excellent** |
+
+*QEMU on Apple Silicon can run ARM64 natively
+†VMware on Apple Silicon has some emulation overhead
+
+## Deployment Options
+
+### Option 1: QEMU with WHPX (RECOMMENDED)
+
+**Advantages:**
+- Same memory-backend-file as macOS (identical workflow!)
+- Same QMP interface for kernel introspection
+- Native performance with WHPX acceleration
+- Live memory access (not snapshots)
+- Free and open source
+
+**Requirements:**
+- Windows 10/11 (any edition)
+- Enable "Windows Hypervisor Platform" feature
+- Intel CPU with VT-x or AMD CPU with AMD-V
+
+**Steps:**
+1. Enable Windows Hypervisor Platform:
+   - Control Panel → Programs → Turn Windows features on or off
+   - Check "Windows Hypervisor Platform"
+   - Reboot
+2. Install QEMU for Windows: https://qemu.weilnetz.de/w64/
+3. Use provided script: `scripts\launch_ubuntu_x86_64_windows.bat`
+4. Extract kernel profile from guest
+5. Run Haywire in WSL2 or compile native
+
+**IMPORTANT:** WHPX has known bugs with Linux guests:
+- MSI injection failures (constant error spam)
+- MMIO emulation errors
+- Requires `-accel whpx,kernel-irqchip=off` workaround
+- Still unstable even with workarounds (as of 2024)
+
+**Script:** `scripts/launch_ubuntu_x86_64_windows.bat` (use only if WSL2+KVM doesn't work)
+
+### Option 2: WSL2 + KVM (BEST PERFORMANCE - RECOMMENDED)
+
+**Advantages:**
+- KVM performance (fastest!)
+- Linux environment for Haywire
+- Same workflow as Linux server
+- No Windows-specific issues
+
+**Requirements:**
+- Windows 11 (WSL2 with nested virtualization)
+- Intel CPU with VT-x or AMD CPU with AMD-V
+
+**Steps:**
+1. Install WSL2: `wsl --install`
+2. Enable nested virtualization (PowerShell as admin):
+   ```powershell
+   Set-VMProcessor -VMName WSL -ExposeVirtualizationExtensions $true
+   ```
+3. Inside WSL2:
+   ```bash
+   sudo apt-get install qemu-kvm
+   # Use Linux launch script
+   ```
+
+**Script:** Use `scripts/launch_ubuntu_x86_64_linux.sh` in WSL2
+
+### Option 3: VirtualBox (If needed for specific use case)
+
+**Advantages:**
+- Free and open source
+- Works on Windows/Mac/Linux
+- Open source (could add memory-backend-file feature)
+
+**Disadvantages:**
+- Only supports snapshot-based introspection (not live)
+- Requires taking snapshots periodically
+- More complex setup
+
+**Not recommended** unless you need VirtualBox for other reasons.
+
+## Compilation on Windows
+
+### Method 1: WSL2 (Recommended)
+
+**Compile Linux binary in WSL2, run against Windows-hosted VMs:**
+
+```bash
+# In Windows PowerShell (install WSL2):
+wsl --install -d Ubuntu-22.04
+
+# In WSL2:
+sudo apt-get update
+sudo apt-get install -y build-essential cmake git
+cd /mnt/c/Users/YourName/haywire  # Access Windows files
+mkdir build && cd build
+cmake ..
+make
+```
+
+**Access VM memory files:**
+```bash
+# VMware .vmem files:
+ls /mnt/c/Users/YourName/Documents/Virtual\ Machines/Ubuntu/Ubuntu.vmem
+
+# Hyper-V .bin files:
+ls /mnt/c/ProgramData/Microsoft/Windows/Hyper-V/...
+
+# Create symlink:
+ln -sf /mnt/c/Users/.../Ubuntu.vmem /tmp/haywire-vm-mem
+```
+
+### Method 2: MinGW (Native Windows Binary)
+
+**Compile native Windows .exe:**
+
+```bash
+# Install MSYS2 from https://www.msys2.org/
+# In MSYS2 terminal:
+pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake make
+
+cd /c/Users/YourName/haywire
+mkdir build && cd build
+cmake -G "MinGW Makefiles" ..
+mingw32-make
+```
+
+**Note:** May need to port some Linux-specific code (mmap, file paths)
+
+## Kernel Profile Differences
+
+**x86_64 vs ARM64:**
+- Different structure layouts
+- Different pointer sizes (both 64-bit, but alignment differs)
+- Different page table formats
+- Different kernel VA ranges
+
+**You'll need separate profiles:**
+```
+profiles/
+├── ubuntu-6.14.0-34-arm64.json     # macOS/ARM64
+├── ubuntu-6.14.0-34-x86_64.json    # Windows/Intel
+└── ubuntu-6.8.0-48-x86_64.json     # Example: older kernel
+```
+
+## Testing Workflow
+
+### 1. Validate on macOS VMware (Current Phase)
+
+Get VMware working on your Mac with ARM64:
+- Proves multi-platform concept
+- Tests .vmem file reading
+- Validates profile system
+- Tests heuristic swapper_pgd discovery
+
+### 2. Move to Windows x86_64 (Next Phase)
+
+**Quick test setup:**
+```bash
+# 1. Install VMware Workstation Player on Windows
+# 2. Create Ubuntu 24.04 x86_64 VM (4GB RAM)
+# 3. Boot VM and extract profile
+# 4. In WSL2:
+cd /mnt/c/Users/YourName/haywire/build
+./haywire
+```
+
+### 3. Production Deployment
+
+**For actual use:**
+- Dedicated analysis workstation (Windows PC)
+- Multiple VMs for different analysis tasks
+- Profiles for each kernel version you encounter
+- Automated memory dump + analysis pipeline
+
+## Memory File Locations
+
+### VMware Workstation (Windows)
+```
+C:\Users\YourName\Documents\Virtual Machines\Ubuntu\Ubuntu.vmem
+```
+
+### Hyper-V (Windows)
+```
+C:\ProgramData\Microsoft\Windows\Hyper-V\Virtual Machines\{VM-GUID}\Memory.bin
+```
+
+### VirtualBox (Windows)
+```
+C:\Users\YourName\VirtualBox VMs\Ubuntu\Snapshots\{snapshot}.sav
+```
+
+## Next Steps
+
+1. **Finish macOS VMware testing** - validates the approach
+2. **Get Windows PC ready** - install VMware/VirtualBox
+3. **Create x86_64 Ubuntu VM** - native performance
+4. **Extract x86_64 profile** - different offsets than ARM64
+5. **Compile Haywire in WSL2** - easiest path
+6. **Test against x86_64 VM** - full validation
+
+## Performance Expectations
+
+**macOS ARM64 → Windows x86_64 improvements:**
+- VM performance: 2-3x faster (native vs emulated)
+- Memory scanning: Similar (I/O bound)
+- Page table walking: Slightly faster (simpler x86_64 page tables)
+- Overall: Much more responsive for interactive use
+
+## Questions to Answer
+
+- [ ] Will you use VMware, Hyper-V, or VirtualBox on Windows?
+- [ ] Do you have a Windows x86_64 machine available?
+- [ ] What Ubuntu version will you run (24.04 LTS recommended)?
+- [ ] WSL2 or native Windows compilation?
+
+Once you answer these, we can create a detailed step-by-step guide for your specific setup.
