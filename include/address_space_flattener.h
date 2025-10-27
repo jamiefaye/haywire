@@ -157,23 +157,25 @@ public:
     
     // Navigate by percentage (0.0 to 1.0)
     void NavigateToPercent(float percent);
-    
+
     // Callback when navigation changes
     using NavigationCallback = std::function<void(uint64_t)>;
-    void SetNavigationCallback(NavigationCallback cb) { callback = cb; }
-    
+
 private:
     AddressSpaceFlattener* flattener;
     uint64_t currentVirtualAddr;
     uint64_t currentFlatAddr;
     NavigationCallback callback;
-    
+
+public:
+    void SetNavigationCallback(NavigationCallback cb) { callback = cb; }
+    void UpdateFromSlider();
+    void UpdateSliderFromAddress();
+
+private:
     // UI state
     float sliderPos;  // 0.0 to 1.0
     bool isDragging;
-    
-    void UpdateFromSlider();
-    void UpdateSliderFromAddress();
 };
 
 }

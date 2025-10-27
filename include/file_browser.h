@@ -43,9 +43,11 @@ public:
     // Set file extension filter (e.g., ".txt,.cpp,.h")
     void SetTypeFilter(const std::string& filter);
 
+#ifdef __APPLE__
     // Set mode (regular files or memory-mapped files)
     void SetShowMappedFiles(bool show) { showMappedFiles = show; needsRefresh = true; }
     bool IsShowingMappedFiles() const { return showMappedFiles; }
+#endif
 
 private:
     struct FileEntry {
@@ -76,6 +78,7 @@ private:
     std::vector<std::pair<std::string, std::string>> quickAccess;
 
     // Memory-mapped file support
+#ifdef __APPLE__
     bool showMappedFiles;
     std::unique_ptr<MacOSMappedFileEnumerator> mappedFileEnumerator;
     std::vector<MappedFileInfo> mappedFileList;
@@ -84,6 +87,7 @@ private:
     std::string cachedProcessFilter;  // Track what's currently cached
     bool onlyShowProcessesWithFiles = true;  // Filter to only show processes with mapped files
     bool processListInitialized = false;
+#endif
 };
 
 } // namespace Haywire
