@@ -599,7 +599,7 @@ void MemoryOverview::DrawProcessMap() {
                 // Make the section selectable
                 char label[64];
                 snprintf(label, sizeof(label), "##section_%llx", section.start);
-                if (ImGui::Selectable(label, false, ImGuiSelectableFlags_AllowItemOverlap, 
+                if (ImGui::Selectable(label, false, ImGuiSelectableFlags_AllowOverlap, 
                                      ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 2))) {
                     if (navCallback) {
                         navCallback(section.start);

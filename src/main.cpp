@@ -470,8 +470,10 @@ int main(int argc, char** argv) {
     BinaryLoader binary_loader;
     bool binary_loaded = false;
     std::shared_ptr<std::vector<uint8_t>> loaded_file_data;
+#ifdef __APPLE__
     FileBrowser fileBrowser;
-    
+#endif
+
     float fps = 0.0f;
     auto lastTime = std::chrono::high_resolution_clock::now();
     int frameCount = 0;
@@ -775,18 +777,22 @@ int main(int argc, char** argv) {
             static std::string load_error;
 
             // Draw file browser and handle selection
+#ifdef __APPLE__
             if (fileBrowser.Draw()) {
                 // File was selected
                 strcpy(filepath, fileBrowser.GetSelectedPath().c_str());
             }
+#endif
 
             ImGui::Text("Enter path to any file (binary, text, image, etc.):");
             ImGui::InputText("File Path", filepath, sizeof(filepath));
 
+#ifdef __APPLE__
             ImGui::SameLine();
             if (ImGui::Button("Browse...")) {
                 fileBrowser.Open();
             }
+#endif
 
             if (ImGui::Button("Load", ImVec2(100, 0))) {
                 if (strlen(filepath) > 0) {

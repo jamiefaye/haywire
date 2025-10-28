@@ -4,6 +4,58 @@
 
 Run Haywire on a Windows Intel/AMD system to analyze native x86_64 Linux VMs without emulation overhead.
 
+## Quick Start (WSL2 + KVM - RECOMMENDED)
+
+**Best option for Windows users:** Run QEMU with KVM inside WSL2, compile and run Haywire natively in WSL2.
+
+**Requirements:**
+- Windows 11 (or Windows 10 with recent updates)
+- Intel CPU with VT-x or AMD CPU with AMD-V
+- At least 8GB RAM (12GB+ recommended)
+
+**5-Minute Setup:**
+```powershell
+# 1. Install WSL2 (PowerShell as Administrator)
+wsl --install -d Ubuntu-22.04
+
+# 2. Enable nested virtualization (PowerShell as Administrator)
+Set-VMProcessor -VMName WSL -ExposeVirtualizationExtensions $true
+```
+
+```bash
+# 3. Inside WSL2 - Install dependencies
+sudo apt-get update
+sudo apt-get install -y build-essential cmake git qemu-system-x86 libcapstone-dev ninja-build
+
+# 4. Clone Haywire (if not already)
+cd ~
+git clone https://github.com/yourusername/haywire.git
+cd haywire
+
+# 5. Build modified QEMU (one-time setup)
+cd qemu-mods/qemu-src
+mkdir build && cd build
+../configure --target-list=x86_64-softmmu
+make -j$(nproc)
+sudo make install  # Or use from build directory
+
+# 6. Build Haywire
+cd ~/haywire
+mkdir build && cd build
+cmake ..
+make -j$(nproc)
+
+# 7. Launch Ubuntu x86_64 VM
+cd ~/haywire/scripts
+./launch_ubuntu_x86_64_linux.sh
+
+# 8. Run Haywire (in another WSL2 terminal)
+cd ~/haywire/build
+./haywire
+```
+
+See detailed instructions below for troubleshooting and alternatives.
+
 ## Why Windows x86_64?
 
 **Performance Benefits:**
@@ -70,22 +122,151 @@ Run Haywire on a Windows Intel/AMD system to analyze native x86_64 Linux VMs wit
 - Linux environment for Haywire
 - Same workflow as Linux server
 - No Windows-specific issues
+- WSLg provides X11 for Haywire GUI
 
 **Requirements:**
 - Windows 11 (WSL2 with nested virtualization)
 - Intel CPU with VT-x or AMD CPU with AMD-V
 
-**Steps:**
-1. Install WSL2: `wsl --install`
-2. Enable nested virtualization (PowerShell as admin):
-   ```powershell
-   Set-VMProcessor -VMName WSL -ExposeVirtualizationExtensions $true
-   ```
-3. Inside WSL2:
-   ```bash
-   sudo apt-get install qemu-kvm
-   # Use Linux launch script
-   ```
+**Detailed Setup:**
+
+#### Step 1: Install WSL2
+```powershell
+# PowerShell as Administrator
+wsl --install -d Ubuntu-22.04
+# Reboot if prompted
+```
+
+#### Step 2: Enable Nested Virtualization
+```powershell
+# PowerShell as Administrator
+Set-VMProcessor -VMName WSL -ExposeVirtualizationExtensions $true
+```
+
+#### Step 3: Verify KVM in WSL2
+```bash
+# Inside WSL2
+ls -la /dev/kvm
+# Should show: crw-rw---- 1 root kvm /dev/kvm
+
+# Add yourself to kvm group
+sudo usermod -a -G kvm $USER
+# Logout and login to WSL2 for group change to take effect
+```
+
+#### Step 4: Install Build Dependencies
+```bash
+# Inside WSL2
+sudo apt-get update
+sudo apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    libcapstone-dev \
+    qemu-system-x86 \
+    ninja-build \
+    pkg-config \
+    libglib2.0-dev \
+    libpixman-1-dev \
+    libgtk-3-dev \
+    libsdl2-dev
+```
+
+#### Step 5: Build Modified QEMU
+```bash
+cd ~/haywire/qemu-mods/qemu-src
+mkdir build && cd build
+
+# Configure for x86_64 target
+../configure --target-list=x86_64-softmmu --enable-kvm
+
+# Build (takes 5-10 minutes)
+make -j$(nproc)
+
+# Install system-wide (optional)
+sudo make install
+
+# OR use directly from build directory
+# Path will be: ~/haywire/qemu-mods/qemu-src/build/qemu-system-x86_64
+```
+
+#### Step 6: Download Ubuntu x86_64 ISO
+```bash
+cd ~/haywire
+mkdir -p vms
+cd vms
+
+# Download Ubuntu 24.04 x86_64 (or latest LTS)
+wget https://releases.ubuntu.com/24.04/ubuntu-24.04-desktop-amd64.iso
+
+# Or server version (smaller, faster)
+wget https://releases.ubuntu.com/24.04/ubuntu-24.04-live-server-amd64.iso
+```
+
+#### Step 7: Build Haywire
+```bash
+cd ~/haywire
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
+
+# Test it built correctly
+./haywire --help
+```
+
+#### Step 8: Launch VM
+```bash
+cd ~/haywire/scripts
+./launch_ubuntu_x86_64_linux.sh
+
+# First run will create VM disk and boot from ISO
+# Install Ubuntu, then shutdown and rerun script to boot from disk
+```
+
+#### Step 9: Extract Kernel Profile (One-time per kernel version)
+```bash
+# Inside the Ubuntu VM (via VM console):
+sudo apt-get install dwarves
+pahole -C task_struct /sys/kernel/btf/vmlinux > /tmp/profile.txt
+pahole -C mm_struct /sys/kernel/btf/vmlinux >> /tmp/profile.txt
+pahole -C vm_area_struct /sys/kernel/btf/vmlinux >> /tmp/profile.txt
+
+# Copy to host (via shared folder or copy-paste)
+# Then on WSL2 host:
+cd ~/haywire
+python3 scripts/create_kernel_profile.py < /tmp/profile.txt > profiles/ubuntu-6.14.0-x86_64.json
+```
+
+#### Step 10: Run Haywire
+```bash
+# In WSL2 terminal (WSLg will display GUI)
+cd ~/haywire/build
+./haywire
+
+# Memory file is at: /tmp/haywire-vm-mem
+# QMP port: 4445
+# Should auto-detect and connect
+```
+
+**File System Layout in WSL2:**
+```
+~/haywire/
+├── build/haywire              # Compiled binary
+├── vms/
+│   ├── ubuntu_x86_64.qcow2   # VM disk
+│   └── ubuntu-24.04-*.iso    # Install ISO
+├── qemu-mods/qemu-src/build/
+│   └── qemu-system-x86_64    # Modified QEMU
+├── profiles/
+│   └── ubuntu-6.14.0-x86_64.json  # Kernel profile
+└── scripts/
+    └── launch_ubuntu_x86_64_linux.sh
+
+/tmp/haywire-vm-mem            # Memory-mapped file (created by QEMU)
+/tmp/qga.sock                  # Guest agent socket
+```
+
+**WSLg Note:** Windows 11 includes WSLg (WSL GUI), which automatically forwards X11 apps to Windows. Haywire's ImGui window will appear as a native Windows window!
 
 **Script:** Use `scripts/launch_ubuntu_x86_64_linux.sh` in WSL2
 

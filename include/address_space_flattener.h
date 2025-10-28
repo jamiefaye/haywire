@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <algorithm>
 #include <memory>
+#include <functional>
 #include "guest_agent.h"
 #include "pa_lookup_cache.h"
 

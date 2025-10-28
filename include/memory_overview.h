@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <chrono>
+#include <functional>
 #include "imgui.h"
 #include "mmap_reader.h"
 #include "process_memory_map.h"

@@ -77,6 +77,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(json)
 
+# Platform-specific source files
+if(APPLE)
+    set(PLATFORM_SOURCES
+        src/file_browser.cpp
+        src/macos_mapped_file_enumerator.cpp
+    )
+else()
+    set(PLATFORM_SOURCES)
+endif()
+
 # Main executable
 add_executable(haywire
     src/main.cpp
@@ -119,14 +129,13 @@ add_executable(haywire
     src/file_memory_source.cpp
     src/mapped_file_memory_source.cpp
     src/qemu_memory_source.cpp
-    src/file_browser.cpp
-    src/macos_mapped_file_enumerator.cpp
     # Platform abstraction layer
     src/platform/page_walker.cpp
     src/platform/process_walker.cpp
     src/platform/arm64/arm64_page_walker.cpp
     src/platform/linux/linux_process_walker.cpp
     src/platform/x86_64/x86_64_page_walker.cpp
+    ${PLATFORM_SOURCES}
     ${IMGUI_SOURCES}
 )
 
@@ -136,6 +145,11 @@ target_include_directories(haywire PRIVATE
     ${IMGUI_DIR}/backends
     ${OPENGL_INCLUDE_DIRS}
 )
+
+# Enable AVX2 for change_detector.cpp (uses SIMD intrinsics)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    set_source_files_properties(src/change_detector.cpp PROPERTIES COMPILE_FLAGS "-mavx2")
+endif()
 
 target_link_libraries(haywire PRIVATE
     glfw

@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <cstdint>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>

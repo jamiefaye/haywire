@@ -18,6 +18,8 @@
 #include <atomic>
 #include <mutex>
 #include <deque>
+#include <functional>
+#include <unordered_map>
 
 namespace Haywire {
 
