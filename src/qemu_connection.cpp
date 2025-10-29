@@ -41,6 +41,7 @@ QemuConnection::~QemuConnection() {
 }
 
 bool QemuConnection::ConnectQMP(const std::string& host, int port) {
+    std::cerr << "=== QMP Connection v2025-10-29-11:37 ===" << std::endl;
     std::cerr << "[QMP] Attempting to connect to " << host << ":" << port << std::endl;
 
     if (qmpSocket >= 0) {
@@ -53,6 +54,17 @@ bool QemuConnection::ConnectQMP(const std::string& host, int port) {
         return false;
     }
 
+    // Set socket timeout to prevent hanging
+    struct timeval timeout;
+    timeout.tv_sec = 5;  // 5 second timeout
+    timeout.tv_usec = 0;
+    setsockopt(qmpSocket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(qmpSocket, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+    // Set non-blocking for connect with timeout
+    int flags = fcntl(qmpSocket, F_GETFL, 0);
+    fcntl(qmpSocket, F_SETFL, flags | O_NONBLOCK);
+
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
@@ -64,18 +76,60 @@ bool QemuConnection::ConnectQMP(const std::string& host, int port) {
         addr.sin_addr.s_addr = inet_addr(host.c_str());
     }
 
-    if (connect(qmpSocket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+    // Non-blocking connect with timeout
+    std::cerr << "[QMP] Calling connect()..." << std::endl;
+    int connectResult = connect(qmpSocket, (struct sockaddr*)&addr, sizeof(addr));
+    std::cerr << "[QMP] connect() returned " << connectResult << ", errno=" << errno << std::endl;
+
+    if (connectResult < 0 && errno != EINPROGRESS) {
         std::cerr << "[QMP] Failed to connect: " << strerror(errno) << std::endl;
         close(qmpSocket);
         qmpSocket = -1;
         return false;
     }
 
+    // Wait for connect to complete with timeout
+    std::cerr << "[QMP] Checking if EINPROGRESS..." << std::endl;
+    if (errno == EINPROGRESS) {
+        std::cerr << "[QMP] Waiting for connection with timeout..." << std::endl;
+        fd_set writefds;
+        FD_ZERO(&writefds);
+        FD_SET(qmpSocket, &writefds);
+
+        struct timeval connectTimeout;
+        connectTimeout.tv_sec = 5;
+        connectTimeout.tv_usec = 0;
+
+        int selectResult = select(qmpSocket + 1, NULL, &writefds, NULL, &connectTimeout);
+        if (selectResult <= 0) {
+            std::cerr << "[QMP] Connect timeout after 5 seconds" << std::endl;
+            close(qmpSocket);
+            qmpSocket = -1;
+            return false;
+        }
+
+        // Check if connect succeeded
+        int error = 0;
+        socklen_t len = sizeof(error);
+        getsockopt(qmpSocket, SOL_SOCKET, SO_ERROR, &error, &len);
+        if (error != 0) {
+            std::cerr << "[QMP] Connect failed: " << strerror(error) << std::endl;
+            close(qmpSocket);
+            qmpSocket = -1;
+            return false;
+        }
+    }
+
+    // Restore blocking mode
+    fcntl(qmpSocket, F_SETFL, flags);
+
     std::cerr << "[QMP] Connected successfully" << std::endl;
-    
+    std::cerr << "[QMP] Waiting for greeting message..." << std::endl;
+
     nlohmann::json greeting;
     char buffer[4096];
     int received = recv(qmpSocket, buffer, sizeof(buffer)-1, 0);
+    std::cerr << "[QMP] Received " << received << " bytes" << std::endl;
     if (received > 0) {
         buffer[received] = '\0';
         try {

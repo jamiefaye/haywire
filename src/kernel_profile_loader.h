@@ -86,7 +86,7 @@ public:
     static std::string DetectProfile(const std::string& profilesDir) {
         // Future: scan memory for kernel banner and match against profile detection patterns
         // For now, return default
-        return profilesDir + "/ubuntu-6.14.0-34-arm64.json";
+        return profilesDir + "/ubuntu-22.04-x86_64.json";
     }
 
 private:

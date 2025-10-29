@@ -3,8 +3,11 @@
 # Launch x86_64 Ubuntu on Linux with KVM acceleration
 # Perfect for WSL2 on Windows with nested virtualization enabled!
 
-UBUNTU_ISO="$HOME/haywire/vms/ubuntu-24.04-desktop-amd64.iso"
-DISK_IMAGE="$HOME/haywire/vms/ubuntu_x86_64.qcow2"
+# Use absolute paths instead of $HOME (WSL may set HOME to Windows path)
+HOME_DIR=$(cd ~ && pwd)
+UBUNTU_ISO="$HOME_DIR/haywire/vms/ubuntu-22.04-desktop-amd64.iso"
+DISK_IMAGE="$HOME_DIR/haywire/vms/ubuntu_x86_64.qcow2"
+QEMU_BUILD="$HOME_DIR/haywire/qemu-mods/qemu-src/build"
 
 # QEMU configuration
 MEMORY="4G"
@@ -22,7 +25,12 @@ mkdir -p "$(dirname "$DISK_IMAGE")"
 # Create disk if needed
 if [ ! -f "$DISK_IMAGE" ]; then
     echo "Creating disk image: $DISK_IMAGE (40G)"
-    qemu-img create -f qcow2 "$DISK_IMAGE" 40G
+    # Try custom qemu-img first, then system
+    if [ -f "$QEMU_BUILD/qemu-img" ]; then
+        "$QEMU_BUILD/qemu-img" create -f qcow2 "$DISK_IMAGE" 40G
+    else
+        qemu-img create -f qcow2 "$DISK_IMAGE" 40G
+    fi
     FIRST_BOOT=1
 fi
 
@@ -55,8 +63,8 @@ echo "Ports: QMP=$QMP_PORT, Monitor=$MONITOR_PORT"
 echo ""
 
 # Find QEMU binary - prefer modified version, fall back to system
-if [ -f "$HOME/haywire/qemu-mods/qemu-src/build/qemu-system-x86_64" ]; then
-    QEMU="$HOME/haywire/qemu-mods/qemu-src/build/qemu-system-x86_64"
+if [ -f "$QEMU_BUILD/qemu-system-x86_64" ]; then
+    QEMU="$QEMU_BUILD/qemu-system-x86_64"
     echo "Using modified QEMU: $QEMU"
 elif command -v qemu-system-x86_64 &> /dev/null; then
     QEMU="qemu-system-x86_64"
@@ -112,8 +120,8 @@ $QEMU \
     -numa node,memdev=mem \
     -smp $CORES \
     $BIOS_OPTION \
-    -device virtio-vga-gl \
-    -display sdl,gl=on \
+    -device VGA \
+    -vnc :0 \
     -device qemu-xhci \
     -device usb-kbd \
     -device usb-tablet \

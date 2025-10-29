@@ -253,9 +253,13 @@ public:
 
                 return true;
             } else {
-                std::cerr << "ERROR: QMP query failed - cannot get swapper PGD" << std::endl;
-                std::cerr << "Cannot proceed without kernel information from QMP" << std::endl;
-                return false;
+                std::cerr << "ERROR: QMP query failed - query-kernel-info not available" << std::endl;
+                std::cerr << "Note: Custom QMP commands only available for ARM64 QEMU" << std::endl;
+                std::cerr << "Falling back to heuristic discovery (will run after process scan)" << std::endl;
+
+                // Fall back to heuristic discovery (same as "QMP not connected" path)
+                kernelInfo.swapper_pgd = 0;  // Mark as not yet discovered
+                return true;  // Continue anyway - will use heuristics
             }
         } else {
             std::cerr << "QMP not connected - will try heuristic discovery after process scan" << std::endl;
