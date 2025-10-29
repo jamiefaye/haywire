@@ -149,7 +149,7 @@ public:
                     const std::string& profilePath = "")
         : memoryFile(memFile),
           kernelProfilePath(profilePath),
-          memFd(-1), memBase(nullptr) {}
+          memFd(-1), memBase(nullptr), memBackend(nullptr) {}
 
     ~KernelDiscovery() {
         Cleanup();
@@ -206,12 +206,13 @@ public:
         std::cout << "Memory mapped: " << (memorySize / (1024*1024)) << " MB" << std::endl;
 
         // Initialize page walker for VA->PA translation
-        memBackend = std::make_unique<MemoryBackend>();
-        if (memBackend->MapMemoryBackend(memoryFile, memorySize)) {
-            pageWalker = std::make_unique<X86_64PageWalker>(memBackend.get());
-            std::cout << "Initialized x86_64 page walker" << std::endl;
+        // Use QemuConnection's backend which has monitor fallback for out-of-range addresses
+        memBackend = QemuConnection::getInstance().GetMemoryBackend();
+        if (memBackend && memBackend->IsAvailable()) {
+            pageWalker = std::make_unique<X86_64PageWalker>(memBackend);
+            std::cout << "Initialized x86_64 page walker with QMP fallback" << std::endl;
         } else {
-            std::cerr << "Warning: Failed to initialize page walker backend" << std::endl;
+            std::cerr << "Warning: QemuConnection memory backend not available" << std::endl;
         }
 
         // QMP connection will be handled via singleton from main program
@@ -735,7 +736,7 @@ private:
     std::vector<ProcessInfo> processes;
 
     // Page table walking (x86_64)
-    std::unique_ptr<MemoryBackend> memBackend;
+    MemoryBackend* memBackend;  // Borrowed from QemuConnection, not owned
     std::unique_ptr<X86_64PageWalker> pageWalker;
 
     // Hybrid refresh optimization
