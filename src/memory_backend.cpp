@@ -147,12 +147,9 @@ bool MemoryBackend::Read(uint64_t gpa, size_t size, std::vector<uint8_t>& buffer
             return false;
         }
     } else {
-        // Fallback: ARM64 guest RAM starts at 0x40000000
-        const uint64_t TEST_RAM_BASE = 0x40000000;
-        fileOffset = gpa;
-        if (gpa >= TEST_RAM_BASE) {
-            fileOffset = gpa - TEST_RAM_BASE;
-        }
+        // Fallback: x86_64 guest RAM starts at 0x0
+        const uint64_t TEST_RAM_BASE = 0x0;
+        fileOffset = gpa - TEST_RAM_BASE;  // For x86_64, GPA == file offset
     }
     
     if (!mappedData || fileOffset >= mappedSize) {
@@ -194,12 +191,9 @@ const uint8_t* MemoryBackend::GetDirectPointer(uint64_t gpa) const {
             return nullptr;
         }
     } else {
-        // Fallback: ARM64 guest RAM starts at 0x40000000
-        const uint64_t TEST_RAM_BASE = 0x40000000;
-        fileOffset = gpa;
-        if (gpa >= TEST_RAM_BASE) {
-            fileOffset = gpa - TEST_RAM_BASE;
-        }
+        // Fallback: x86_64 guest RAM starts at 0x0
+        const uint64_t TEST_RAM_BASE = 0x0;
+        fileOffset = gpa - TEST_RAM_BASE;  // For x86_64, GPA == file offset
     }
     
     if (!mappedData || fileOffset >= mappedSize) {

@@ -28,6 +28,13 @@
 
 namespace Haywire {
 
+// Physical RAM base address (architecture-specific)
+// x86_64: RAM starts at physical address 0x0
+// ARM64: RAM starts at physical address 0x40000000
+constexpr uint64_t RAM_BASE_X86_64 = 0x0;
+constexpr uint64_t RAM_BASE_ARM64 = 0x40000000;
+constexpr uint64_t RAM_BASE = RAM_BASE_X86_64;  // Using x86_64 for this build
+
 // Kernel structure offsets - can be loaded from profile JSON or use defaults
 struct KernelOffsets {
     // task_struct offsets (verified with pahole)
@@ -84,7 +91,6 @@ const std::vector<std::string> KNOWN_PROCESSES = {
     "kswapd", "kauditd", "kcompactd", "khugepaged", "systemd-journal",
     "systemd-resolved", "systemd-networkd", "vlc", "firefox", "chrome"
 };
-
 
 class KernelDiscovery {
 public:
@@ -331,7 +337,7 @@ public:
                 ProcessInfo proc;
                 if (CheckTaskStruct(offset, proc)) {
                     // Remember this location as a suspect for fast refresh
-                    uint64_t pa = offset + 0x40000000;
+                    uint64_t pa = offset + RAM_BASE;
                     suspectLocations.insert(pa);
 
                     // Avoid duplicates and consecutive identical PIDs (likely same task)
@@ -402,7 +408,7 @@ public:
         int alive = 0, changed = 0, dead = 0;
 
         for (uint64_t pa : suspectLocations) {
-            uint64_t offset = pa - 0x40000000;
+            uint64_t offset = pa - RAM_BASE;
             if (offset >= memorySize) continue;
 
             ProcessInfo proc;
@@ -438,7 +444,7 @@ public:
 
         // Walk all PGD entries - with ASLR, user space can use any index
         for (int pgdIdx = 0; pgdIdx < 512; pgdIdx++) {
-            uint64_t pgdOffset = (proc.pgd - 0x40000000) + (pgdIdx * 8);
+            uint64_t pgdOffset = (proc.pgd - RAM_BASE) + (pgdIdx * 8);
             if (pgdOffset + 8 > memorySize) continue;
 
             uint64_t pgdEntry = *(uint64_t*)((uint8_t*)memBase + pgdOffset);
@@ -455,8 +461,8 @@ public:
 
         for (int pudIdx = 0; pudIdx < 512; pudIdx++) {
             uint64_t pudPhysAddr = pudBase + (pudIdx * 8);
-            uint64_t pudOffset = pudPhysAddr >= 0x40000000
-                ? pudPhysAddr - 0x40000000
+            uint64_t pudOffset = pudPhysAddr >= RAM_BASE
+                ? pudPhysAddr - RAM_BASE
                 : pudPhysAddr;
 
             if (pudOffset + 8 > memorySize) continue;
@@ -496,8 +502,8 @@ public:
 
         for (int pmdIdx = 0; pmdIdx < 512; pmdIdx++) {
             uint64_t pmdPhysAddr = pmdBase + (pmdIdx * 8);
-            uint64_t pmdOffset = pmdPhysAddr >= 0x40000000
-                ? pmdPhysAddr - 0x40000000
+            uint64_t pmdOffset = pmdPhysAddr >= RAM_BASE
+                ? pmdPhysAddr - RAM_BASE
                 : pmdPhysAddr;
 
             if (pmdOffset + 8 > memorySize) continue;
@@ -537,8 +543,8 @@ public:
 
         for (int pteIdx = 0; pteIdx < 512; pteIdx++) {
             uint64_t ptePhysAddr = pteBase + (pteIdx * 8);
-            uint64_t pteOffset = ptePhysAddr >= 0x40000000
-                ? ptePhysAddr - 0x40000000
+            uint64_t pteOffset = ptePhysAddr >= RAM_BASE
+                ? ptePhysAddr - RAM_BASE
                 : ptePhysAddr;
 
             if (pteOffset + 8 > memorySize) continue;
@@ -631,7 +637,7 @@ public:
             }
 
             // Read PGD from mm_struct at offset 0x68
-            uint64_t mmOffset = mmPA - 0x40000000;
+            uint64_t mmOffset = mmPA - RAM_BASE;
             if (mmOffset + kernelInfo.offsets.mm_pgd + 8 > memorySize) {
                 failCount++;
                 continue;
@@ -863,7 +869,7 @@ private:
 
     SwapperCandidate AnalyzeSwapperCandidate(uint64_t offset) {
         SwapperCandidate result;
-        result.pa = offset + 0x40000000;
+        result.pa = offset;  // x86_64: RAM starts at PA 0x0, offset == physical address
         result.score = 0;
         result.userEntries = 0;
         result.kernelEntries = 0;
@@ -939,11 +945,11 @@ private:
 
     bool ValidateMMStruct(uint64_t mmPA) {
         // Check if physical address is in valid RAM range
-        if (mmPA < 0x40000000 || mmPA >= 0x40000000 + memorySize) {
+        if (mmPA < RAM_BASE || mmPA >= RAM_BASE + memorySize) {
             return false;
         }
 
-        uint64_t mmOffset = mmPA - 0x40000000;
+        uint64_t mmOffset = mmPA - RAM_BASE;
 
         // Check we have enough space to read mm_struct fields
         if (mmOffset + 0x80 > memorySize) {
@@ -1174,7 +1180,7 @@ private:
             if (!IsKernelPointer(mmPtr)) {
                 // Check if it's in guest RAM range (0x40000000 to 0x1C0000000 for 6GB)
                 // Physical addresses in guest RAM would be 0x40000000 to 0x1C0000000
-                if (mmPtr < 0x40000000 || mmPtr >= 0x1C0000000) {
+                if (mmPtr < RAM_BASE || mmPtr >= 0x1C0000000) {
                     return false;  // Neither kernel VA nor plausible physical address
                 }
             }
@@ -1188,7 +1194,7 @@ private:
 
         // If we get here, it's likely a valid task_struct
         // Store as physical address (file offset + GUEST_RAM_START)
-        info.task_addr = offset + 0x40000000;  // Convert to physical address
+        info.task_addr = offset + RAM_BASE;  // Convert to physical address
         info.pid = pid;
 
         // Process name already extracted and validated above
@@ -1234,12 +1240,12 @@ private:
         }
 
         // Offset to file position
-        if (currentTaskPA < 0x40000000) {
+        if (currentTaskPA < RAM_BASE) {
             std::cerr << "current_task PA out of range: 0x" << std::hex << currentTaskPA << std::dec << std::endl;
             return false;
         }
 
-        uint64_t startOffset = currentTaskPA - 0x40000000;
+        uint64_t startOffset = currentTaskPA - RAM_BASE;
         uint64_t currentOffset = startOffset;
         int processCount = 0;
         const int MAX_PROCESSES = 10000;  // Safety limit
@@ -1271,7 +1277,7 @@ private:
 
             // Extract process info
             ProcessInfo proc;
-            proc.task_addr = currentOffset + 0x40000000;  // Convert back to PA
+            proc.task_addr = currentOffset + RAM_BASE;  // Convert back to PA
             proc.pid = *(uint32_t*)(task + kernelInfo.offsets.pid);
 
             // Validate PID
@@ -1311,12 +1317,12 @@ private:
                 break;
             }
 
-            if (nextTaskPA < 0x40000000) {
+            if (nextTaskPA < RAM_BASE) {
                 std::cerr << "Next task PA out of range" << std::endl;
                 break;
             }
 
-            currentOffset = nextTaskPA - 0x40000000;
+            currentOffset = nextTaskPA - RAM_BASE;
 
             // Check if we're back at the start
             if (currentOffset == startOffset) {
@@ -1352,7 +1358,7 @@ private:
     // Walk maple tree to get memory sections (VMAs)
     bool WalkMapleTree(uint64_t mmPA, std::vector<MemorySection>& sections) {
         // Read maple tree root at mm_struct + 0x40
-        uint64_t mtOffset = mmPA - 0x40000000 + 0x40;
+        uint64_t mtOffset = mmPA - RAM_BASE + 0x40;
         if (mtOffset + 0x10 > memorySize) {
             std::cout << "[MapleTree] mtOffset out of bounds: " << std::hex << mtOffset << std::dec << "\n" << std::flush;
             return false;
@@ -1410,11 +1416,11 @@ private:
             actualNodePA = cleanNodePtr;
         }
 
-        if (actualNodePA < 0x40000000 || actualNodePA >= 0x40000000 + memorySize) {
+        if (actualNodePA < RAM_BASE || actualNodePA >= RAM_BASE + memorySize) {
             return; // Invalid physical address
         }
 
-        uint64_t nodeOffset = actualNodePA - 0x40000000;
+        uint64_t nodeOffset = actualNodePA - RAM_BASE;
 
         // CRITICAL DISTINCTION: Internal nodes vs Leaf nodes
         // Internal nodes have slots pointing to child nodes
@@ -1516,9 +1522,9 @@ private:
     }
 
     void ExtractVMA(uint64_t vmaPA, std::vector<MemorySection>& sections) {
-        if (vmaPA < 0x40000000 || vmaPA >= 0x40000000 + memorySize) return;
+        if (vmaPA < RAM_BASE || vmaPA >= RAM_BASE + memorySize) return;
 
-        uint64_t vmaOffset = vmaPA - 0x40000000;
+        uint64_t vmaOffset = vmaPA - RAM_BASE;
         if (vmaOffset + 0x100 > memorySize) return;
 
         uint8_t* vma = (uint8_t*)memBase + vmaOffset;
@@ -1608,7 +1614,7 @@ private:
         uint64_t filePA = TranslateVA(vmFile, kernelInfo.swapper_pgd);
         if (!filePA) return;
 
-        uint64_t fileOffset = filePA - 0x40000000;
+        uint64_t fileOffset = filePA - RAM_BASE;
         if (fileOffset + 0x100 > memorySize) return;
 
         // struct file: f_path at offset 0x40 (64 decimal)
@@ -1620,7 +1626,7 @@ private:
             uint64_t dentryPA = TranslateVA(dentry, kernelInfo.swapper_pgd);
             if (!dentryPA) return;
 
-            uint64_t dentryOffset = dentryPA - 0x40000000;
+            uint64_t dentryOffset = dentryPA - RAM_BASE;
             if (dentryOffset + 0x100 > memorySize) return;
 
             // dentry has d_name (qstr) at offset 0x20 (32 decimal)
@@ -1631,7 +1637,7 @@ private:
                 uint64_t namePA = TranslateVA(dNamePtr, kernelInfo.swapper_pgd);
                 if (!namePA) return;
 
-                uint64_t nameOffset = namePA - 0x40000000;
+                uint64_t nameOffset = namePA - RAM_BASE;
                 if (nameOffset + 256 > memorySize) return;
 
                 // Read up to 256 bytes for the filename
