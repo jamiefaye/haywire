@@ -196,12 +196,12 @@ bool MemoryMapper::DiscoverMemoryMap(const std::string& monitor_host, int monito
     std::string output = QueryMonitor(monitor_host, monitor_port, "info mtree -f");
     
     if (output.empty()) {
-        // This is normal when monitor is not available - we have good defaults
-        std::cout << "MemoryMapper: Using default ARM64 memory map (monitor unavailable)" << std::endl;
+        // This is normal when monitor is not available - use x86_64 defaults
+        std::cout << "MemoryMapper: Using default x86_64 memory map (monitor unavailable)" << std::endl;
         MemoryRegion region;
-        region.gpa_start = 0x40000000;
-        region.gpa_end = 0x13FFFFFFF;  // 4GB
-        region.size = 0x100000000;
+        region.gpa_start = 0x0;         // x86_64 RAM starts at 0
+        region.gpa_end = 0xFFFFFFFF;    // 4GB
+        region.size = 0x100000000;      // 4GB
         region.name = "default-ram";
         region.file_offset = 0;
         regions_.push_back(region);

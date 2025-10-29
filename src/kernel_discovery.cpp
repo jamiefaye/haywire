@@ -23,6 +23,8 @@
 #include <errno.h>
 #include "../include/qemu_connection.h"
 #include "kernel_profile_loader.h"
+#include "memory_backend.h"
+#include "platform/x86_64/x86_64_page_walker.h"
 
 namespace Haywire {
 
@@ -82,6 +84,7 @@ const std::vector<std::string> KNOWN_PROCESSES = {
     "kswapd", "kauditd", "kcompactd", "khugepaged", "systemd-journal",
     "systemd-resolved", "systemd-networkd", "vlc", "firefox", "chrome"
 };
+
 
 class KernelDiscovery {
 public:
@@ -195,6 +198,15 @@ public:
         }
 
         std::cout << "Memory mapped: " << (memorySize / (1024*1024)) << " MB" << std::endl;
+
+        // Initialize page walker for VA->PA translation
+        memBackend = std::make_unique<MemoryBackend>();
+        if (memBackend->MapMemoryBackend(memoryFile, memorySize)) {
+            pageWalker = std::make_unique<X86_64PageWalker>(memBackend.get());
+            std::cout << "Initialized x86_64 page walker" << std::endl;
+        } else {
+            std::cerr << "Warning: Failed to initialize page walker backend" << std::endl;
+        }
 
         // QMP connection will be handled via singleton from main program
         return true;
@@ -715,6 +727,10 @@ private:
 
     KernelInfo kernelInfo;
     std::vector<ProcessInfo> processes;
+
+    // Page table walking (x86_64)
+    std::unique_ptr<MemoryBackend> memBackend;
+    std::unique_ptr<X86_64PageWalker> pageWalker;
 
     // Hybrid refresh optimization
     std::set<uint64_t> suspectLocations;  // Physical addresses where we found task_structs
@@ -1314,77 +1330,23 @@ private:
         return processes.size() > 0;
     }
 
-    // Page table walking functions (from web version)
+    // Page table walking functions (x86_64 via page walker)
     uint64_t TranslateVA(uint64_t va, uint64_t pgdBase) {
-        // ARM64 page table translation (4KB pages, 48-bit VA)
-        // Level 0 (PGD): bits 47:39
-        // Level 1 (PUD): bits 38:30
-        // Level 2 (PMD): bits 29:21
-        // Level 3 (PTE): bits 20:12
-        // Offset: bits 11:0
+        // x86_64 page table translation using X86_64PageWalker
+        // pgdBase is CR3 (physical address of PML4 table)
 
-        const uint64_t VALID_BIT = 1;
-        const uint64_t TABLE_BIT = 2;  // For non-leaf entries
-        const uint64_t PA_MASK = 0x0000FFFFFFFFF000ULL;
-
-        // Extract indices
-        uint32_t pgdIndex = (va >> 39) & 0x1FF;
-        uint32_t pudIndex = (va >> 30) & 0x1FF;
-        uint32_t pmdIndex = (va >> 21) & 0x1FF;
-        uint32_t pteIndex = (va >> 12) & 0x1FF;
-        uint32_t pageOffset = va & 0xFFF;
-
-        // Read PGD entry
-        // pgdBase should be a physical address in guest RAM
-        if (pgdBase < 0x40000000 || pgdBase >= 0x40000000 + memorySize) {
-            // Invalid PGD base address
+        if (!pageWalker) {
+            std::cerr << "ERROR: Page walker not initialized!" << std::endl;
             return 0;
         }
-        uint64_t pgdOffset = (pgdBase - 0x40000000) + (pgdIndex * 8);
-        if (pgdOffset + 8 > memorySize) return 0;
-        uint64_t pgdEntry = *(uint64_t*)((uint8_t*)memBase + pgdOffset);
 
-        if (!(pgdEntry & VALID_BIT)) return 0;
-        if (!(pgdEntry & TABLE_BIT)) return 0;  // Not a table descriptor
+        // Set the CR3 (page table base) for this translation
+        pageWalker->SetPageTableBase(pgdBase, 0);
 
-        // Read PUD entry
-        uint64_t pudBase = pgdEntry & PA_MASK;
-        uint64_t pudOffset = (pudBase - 0x40000000) + (pudIndex * 8);
-        if (pudOffset + 8 > memorySize) return 0;
-        uint64_t pudEntry = *(uint64_t*)((uint8_t*)memBase + pudOffset);
+        // Translate the virtual address
+        uint64_t physAddr = pageWalker->TranslateAddress(va);
 
-        if (!(pudEntry & VALID_BIT)) return 0;
-
-        // Check if PUD is a huge page (1GB)
-        if (!(pudEntry & TABLE_BIT)) {
-            // 1GB page
-            return (pudEntry & 0x0000FFFFC0000000ULL) | (va & 0x3FFFFFFF);
-        }
-
-        // Read PMD entry
-        uint64_t pmdBase = pudEntry & PA_MASK;
-        uint64_t pmdOffset = (pmdBase - 0x40000000) + (pmdIndex * 8);
-        if (pmdOffset + 8 > memorySize) return 0;
-        uint64_t pmdEntry = *(uint64_t*)((uint8_t*)memBase + pmdOffset);
-
-        if (!(pmdEntry & VALID_BIT)) return 0;
-
-        // Check if PMD is a huge page (2MB)
-        if (!(pmdEntry & TABLE_BIT)) {
-            // 2MB page
-            return (pmdEntry & 0x0000FFFFFFE00000ULL) | (va & 0x1FFFFF);
-        }
-
-        // Read PTE entry
-        uint64_t pteBase = pmdEntry & PA_MASK;
-        uint64_t pteOffset = (pteBase - 0x40000000) + (pteIndex * 8);
-        if (pteOffset + 8 > memorySize) return 0;
-        uint64_t pteEntry = *(uint64_t*)((uint8_t*)memBase + pteOffset);
-
-        if (!(pteEntry & VALID_BIT)) return 0;
-
-        // 4KB page
-        return (pteEntry & PA_MASK) | pageOffset;
+        return physAddr;
     }
 
     // Walk maple tree to get memory sections (VMAs)
