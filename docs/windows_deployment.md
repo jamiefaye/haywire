@@ -191,16 +191,32 @@ sudo make install
 ```
 
 #### Step 6: Download Ubuntu x86_64 ISO
+
+**IMPORTANT:** Use Ubuntu Server, not Desktop. Desktop ISOs are very slow in VMs without GPU acceleration (VGA device causes 5+ minute black screens during boot).
+
 ```bash
 cd ~/haywire
 mkdir -p vms
 cd vms
 
-# Download Ubuntu 24.04 x86_64 (or latest LTS)
-wget https://releases.ubuntu.com/24.04/ubuntu-24.04-desktop-amd64.iso
-
-# Or server version (smaller, faster)
+# Download Ubuntu 24.04 Server (RECOMMENDED - fast, reliable)
 wget https://releases.ubuntu.com/24.04/ubuntu-24.04-live-server-amd64.iso
+
+# Or Ubuntu 22.04 Server (more stable for older hardware)
+wget https://releases.ubuntu.com/22.04/ubuntu-22.04.5-live-server-amd64.iso
+
+# Desktop ISOs NOT recommended (too slow in VMs)
+# Can install desktop packages after Server installation if needed
+```
+
+**IMPORTANT:** If you already have an ISO on Windows:
+```bash
+# Copy it to WSL2 native storage (do NOT use symlinks to /mnt/c/)
+# QEMU may fail to boot from ISOs on Windows filesystem mounts
+cp /mnt/c/path/to/your.iso ~/haywire/vms/ubuntu-24.04-desktop-amd64.iso
+
+# This copies the file (takes ~30 seconds for 6GB ISO)
+# but ensures reliable QEMU boot without CD-ROM read errors
 ```
 
 #### Step 7: Build Haywire
@@ -269,6 +285,44 @@ cd ~/haywire/build
 **WSLg Note:** Windows 11 includes WSLg (WSL GUI), which automatically forwards X11 apps to Windows. Haywire's ImGui window will appear as a native Windows window!
 
 **Script:** Use `scripts/launch_ubuntu_x86_64_linux.sh` in WSL2
+
+### WSL2 Troubleshooting
+
+#### Issue: $HOME Points to Windows Path
+**Symptoms:** Scripts fail with errors like `/c/Users/jamie/...` not found
+
+**Cause:** WSL2 may set `$HOME` to Windows path format instead of Linux format
+
+**Solution:** The launch script now uses `HOME_DIR=$(cd ~ && pwd)` to get the correct Linux path. If you encounter issues with custom scripts:
+```bash
+# Check your $HOME
+echo $HOME  # May show /c/Users/... (wrong) or /home/... (correct)
+
+# Use tilde or $(cd ~ && pwd) instead
+HOME_DIR=$(cd ~ && pwd)
+"$HOME_DIR/haywire/qemu-mods/qemu-src/build/qemu-system-x86_64" ...
+```
+
+#### Issue: ISO Boot Failure / CD-ROM Not Found
+**Symptoms:** VM can't boot from Ubuntu installer ISO
+
+**Solutions:**
+1. **Copy ISO to native WSL2 storage** (don't use symlinks to `/mnt/c/`):
+   ```bash
+   cp /mnt/c/path/to/ubuntu.iso ~/haywire/vms/ubuntu-24.04-desktop-amd64.iso
+   ```
+
+2. **Delete empty disk if first boot failed:**
+   ```bash
+   rm ~/haywire/vms/ubuntu_x86_64.qcow2
+   # Then relaunch - script will recreate disk and boot from ISO
+   ```
+
+3. **Verify ISO is readable:**
+   ```bash
+   file ~/haywire/vms/ubuntu-24.04-desktop-amd64.iso
+   # Should say "ISO 9660 CD-ROM filesystem" (not "symbolic link")
+   ```
 
 ### Option 3: VirtualBox (If needed for specific use case)
 

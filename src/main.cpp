@@ -39,8 +39,24 @@ static void glfw_error_callback(int error, const char* description) {
 }
 
 int main(int argc, char** argv) {
+    // Parse command-line arguments
+    bool physicalOnlyMode = false;
+    for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--physical-only") {
+            physicalOnlyMode = true;
+            std::cout << "Physical-only mode enabled (skipping kernel discovery)\n";
+        } else if (std::string(argv[i]) == "--help" || std::string(argv[i]) == "-h") {
+            std::cout << "Haywire - Memory Visualizer\n";
+            std::cout << "Usage: " << argv[0] << " [options]\n";
+            std::cout << "Options:\n";
+            std::cout << "  --physical-only  Skip kernel discovery, use physical addressing only\n";
+            std::cout << "  --help, -h       Show this help message\n";
+            return 0;
+        }
+    }
+
     glfwSetErrorCallback(glfw_error_callback);
-    
+
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW" << std::endl;
         return -1;
@@ -85,9 +101,13 @@ int main(int argc, char** argv) {
     MemoryOverview overview;
     HexOverlay hexOverlay;
     
-    // Use kernel discovery mode by default
-    bool useKernelDiscovery = true;
-    std::cout << "Kernel discovery mode enabled\n";
+    // Use kernel discovery mode by default (unless physical-only mode is requested)
+    bool useKernelDiscovery = !physicalOnlyMode;
+    if (useKernelDiscovery) {
+        std::cout << "Kernel discovery mode enabled\n";
+    } else {
+        std::cout << "Physical-only mode: kernel discovery disabled\n";
+    }
 
     // Create memory mapper for address translation
     auto memoryMapper = std::make_shared<MemoryMapper>();

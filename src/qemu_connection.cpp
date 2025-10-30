@@ -941,34 +941,80 @@ bool QemuConnection::QueryKernelInfo(int cpuIndex, uint64_t& swapperPgd, uint64_
         return false;
     }
 
+    // Try ARM64-specific query-kernel-info first (custom QMP command)
     nlohmann::json cmd = {
         {"execute", "query-kernel-info"},
         {"arguments", {{"cpu-index", cpuIndex}}}
     };
 
     nlohmann::json response;
-    if (!SendQMPCommand(cmd, response)) {
-        std::cerr << "Failed to send query-kernel-info command" << std::endl;
+    if (SendQMPCommand(cmd, response)) {
+        if (response.contains("return")) {
+            auto ret = response["return"];
+
+            // Extract TTBR1 (swapper PGD) for ARM64
+            if (ret.contains("ttbr1")) {
+                swapperPgd = ret["ttbr1"];
+                // Mask off non-address bits
+                swapperPgd &= 0xFFFFFFFFF000ULL;
+            }
+
+            // Extract current task
+            if (ret.contains("current-task")) {
+                currentTask = ret["current-task"];
+            }
+
+            std::cout << "QueryKernelInfo: Got ARM64 TTBR1 = 0x" << std::hex << swapperPgd << std::dec << std::endl;
+            return true;
+        }
+        // If response contains "error", command not available - fall through to x86_64 method
+    }
+
+    // Fallback: Try x86_64 approach using human-monitor-command to get CR3
+    std::cout << "QueryKernelInfo: Trying x86_64 CR3 via human-monitor-command..." << std::endl;
+
+    nlohmann::json monitorCmd = {
+        {"execute", "human-monitor-command"},
+        {"arguments", {{"command-line", "info registers"}}}
+    };
+
+    if (!SendQMPCommand(monitorCmd, response)) {
+        std::cerr << "Failed to send human-monitor-command" << std::endl;
         return false;
     }
 
-    // Parse response
     if (response.contains("return")) {
-        auto ret = response["return"];
+        std::string output = response["return"];
 
-        // Extract TTBR1 (swapper PGD)
-        if (ret.contains("ttbr1")) {
-            swapperPgd = ret["ttbr1"];
-            // Mask off non-address bits
-            swapperPgd &= 0xFFFFFFFFF000ULL;
+        // Parse CR3 from output
+        // Format: "CR3=00000000123ab000" or "CR3=123ab000"
+        size_t pos = output.find("CR3=");
+        if (pos != std::string::npos) {
+            pos += 4;  // Skip "CR3="
+
+            // Extract hex value (up to space or newline)
+            std::string hexValue;
+            while (pos < output.length() &&
+                   (isxdigit(output[pos]) || output[pos] == 'x')) {
+                if (output[pos] != 'x') {  // Skip '0x' prefix if present
+                    hexValue += output[pos];
+                }
+                pos++;
+            }
+
+            if (!hexValue.empty()) {
+                swapperPgd = std::stoull(hexValue, nullptr, 16);
+                swapperPgd &= 0xFFFFFFFFF000ULL;  // Mask to page boundary
+
+                std::cout << "QueryKernelInfo: Got x86_64 CR3 = 0x" << std::hex << swapperPgd << std::dec << std::endl;
+
+                // Note: current_task not available via this method
+                currentTask = 0;
+                return true;
+            }
         }
 
-        // Extract current task
-        if (ret.contains("current-task")) {
-            currentTask = ret["current-task"];
-        }
-
-        return true;
+        std::cerr << "Could not find CR3 in info registers output" << std::endl;
     }
 
     return false;

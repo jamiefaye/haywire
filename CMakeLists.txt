@@ -210,6 +210,9 @@ add_executable(test_memory_view
     src/pagemap_cache.cpp
     src/kernel_viewport_translator.cpp
     src/memory_file_reader.cpp
+    src/platform/page_walker.cpp
+    src/platform/arm64/arm64_page_walker.cpp
+    src/platform/x86_64/x86_64_page_walker.cpp
     ${IMGUI_SOURCES}
 )
 

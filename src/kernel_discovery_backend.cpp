@@ -35,7 +35,9 @@ bool KernelDiscoveryBackend::Initialize(const std::string& memoryPath,
     std::cout << "[KernelDiscovery] QMP connection: " << qmpHost << ":" << qmpPort << std::endl;
 
     // Initialize kernel discovery with memory file and QMP settings
-    discovery = std::make_unique<KernelDiscovery>(memoryPath);
+    // Use ../profiles path since binary runs from build/ directory
+    // Using ubuntu-22.04 profile for Ubuntu 22.04 guest VM (kernel 6.8.0-49-generic)
+    discovery = std::make_unique<KernelDiscovery>(memoryPath, "../profiles/ubuntu-22.04-x86_64.json");
 
     std::cout << "[KernelDiscovery] Calling Initialize()..." << std::endl;
     if (!discovery->Initialize()) {

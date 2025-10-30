@@ -1,0 +1,194 @@
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                    HAYWIRE QUICK REFERENCE - Windows/WSL2                     ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STEP 1: START VM (in WSL)                                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  [Windows PowerShell]
+  > wsl
+
+  [Now in WSL - Ubuntu prompt]
+  $ cd ~/haywire
+  $ bash scripts/launch_ubuntu_x86_64_linux.sh
+
+  ✓ Keep this terminal open! VM is running here.
+  ✓ VM ports: VNC=5900, QMP=4445, Monitor=4444
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STEP 2: GET WSL2 IP ADDRESS (from Windows)                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  [Windows PowerShell]
+  > cd C:\Users\jamie\haywire
+  > .\scripts\get-wsl2-ip.ps1
+
+  You'll see: WSL2 IP Address: 172.21.71.150 (example)
+              Connect VNC to: 172.21.71.150:5900
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STEP 3: CONNECT VNC (from Windows)                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  [Open VNC Client]
+  Connect to: 172.21.71.150:5900  (use YOUR IP from step 2)
+
+  ✓ You should see Ubuntu desktop
+
+  NOTE: WSL2 uses virtual networking, so localhost won't work directly!
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STEP 4: RUN HAYWIRE (from Windows)                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  [Windows PowerShell - NEW WINDOW]
+  > cd C:\Users\jamie\haywire
+  > .\build\haywire
+
+  ✓ Haywire GUI appears
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STEP 5: CONFIGURE HAYWIRE                                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  Memory File: \\wsl$\Ubuntu\tmp\haywire-vm-mem
+          OR:  \\wsl.localhost\Ubuntu\tmp\haywire-vm-mem
+
+  QMP Host: localhost
+  QMP Port: 4445
+
+  ✓ Click "Discover" to scan for processes
+  ✓ Select a PID to enable VA mode
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                           COMMON COMMANDS                                     ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Get WSL2 IP for VNC                                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+  [Windows]
+  > .\scripts\get-wsl2-ip.ps1
+
+  Shows the IP to use for VNC connection
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Set up localhost forwarding (optional)                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+  [Windows - Run as Administrator]
+  > .\scripts\setup-wsl2-vnc.ps1
+
+  Allows connecting to localhost:5900 instead of IP address
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Check if VM is running                                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+  [Windows]
+  > wsl bash -c "ss -tln | grep 5900"
+
+  Should show: LISTEN 0  1  0.0.0.0:5900  0.0.0.0:*
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Stop VM                                                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+  [Windows]
+  > wsl bash -c "killall qemu-system-x86_64"
+
+  Or press Ctrl+C in the WSL terminal running the VM
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Rebuild Haywire                                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+  [Windows]
+  > cd C:\Users\jamie\haywire
+  > cmake --build build --config Release
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Verify memory file exists                                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+  [Windows]
+  > wsl bash -c "ls -lh /tmp/haywire-vm-mem"
+
+  Should show: 4.0G file
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Test WSL file access from Windows                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+  [Windows]
+  > Test-Path "\\wsl$\Ubuntu\tmp\haywire-vm-mem"
+  > Test-Path "\\wsl.localhost\Ubuntu\tmp\haywire-vm-mem"
+
+  One should return: True
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                          TROUBLESHOOTING                                      ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Problem: Port 4445 already in use                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+  [Windows]
+  > wsl bash -c "killall qemu-system-x86_64"
+  > # Wait 2 seconds
+  > wsl bash -c "cd ~/haywire && bash scripts/launch_ubuntu_x86_64_linux.sh" &
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Problem: VNC connection refused                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+  Check that launch script has: -vnc 0.0.0.0:0 (line 124)
+  NOT: -vnc :0
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Problem: Haywire can't find memory file                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+  Try both paths:
+    \\wsl$\Ubuntu\tmp\haywire-vm-mem
+    \\wsl.localhost\Ubuntu\tmp\haywire-vm-mem
+
+  Test which works with Test-Path command above
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Problem: KVM not available                                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+  [Windows]
+  > wsl
+  [WSL]
+  $ sudo usermod -a -G kvm $USER
+  $ exit
+  [Windows]
+  > wsl --shutdown
+  > wsl
+  # Try launching VM again
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                         WORKFLOW SUMMARY                                      ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+  Terminal 1 (WSL):    VM running (keep open)
+  Terminal 2 (Windows): Haywire GUI
+  Terminal 3 (Windows): Monitoring/debug commands (optional)
+
+  VNC Window:          Ubuntu desktop (interactive)
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                            KEY PATHS                                          ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+  Haywire Project:     C:\Users\jamie\haywire
+  Haywire Executable:  C:\Users\jamie\haywire\build\haywire
+
+  VM Disk (WSL):       ~/haywire/vms/ubuntu_x86_64.qcow2
+  VM Memory (WSL):     /tmp/haywire-vm-mem
+
+  VM Memory (Windows): \\wsl$\Ubuntu\tmp\haywire-vm-mem
+               OR:     \\wsl.localhost\Ubuntu\tmp\haywire-vm-mem
+
+  Launch Script:       ~/haywire/scripts/launch_ubuntu_x86_64_linux.sh
+
+  SSH to VM:           ssh -p 2222 ubuntu@localhost (passwordless)
+               OR:     ssh -p 2222 jff@localhost (password: p)
+
+═════════════════════════════════════════════════════════════════════════════════
+
+For detailed instructions, see: docs/QUICKSTART.md

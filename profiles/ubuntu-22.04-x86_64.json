@@ -1,0 +1,103 @@
+{
+  "name": "Ubuntu 22.04 x86_64",
+  "kernel_version": "6.8.0-49-generic",
+  "architecture": "x86_64",
+  "verified": true,
+  "notes": "Generated from pahole on Ubuntu 22.04 x86_64 VM",
+
+  "task_struct": {
+    "size": 10880,
+    "fields": {
+      "pid": {
+        "offset": 2488,
+        "size": 4,
+        "type": "pid_t",
+        "description": "Process ID"
+      },
+      "tgid": {
+        "offset": 2492,
+        "size": 4,
+        "type": "pid_t",
+        "description": "Thread group ID"
+      },
+      "comm": {
+        "offset": 3032,
+        "size": 16,
+        "type": "char[16]",
+        "description": "Process name"
+      },
+      "mm": {
+        "offset": 2360,
+        "size": 8,
+        "type": "pointer",
+        "description": "Memory descriptor pointer"
+      },
+      "tasks": {
+        "offset": 2280,
+        "size": 16,
+        "type": "list_head",
+        "description": "Task list entry"
+      }
+    }
+  },
+
+  "mm_struct": {
+    "size": 1888,
+    "fields": {
+      "pgd": {
+        "offset": 128,
+        "size": 8,
+        "type": "pointer",
+        "description": "Page global directory"
+      },
+      "mm_mt": {
+        "offset": 64,
+        "size": 8,
+        "type": "maple_tree",
+        "description": "Maple tree for VMAs"
+      },
+      "mm_users": {
+        "offset": 140,
+        "size": 4,
+        "type": "atomic_t",
+        "description": "User count"
+      }
+    }
+  },
+
+  "vm_area_struct": {
+    "size": 200,
+    "fields": {
+      "vm_start": {
+        "offset": 0,
+        "size": 8,
+        "type": "unsigned long",
+        "description": "Start address"
+      },
+      "vm_end": {
+        "offset": 8,
+        "size": 8,
+        "type": "unsigned long",
+        "description": "End address"
+      },
+      "vm_next": {
+        "offset": 16,
+        "size": 8,
+        "type": "pointer",
+        "description": "Next VMA (deprecated)"
+      },
+      "vm_flags": {
+        "offset": 32,
+        "size": 8,
+        "type": "unsigned long",
+        "description": "Flags"
+      },
+      "vm_file": {
+        "offset": 136,
+        "size": 8,
+        "type": "pointer",
+        "description": "File mapping"
+      }
+    }
+  }
+}
