@@ -1,0 +1,151 @@
+--- a/src/VBox/VMM/VMMR3/PGM.cpp
++++ b/src/VBox/VMM/VMMR3/PGM.cpp
+@@ -40,6 +40,11 @@
+ #include <iprt/thread.h>
+ #include <iprt/string.h>
+
++/* Shared memory backend for Haywire live introspection */
++#ifdef RT_OS_DARWIN
++# include <sys/mman.h>
++# include <fcntl.h>
++#endif
+
+ /*********************************************************************************************************************************
+ *   Defined Constants And Macros                                                                                                 *
+@@ -60,6 +65,108 @@
+ *   Global Variables                                                                                                              *
+ *********************************************************************************************************************************/
+
++/*********************************************************************************************************************************
++*   Shared Memory Backend for Live Introspection (Haywire)                                                                       *
++*********************************************************************************************************************************/
++
++#ifdef RT_OS_DARWIN
++
++/** Shared memory base pointer (mmap'd region). */
++void*   g_pSharedMemBase = NULL;
++/** Current allocation offset in shared memory. */
++size_t  g_SharedMemOffset = 0;
++/** Total size of shared memory region. */
++size_t  g_SharedMemSize = 0;
++/** File descriptor for shared memory. */
++static int g_fdSharedMem = -1;
++
++/**
++ * Initialize shared memory backend for guest RAM.
++ *
++ * Creates a shared memory file that the kernel allocator will use
++ * instead of normal page allocation. Enables live memory introspection
++ * by external tools like Haywire.
++ *
++ * @returns VBox status code.
++ * @param   pVM     The cross context VM structure.
++ */
++static int pgmR3InitSharedMemoryBackend(PVM pVM)
++{
++    const size_t cbRam = pVM->pgm.s.cbRamSize;
++
++    LogRel(("PGM: Haywire: Initializing shared memory backend (%zu bytes)\n", cbRam));
++
++    /* Use regular file instead of shm_open for macOS compatibility */
++    const char *pszShmPath = "/tmp/vbox-vm-mem";
++
++    /* Remove any stale file from previous run */
++    unlink(pszShmPath);
++
++    /* Create file */
++    g_fdSharedMem = open(pszShmPath, O_CREAT | O_RDWR, 0666);
++    if (g_fdSharedMem < 0)
++    {
++        LogRel(("PGM: Haywire: Failed to create shared memory file: %s\n", strerror(errno)));
++        return VERR_NO_MEMORY;
++    }
++
++    /* Set size to VM RAM size */
++    if (ftruncate(g_fdSharedMem, cbRam) < 0)
++    {
++        LogRel(("PGM: Haywire: Failed to set file size: %s\n", strerror(errno)));
++        close(g_fdSharedMem);
++        unlink(pszShmPath);
++        g_fdSharedMem = -1;
++        return VERR_NO_MEMORY;
++    }
++
++    /* Map with MAP_SHARED for live access by external tools */
++    g_pSharedMemBase = mmap(NULL, cbRam,
++                            PROT_READ | PROT_WRITE,
++                            MAP_SHARED,
++                            g_fdSharedMem, 0);
++
++    if (g_pSharedMemBase == MAP_FAILED)
++    {
++        LogRel(("PGM: Haywire: Failed to mmap: %s\n", strerror(errno)));
++        close(g_fdSharedMem);
++        unlink(pszShmPath);
++        g_fdSharedMem = -1;
++        g_pSharedMemBase = NULL;
++        return VERR_NO_MEMORY;
++    }
++
++    g_SharedMemSize = cbRam;
++    g_SharedMemOffset = 0;
++
++    LogRel(("PGM: Haywire: Shared memory backend ready at %p (%s, %zu bytes)\n",
++            g_pSharedMemBase, pszShmPath, cbRam));
++    LogRel(("PGM: Haywire: External tools can now access VM memory via %s\n", pszShmPath));
++
++    return VINF_SUCCESS;
++}
++
++/**
++ * Cleanup shared memory backend.
++ */
++static void pgmR3CleanupSharedMemoryBackend(void)
++{
++    if (g_pSharedMemBase != NULL && g_pSharedMemBase != MAP_FAILED)
++    {
++        munmap(g_pSharedMemBase, g_SharedMemSize);
++        g_pSharedMemBase = NULL;
++    }
++
++    if (g_fdSharedMem >= 0)
++    {
++        close(g_fdSharedMem);
++        unlink("/tmp/vbox-vm-mem");
++        g_fdSharedMem = -1;
++    }
++
++    g_SharedMemSize = 0;
++    g_SharedMemOffset = 0;
++}
++#endif /* RT_OS_DARWIN */
+
+ /** Saved state data unit version. */
+ #define PGM_SAVED_STATE_VERSION                             21
+@@ -969,6 +1076,13 @@ VMMR3DECL(int) PGMR3Init(PVM pVM)
+      */
+     rc = pgmR3InitSavedState(pVM, cbRam);
+     if (RT_FAILURE(rc))
++        return rc;
++
++    /* Initialize shared memory backend for Haywire (macOS only for now) */
++#ifdef RT_OS_DARWIN
++    rc = pgmR3InitSharedMemoryBackend(pVM);
++    if (RT_FAILURE(rc))
++        LogRel(("PGM: Haywire: Warning - failed to initialize shared memory backend: %Rrc\n", rc));
++#endif
+         return rc;
+
+     /*
+@@ -1833,6 +1947,11 @@ VMMR3DECL(int) PGMR3Term(PVM pVM)
+ {
+     /* Must free shared memory before releasing access handlers. */
+     pgmR3SharedModuleChecked_Term(pVM);
++
++#ifdef RT_OS_DARWIN
++    /* Cleanup shared memory backend */
++    pgmR3CleanupSharedMemoryBackend();
++#endif
+
+ #ifdef VBOX_WITH_STATISTICS
+     /*
