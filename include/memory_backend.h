@@ -3,8 +3,8 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <sys/mman.h>
 #include <memory>
+#include "platform_compat.h"
 
 namespace Haywire {
 

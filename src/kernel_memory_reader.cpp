@@ -1,8 +1,7 @@
 #include "kernel_memory_reader.h"
 #include "kernel_discovery_backend.h"
+#include "platform_compat.h"
 #include <iostream>
-#include <fcntl.h>
-#include <unistd.h>
 #include <sys/stat.h>
 #include <cstring>
 

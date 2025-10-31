@@ -1,13 +1,14 @@
 #include "macos_mapped_file_enumerator.h"
+#include "platform_compat.h"
+
+#ifdef __APPLE__
 #include <cstdio>
 #include <cstring>
-#include <unistd.h>
 #include <sstream>
 #include <algorithm>
 #include <sys/sysctl.h>
 #include <sys/proc_info.h>
 #include <libproc.h>
-#include <pwd.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 
@@ -460,3 +461,18 @@ std::vector<std::tuple<uint32_t, std::string, size_t>> MacOSMappedFileEnumerator
 }
 
 } // namespace Haywire
+
+#else // !__APPLE__
+
+// Stub implementation for non-macOS platforms
+namespace Haywire {
+
+MacOSMappedFileEnumerator::MacOSMappedFileEnumerator() {}
+std::vector<MappedFileInfo> MacOSMappedFileEnumerator::EnumerateMappedFiles() { return {}; }
+std::vector<MappedFileInfo> MacOSMappedFileEnumerator::GetMappedFilesForProcess(uint32_t pid) { return {}; }
+std::vector<std::pair<uint32_t, std::string>> MacOSMappedFileEnumerator::GetUserProcesses() { return {}; }
+std::vector<std::tuple<uint32_t, std::string, size_t>> MacOSMappedFileEnumerator::GetProcessesWithMappedFiles() { return {}; }
+
+} // namespace Haywire
+
+#endif // __APPLE__

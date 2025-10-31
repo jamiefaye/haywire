@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include "platform_compat.h"
 
 namespace Haywire {
 
 // Memory section entry - describes a virtual memory region
+PACK_START
 struct SectionEntry {
     uint32_t type;  // Entry type (for compatibility)
     uint32_t pid;
@@ -13,9 +15,11 @@ struct SectionEntry {
     uint32_t perms;
     uint32_t ownership_type;  // Ownership classification (0=unknown, 1=anon, 2=file, 3=lib, 4=exec, 5=stack, 6=heap, 7=vdso, 8=vvar)
     char path[64];
-} __attribute__((packed));
+} PACKED;
+PACK_END
 
 // Process ID entry
+PACK_START
 struct PIDEntry {
     uint32_t type;  // Entry type (for compatibility)
     uint32_t pid;
@@ -26,9 +30,11 @@ struct PIDEntry {
     char comm[16];
     char state;
     uint8_t padding[3];
-} __attribute__((packed));
+} PACKED;
+PACK_END
 
 // Page table entry
+PACK_START
 struct PTEEntry {
     uint32_t type;  // Entry type (for compatibility)
     uint32_t reserved;
@@ -36,6 +42,7 @@ struct PTEEntry {
     uint64_t pa;
     uint32_t flags;
     uint32_t reserved2;
-} __attribute__((packed));
+} PACKED;
+PACK_END
 
 } // namespace Haywire

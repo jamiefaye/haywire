@@ -1,11 +1,10 @@
 #include "file_browser.h"
 #include "macos_mapped_file_enumerator.h"
+#include "platform_compat.h"
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
 #include <cstring>
-#include <pwd.h>
-#include <unistd.h>
 #include <set>
 #include <tuple>
 
@@ -412,7 +411,12 @@ void FileBrowser::RefreshFileList() {
                     if (!typeFilter.empty() && !MatchesFilter(fe.name)) {
                         continue;
                     }
-                    fe.size = std::filesystem::file_size(entry);
+                    try {
+                        fe.size = std::filesystem::file_size(entry);
+                    } catch (...) {
+                        // For very large files or other issues, set to 0
+                        fe.size = 0;
+                    }
                 } else {
                     fe.size = 0;
                 }

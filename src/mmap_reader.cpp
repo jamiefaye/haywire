@@ -1,8 +1,7 @@
 #include "mmap_reader.h"
 #include "qemu_connection.h"
+#include "platform_compat.h"
 #include <iostream>
-#include <fcntl.h>
-#include <unistd.h>
 #include <sys/stat.h>
 #include <cstring>
 

@@ -2,18 +2,25 @@
 
 #include <cstdint>
 #include <string>
-#include <sys/mman.h>
+
+#ifdef _WIN32
+    #include <windows.h>
+#else
+    #include <sys/mman.h>
+#endif
 
 namespace Haywire {
 
 // Simple memory-mapped file reader to replace BeaconReader's mmap functionality
+// Cross-platform: uses mmap on POSIX systems, CreateFileMapping on Windows
 class MemoryFileReader {
 public:
     MemoryFileReader();
     ~MemoryFileReader();
 
     // Initialize with memory file path
-    bool Initialize(const std::string& memoryFilePath = "/tmp/haywire-vm-mem");
+    // Default path is platform-specific: /tmp/haywire-vm-mem on POSIX, %TEMP%\haywire-vm-mem on Windows
+    bool Initialize(const std::string& memoryFilePath = "");
 
     // Clean up
     void Cleanup();
@@ -35,8 +42,14 @@ public:
 private:
     uint8_t* memoryBase;
     size_t memorySize;
-    int memoryFd;
     std::string filePath;
+
+#ifdef _WIN32
+    HANDLE hFile;
+    HANDLE hMapping;
+#else
+    int memoryFd;
+#endif
 };
 
 } // namespace Haywire

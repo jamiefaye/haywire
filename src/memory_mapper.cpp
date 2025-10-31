@@ -3,13 +3,10 @@
  */
 
 #include "memory_mapper.h"
+#include "platform_compat.h"
 #include <iostream>
 #include <sstream>
 #include <regex>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
 #include <cstring>
 
 namespace Haywire {

@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include <sys/mman.h>
+#include "platform_compat.h"
 
 namespace Haywire {
 

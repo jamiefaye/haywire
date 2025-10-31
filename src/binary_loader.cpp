@@ -1,4 +1,5 @@
 #include "binary_loader.h"
+#include "platform_compat.h"
 #include <fstream>
 #include <iostream>
 #include <iomanip>

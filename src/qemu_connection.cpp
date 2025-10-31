@@ -5,31 +5,81 @@
 #include <sstream>
 #include <cstring>
 #include <cstdlib>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <fcntl.h>
+
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    // No unistd.h on Windows
+#else
+    #include <unistd.h>
+    #include <sys/socket.h>
+    #include <sys/time.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <fcntl.h>
+    #include <errno.h>
+#endif
 
 namespace Haywire {
 
-QemuConnection::QemuConnection() 
-    : qmpSocket(-1), monitorSocket(-1), connected(false), shouldStop(false),
+// Cross-platform socket initialization
+bool QemuConnection::InitializeSockets() {
+#ifdef _WIN32
+    WSADATA wsaData;
+    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (result != 0) {
+        std::cerr << "WSAStartup failed: " << result << std::endl;
+        return false;
+    }
+    return true;
+#else
+    // No initialization needed on POSIX
+    return true;
+#endif
+}
+
+// Cross-platform socket cleanup
+void QemuConnection::CleanupSockets() {
+#ifdef _WIN32
+    WSACleanup();
+#endif
+    // Nothing needed on POSIX
+}
+
+// Cross-platform socket close
+void QemuConnection::CloseSocket(SocketType& sock) {
+    if (sock != INVALID_SOCKET_VALUE) {
+#ifdef _WIN32
+        closesocket(sock);
+#else
+        close(sock);
+#endif
+        sock = INVALID_SOCKET_VALUE;
+    }
+}
+
+QemuConnection::QemuConnection()
+    : qmpSocket(INVALID_SOCKET_VALUE), monitorSocket(INVALID_SOCKET_VALUE),
+      connected(false), shouldStop(false),
       qmpPort(4445), monitorPort(4444), readSpeed(0.0f), totalBytesRead(0),
-      inputQMPPort(4445), inputMonitorPort(4444), inputGDBPort(1234), 
+      inputQMPPort(4445), inputMonitorPort(4444), inputGDBPort(1234),
       useGDB(false), useMMap(false), useMemoryBackend(false) {
+    // Initialize socket subsystem (WinSock on Windows, no-op on POSIX)
+    if (!InitializeSockets()) {
+        std::cerr << "Failed to initialize socket subsystem" << std::endl;
+    }
+
     strcpy(inputHost, "localhost");
     gdbConnection = std::make_unique<GDBConnection>();
     mmapReader = std::make_unique<MMapReader>();
     memoryBackend = std::make_unique<MemoryBackend>();
     guestAgent = std::make_shared<GuestAgent>();
-    
+
     // Try to auto-detect memory backend on startup
     if (memoryBackend->AutoDetect()) {
         useMemoryBackend = true;
         std::cerr << "Memory backend auto-detected and enabled!\n";
-        
+
         // Initialize memory mapping discovery
         std::cerr << "Discovering memory regions from QEMU monitor...\n";
         memoryBackend->InitializeMemoryMapping("localhost", 4444);
@@ -38,17 +88,16 @@ QemuConnection::QemuConnection()
 
 QemuConnection::~QemuConnection() {
     Disconnect();
+    CleanupSockets();
 }
 
 bool QemuConnection::ConnectQMP(const std::string& host, int port) {
     std::cerr << "[QMP] Attempting to connect to " << host << ":" << port << std::endl;
 
-    if (qmpSocket >= 0) {
-        close(qmpSocket);
-    }
+    CloseSocket(qmpSocket);
 
     qmpSocket = socket(AF_INET, SOCK_STREAM, 0);
-    if (qmpSocket < 0) {
+    if (qmpSocket == INVALID_SOCKET_VALUE) {
         std::cerr << "[QMP] Failed to create socket" << std::endl;
         return false;
     }
@@ -64,15 +113,18 @@ bool QemuConnection::ConnectQMP(const std::string& host, int port) {
         addr.sin_addr.s_addr = inet_addr(host.c_str());
     }
 
-    if (connect(qmpSocket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+    if (connect(qmpSocket, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR_VALUE) {
+#ifdef _WIN32
+        std::cerr << "[QMP] Failed to connect (Error: " << WSAGetLastError() << ")" << std::endl;
+#else
         std::cerr << "[QMP] Failed to connect: " << strerror(errno) << std::endl;
-        close(qmpSocket);
-        qmpSocket = -1;
+#endif
+        CloseSocket(qmpSocket);
         return false;
     }
 
     std::cerr << "[QMP] Connected successfully" << std::endl;
-    
+
     nlohmann::json greeting;
     char buffer[4096];
     int received = recv(qmpSocket, buffer, sizeof(buffer)-1, 0);
@@ -81,19 +133,17 @@ bool QemuConnection::ConnectQMP(const std::string& host, int port) {
         try {
             greeting = nlohmann::json::parse(buffer);
         } catch(...) {
-            close(qmpSocket);
-            qmpSocket = -1;
+            CloseSocket(qmpSocket);
             return false;
         }
     }
-    
+
     nlohmann::json capabilities = {
         {"execute", "qmp_capabilities"}
     };
     nlohmann::json response;
     if (!SendQMPCommand(capabilities, response)) {
-        close(qmpSocket);
-        qmpSocket = -1;
+        CloseSocket(qmpSocket);
         return false;
     }
     
@@ -168,52 +218,77 @@ bool QemuConnection::AutoConnect() {
 }
 
 bool QemuConnection::ConnectMonitor(const std::string& host, int port) {
-    if (monitorSocket >= 0) {
-        close(monitorSocket);
-    }
-    
+    CloseSocket(monitorSocket);
+
     monitorSocket = socket(AF_INET, SOCK_STREAM, 0);
-    if (monitorSocket < 0) {
+    if (monitorSocket == INVALID_SOCKET_VALUE) {
         return false;
     }
-    
+
     // Set socket timeout to prevent blocking forever
+#ifdef _WIN32
+    DWORD timeout = 2000;  // 2 seconds in milliseconds
+    setsockopt(monitorSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+    setsockopt(monitorSocket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
+#else
     struct timeval timeout;
     timeout.tv_sec = 2;  // 2 second timeout
     timeout.tv_usec = 0;
     setsockopt(monitorSocket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     setsockopt(monitorSocket, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-    
+#endif
+
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
-    
+
     // Handle "localhost" specially
     if (host == "localhost") {
         addr.sin_addr.s_addr = inet_addr("127.0.0.1");
     } else {
         addr.sin_addr.s_addr = inet_addr(host.c_str());
     }
-    
-    if (connect(monitorSocket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(monitorSocket);
-        monitorSocket = -1;
+
+    if (connect(monitorSocket, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR_VALUE) {
+        CloseSocket(monitorSocket);
         return false;
     }
-    
-    // Clear initial prompt
+
+    // Clear initial prompt (non-blocking recv)
     char buffer[1024];
+#ifdef _WIN32
+    // Set non-blocking mode temporarily
+    u_long mode = 1;
+    ioctlsocket(monitorSocket, FIONBIO, &mode);
+    recv(monitorSocket, buffer, sizeof(buffer), 0);
+    // Set back to blocking
+    mode = 0;
+    ioctlsocket(monitorSocket, FIONBIO, &mode);
+#else
     recv(monitorSocket, buffer, sizeof(buffer), MSG_DONTWAIT);
-    
+#endif
+
     // Try to set monitor to not echo (this may not work on all QEMU versions)
     const char* noecho = "set echo off\n";
     send(monitorSocket, noecho, strlen(noecho), 0);
-    usleep(10000); // 10ms wait
-    recv(monitorSocket, buffer, sizeof(buffer), MSG_DONTWAIT); // Clear response
-    
+
+    // Sleep for 10ms (cross-platform)
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    // Clear response (non-blocking recv)
+#ifdef _WIN32
+    mode = 1;
+    ioctlsocket(monitorSocket, FIONBIO, &mode);
+    recv(monitorSocket, buffer, sizeof(buffer), 0);
+    mode = 0;
+    ioctlsocket(monitorSocket, FIONBIO, &mode);
+#else
+    recv(monitorSocket, buffer, sizeof(buffer), MSG_DONTWAIT);
+#endif
+
     monitorPort = port;
     connected = true;
-    
+
     return true;
 }
 
@@ -222,24 +297,17 @@ void QemuConnection::Disconnect() {
     shouldStop = true;
     useGDB = false;
     useMMap = false;
-    
+
     if (receiveThread.joinable()) {
         receiveThread.join();
     }
-    
+
     if (gdbConnection) {
         gdbConnection->Disconnect();
     }
-    
-    if (qmpSocket >= 0) {
-        close(qmpSocket);
-        qmpSocket = -1;
-    }
-    
-    if (monitorSocket >= 0) {
-        close(monitorSocket);
-        monitorSocket = -1;
-    }
+
+    CloseSocket(qmpSocket);
+    CloseSocket(monitorSocket);
 }
 
 bool QemuConnection::TestPageNonZero(uint64_t address, size_t size) {

@@ -2,9 +2,7 @@
 
 #include <string>
 #include <vector>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
+#include "platform_compat.h"
 #include <cstring>
 #include <sstream>
 #include <iostream>

@@ -22,7 +22,10 @@ elseif(UNIX)
     find_package(X11 REQUIRED)
     set(PLATFORM_LIBS ${X11_LIBRARIES} dl)
 elseif(WIN32)
-    set(PLATFORM_LIBS)
+    # Windows needs WinSock2 for networking
+    set(PLATFORM_LIBS ws2_32)
+    # Define WIN32_LEAN_AND_MEAN and NOMINMAX globally to prevent Windows.h conflicts
+    add_compile_definitions(WIN32_LEAN_AND_MEAN NOMINMAX _WINSOCK_DEPRECATED_NO_WARNINGS)
 endif()
 
 # GLFW
@@ -65,6 +68,32 @@ if(NOT CAPSTONE_FOUND AND APPLE)
         set(CAPSTONE_FOUND TRUE)
         set(CAPSTONE_INCLUDE_DIRS ${CAPSTONE_INCLUDE_DIR})
         set(CAPSTONE_LIBRARIES ${CAPSTONE_LIBRARY})
+    endif()
+endif()
+
+# Fallback for Windows
+if(NOT CAPSTONE_FOUND AND WIN32)
+    find_path(CAPSTONE_INCLUDE_DIR capstone/capstone.h
+        PATHS
+            "C:/Program Files/capstone/include"
+            "C:/Program Files (x86)/capstone/include"
+            "${CMAKE_SOURCE_DIR}/lib/capstone/include"
+    )
+    find_library(CAPSTONE_LIBRARY
+        NAMES capstone capstone_dll
+        PATHS
+            "C:/Program Files/capstone/lib"
+            "C:/Program Files (x86)/capstone/lib"
+            "${CMAKE_SOURCE_DIR}/lib/capstone/lib"
+    )
+    if(CAPSTONE_INCLUDE_DIR AND CAPSTONE_LIBRARY)
+        set(CAPSTONE_FOUND TRUE)
+        set(CAPSTONE_INCLUDE_DIRS ${CAPSTONE_INCLUDE_DIR})
+        set(CAPSTONE_LIBRARIES ${CAPSTONE_LIBRARY})
+        message(STATUS "Found Capstone: ${CAPSTONE_LIBRARY}")
+    else()
+        message(WARNING "Capstone not found. Disassembly features will be disabled.")
+        message(WARNING "To install: Download from https://github.com/capstone-engine/capstone/releases")
     endif()
 endif()
 
@@ -173,45 +202,6 @@ endif()
 
 # Copy assets to build directory
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
-
-# Test executables
-
-# Test memory view system
-add_executable(test_memory_view
-    src/test_memory_view.cpp
-    src/page_database.cpp
-    src/memory_view.cpp
-    src/kernel_discovery_backend.cpp
-    src/guest_agent.cpp
-    src/qemu_connection.cpp
-    src/memory_backend.cpp
-    src/memory_utils.cpp
-    src/gdb_connection.cpp
-    src/memory_mapper.cpp
-    src/mmap_reader.cpp
-    src/kernel_memory_reader.cpp
-    src/crunched_memory_reader.cpp
-    src/address_space_flattener.cpp
-    src/pte_walker.cpp
-    src/pagemap_cache.cpp
-    src/kernel_viewport_translator.cpp
-    src/memory_file_reader.cpp
-    ${IMGUI_SOURCES}
-)
-
-target_include_directories(test_memory_view PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
-)
-
-target_link_libraries(test_memory_view PRIVATE
-    glfw
-    OpenGL::GL
-    nlohmann_json::nlohmann_json
-    Threads::Threads
-    ${PLATFORM_LIBS}
-)
 
 # Test executables moved to test_attempts/ directory
 

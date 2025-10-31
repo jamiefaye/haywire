@@ -11,6 +11,7 @@
 #include "heat_map_widget.h"
 #include "memory_file_reader.h"
 #include "page_database.h"
+#include "platform_compat.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include <cstring>
@@ -20,9 +21,6 @@
 #include <iomanip>
 #include <iostream>
 #include <chrono>
-#include <sys/mman.h>
-#include <fcntl.h>
-#include <unistd.h>
 
 // STB image write implementation
 #define STB_IMAGE_WRITE_IMPLEMENTATION

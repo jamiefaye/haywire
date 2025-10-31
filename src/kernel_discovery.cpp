@@ -14,13 +14,8 @@
 #include <algorithm>
 #include <cstring>
 #include <chrono>
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/mman.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <errno.h>
+#include "platform_compat.h"
 #include "../include/qemu_connection.h"
 #include "kernel_profile_loader.h"
 

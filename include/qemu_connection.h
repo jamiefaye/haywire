@@ -13,6 +13,20 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    // Define SOCKET type and invalid value for Windows
+    typedef SOCKET SocketType;
+    #define INVALID_SOCKET_VALUE INVALID_SOCKET
+    #define SOCKET_ERROR_VALUE SOCKET_ERROR
+#else
+    // Define SOCKET type and invalid value for POSIX
+    typedef int SocketType;
+    #define INVALID_SOCKET_VALUE -1
+    #define SOCKET_ERROR_VALUE -1
+#endif
+
 namespace Haywire {
 
 class QemuConnection {
@@ -43,7 +57,7 @@ public:
     
     bool IsConnected() const { return connected.load(); }
     bool IsAvailable() const { return IsConnected(); }
-    bool IsQMPConnected() const { return qmpSocket >= 0; }
+    bool IsQMPConnected() const { return qmpSocket != INVALID_SOCKET_VALUE; }
     bool IsUsingMemoryBackend() const { return useMemoryBackend; }
     MemoryBackend* GetMemoryBackend() { return memoryBackend.get(); }
     bool IsGuestAgentConnected() const { return guestAgent && guestAgent->IsConnected(); }
@@ -79,9 +93,14 @@ private:
     
     void QMPReceiveThread();
     void UpdateReadSpeed(size_t bytesRead);
-    
-    int qmpSocket;
-    int monitorSocket;
+
+    // Cross-platform socket initialization/cleanup helpers
+    bool InitializeSockets();
+    void CleanupSockets();
+    void CloseSocket(SocketType& sock);
+
+    SocketType qmpSocket;
+    SocketType monitorSocket;
     std::atomic<bool> connected;
     std::atomic<bool> shouldStop;
     

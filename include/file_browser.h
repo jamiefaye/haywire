@@ -5,16 +5,9 @@
 #include <filesystem>
 #include <memory>
 #include "imgui.h"
-#ifdef __APPLE__
 #include "macos_mapped_file_enumerator.h"
-#endif
 
 namespace Haywire {
-
-#ifndef __APPLE__
-class MacOSMappedFileEnumerator;
-struct MappedFileInfo;
-#endif
 
 class FileBrowser {
 public:

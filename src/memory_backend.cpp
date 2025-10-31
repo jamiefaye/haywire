@@ -1,12 +1,14 @@
 #include "memory_backend.h"
 #include "memory_mapper.h"
+#include "platform_compat.h"
 #include <iostream>
-#include <fcntl.h>
-#include <unistd.h>
 #include <sys/stat.h>
 #include <cstring>
-#include <dirent.h>
 #include <regex>
+
+#ifndef _WIN32
+#include <dirent.h>
+#endif
 
 namespace Haywire {
 
@@ -19,6 +21,11 @@ MemoryBackend::~MemoryBackend() {
 }
 
 bool MemoryBackend::AutoDetect() {
+#ifdef _WIN32
+    // Auto-detection not supported on Windows
+    // User must manually specify memory file path
+    return false;
+#else
     // Common locations where QEMU might put memory-backend files
     std::vector<std::string> searchPaths = {
         "/dev/shm/",      // RAM-backed tmpfs (preferred)
@@ -75,8 +82,9 @@ bool MemoryBackend::AutoDetect() {
         }
         pclose(ps);
     }
-    
+
     return false;
+#endif
 }
 
 bool MemoryBackend::TryMapPath(const std::string& path) {

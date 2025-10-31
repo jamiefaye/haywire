@@ -1,13 +1,9 @@
 #include "gdb_connection.h"
+#include "platform_compat.h"
 #include <iostream>
 #include <sstream>
 #include <iomanip>
 #include <cstring>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <fcntl.h>
 
 namespace Haywire {
 
@@ -32,8 +28,13 @@ bool GDBConnection::Connect(const std::string& host, int port) {
     struct timeval timeout;
     timeout.tv_sec = 2;
     timeout.tv_usec = 0;
+#ifdef _WIN32
+    setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+    setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
+#else
     setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+#endif
     
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;

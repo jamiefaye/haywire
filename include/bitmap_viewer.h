@@ -2,14 +2,22 @@
 
 #include <vector>
 #include <string>
+
+// On Windows, ensure proper include order for OpenGL
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
+    #include <windows.h>
+    #include <GL/gl.h>
+#elif defined(__APPLE__)
+    #include <OpenGL/gl.h>
+#else
+    #include <GL/gl.h>
+#endif
+
 #include "imgui.h"
 #include "common.h"
 #include "address_parser.h"  // For TypedAddress
-#ifdef __APPLE__
-#include <OpenGL/gl.h>
-#else
-#include <GL/gl.h>
-#endif
 
 namespace Haywire {
 

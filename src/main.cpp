@@ -3,7 +3,7 @@
 #include <sstream>
 #include <chrono>
 #include <unordered_map>
-#include <unistd.h>
+#include "platform_compat.h"
 #include <cstring>
 #include <cstdlib>  // For getenv
 
@@ -39,8 +39,36 @@ static void glfw_error_callback(int error, const char* description) {
 }
 
 int main(int argc, char** argv) {
+    // Parse command-line arguments
+    bool noQemu = false;
+    std::string memoryFilePath = "/tmp/haywire-vm-mem";
+
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--no-qemu") {
+            noQemu = true;
+            std::cout << "QEMU connection disabled by --no-qemu flag\n";
+        } else if (arg == "--memory-file" && i + 1 < argc) {
+            memoryFilePath = argv[++i];
+            std::cout << "Using memory file: " << memoryFilePath << "\n";
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout << "Haywire - VM Memory Visualizer\n\n";
+            std::cout << "Usage: haywire [options]\n\n";
+            std::cout << "Options:\n";
+            std::cout << "  --no-qemu              Skip QEMU connection (standalone mode)\n";
+            std::cout << "  --memory-file <path>   Use specific memory file (default: /tmp/haywire-vm-mem)\n";
+            std::cout << "  --help, -h             Show this help message\n";
+            std::cout << "\nStandalone mode (--no-qemu):\n";
+            std::cout << "  - No QEMU/QMP connection required\n";
+            std::cout << "  - Works with memory dump files from any source\n";
+            std::cout << "  - VA translation and kernel discovery unavailable\n";
+            std::cout << "  - Physical memory visualization only\n";
+            return 0;
+        }
+    }
+
     glfwSetErrorCallback(glfw_error_callback);
-    
+
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW" << std::endl;
         return -1;
@@ -54,7 +82,7 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
     
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Haywire - Memory Visualizer", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1800, 1000, "Haywire - Memory Visualizer", nullptr, nullptr);
     if (!window) {
         std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
@@ -84,22 +112,30 @@ int main(int argc, char** argv) {
     MemoryVisualizer visualizer;
     MemoryOverview overview;
     HexOverlay hexOverlay;
-    
-    // Use kernel discovery mode by default
-    bool useKernelDiscovery = true;
-    std::cout << "Kernel discovery mode enabled\n";
+
+    // Use kernel discovery mode by default (unless --no-qemu)
+    bool useKernelDiscovery = !noQemu;
+    if (useKernelDiscovery) {
+        std::cout << "Kernel discovery mode enabled\n";
+    } else {
+        std::cout << "Standalone mode - kernel discovery disabled\n";
+    }
 
     // Create memory mapper for address translation
     auto memoryMapper = std::make_shared<MemoryMapper>();
 
-    // Auto-connect to QEMU for memory access
-    // ALWAYS connect for visualization, regardless of kernel discovery mode
-    bool autoConnected = qemu.AutoConnect();
+    // Auto-connect to QEMU for memory access (unless --no-qemu)
+    bool autoConnected = false;
+    if (!noQemu) {
+        autoConnected = qemu.AutoConnect();
 
-    // If connected, initialize memory mapper
-    if (autoConnected) {
-        memoryMapper->DiscoverMemoryMap("localhost", 4444);
-        memoryMapper->LogRegions();
+        // If connected, initialize memory mapper
+        if (autoConnected) {
+            memoryMapper->DiscoverMemoryMap("localhost", 4444);
+            memoryMapper->LogRegions();
+        }
+    } else {
+        std::cout << "Skipping QEMU connection (--no-qemu mode)\n";
     }
 
     // Kernel discovery backend (replacing beacon data reading)
@@ -108,11 +144,14 @@ int main(int argc, char** argv) {
     // Create memory file reader for bitmap viewers' memory access
     auto memoryFileReader = std::make_shared<MemoryFileReader>();
     // Initialize it with the memory file for direct memory access
-    if (memoryFileReader->Initialize("/tmp/haywire-vm-mem")) {
+    if (memoryFileReader->Initialize(memoryFilePath)) {
         std::cout << "Memory file mapped for bitmap viewers\n";
         visualizer.SetMemoryFileReader(memoryFileReader);  // For bitmap viewers
     } else {
         std::cerr << "Warning: Could not map memory file for bitmap viewers\n";
+        if (noQemu) {
+            std::cerr << "Note: In --no-qemu mode, you must provide a valid memory file\n";
+        }
     }
 
     // std::shared_ptr<BeaconTranslator> beaconTranslator;  // OBSOLETE
@@ -130,7 +169,7 @@ int main(int argc, char** argv) {
 
         // Try to initialize kernel discovery with default settings
         // Use QMP port 4445 to get correct swapper PGD
-        if (kernelDiscovery->Initialize("/tmp/haywire-vm-mem", "localhost", 4445)) {
+        if (kernelDiscovery->Initialize(memoryFilePath, "localhost", 4445)) {
             std::cout << "Kernel discovery initialized successfully\n";
             kernelDiscoveryInitialized = true;
 
@@ -170,9 +209,11 @@ int main(int argc, char** argv) {
             // Wire up page database query window
             pageDBQuery.SetPageDatabase(pageDatabase);
         } else {
-            std::cerr << "FATAL: Failed to initialize kernel discovery\n";
-            std::cerr << "Cannot get swapper PGD from QMP - exiting\n";
-            return 1;  // Exit with error code
+            std::cerr << "Warning: Failed to initialize kernel discovery\n";
+            std::cerr << "Kernel discovery features will be unavailable\n";
+            std::cerr << "Tip: Use --no-qemu flag to skip kernel discovery and run in standalone mode\n";
+            // Don't exit - allow program to continue without kernel discovery
+            kernelDiscoveryInitialized = false;
         }
     }
 

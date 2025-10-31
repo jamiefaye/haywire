@@ -21,6 +21,7 @@ emcc -O3 \
     -I"$PROJECT_ROOT/include" \
     "$PROJECT_ROOT/src/memory_renderer.cpp" \
     "$SCRIPT_DIR/memory_renderer_wasm.cpp" \
+    "$SCRIPT_DIR/instruction_renderer_stub.cpp" \
     -o "$OUTPUT_DIR/memory_renderer.js" \
     -s EXPORTED_FUNCTIONS="[\
         '_renderMemoryToCanvas',\

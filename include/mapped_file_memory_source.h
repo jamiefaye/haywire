@@ -28,7 +28,11 @@ private:
     std::string filename_;
     void* mapped_data_ = nullptr;
     size_t file_size_ = 0;
-    int fd_ = -1;  // File descriptor
+    int fd_ = -1;  // File descriptor (UNIX)
+#ifdef _WIN32
+    void* file_handle_ = nullptr;  // HANDLE (Windows)
+    void* mapping_handle_ = nullptr;  // HANDLE (Windows)
+#endif
 };
 
 } // namespace Haywire
