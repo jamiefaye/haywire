@@ -7,6 +7,8 @@
 #include <cstring>
 #include <set>
 #include <tuple>
+#include <pwd.h>
+#include <unistd.h>
 
 namespace Haywire {
 

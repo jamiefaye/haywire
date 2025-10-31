@@ -6,6 +6,13 @@ Haywire is a VM memory introspection tool that bypasses QEMU's memory isolation 
 
 **Current Status**: Both C++ and web implementations are actively maintained. C++ version provides native performance with live change detection and heat map visualization. Web version offers cross-platform support and easier deployment.
 
+**Platform Support**:
+- QEMU/KVM on x86_64 Linux (native performance via KVM)
+- QEMU on Intel macOS (native performance via HVF)
+- QEMU on Intel Windows (native performance via WHPX)
+- QEMU on ARM64 macOS (current dev environment)
+- VMware/VirtualBox support requires snapshot-based introspection (not live)
+
 ## Key Technical Context
 
 ### Memory Protection Discovery
@@ -783,3 +790,60 @@ Enhanced swapper_pgd discovery to work without QMP using functional validation:
 - Automatically recovers from stale cached values
 - QMP results can be cross-validated
 
+
+
+## Recent Progress (October 26, 2025)
+
+### QEMU Intel Acceleration - Critical Discovery
+
+**Problem:** User reported QEMU "does a bad job of running on Intel stuff" - VMs were extremely slow and hanging.
+
+**Root Cause:** Missing `-accel` flag! QEMU defaults to TCG (software emulation) which is 10-100x slower.
+
+**Solution:** Use hardware acceleration on Intel platforms:
+- **Intel macOS**: `qemu-system-x86_64 -accel hvf -cpu host` (Hypervisor.framework)
+- **Intel Linux**: `qemu-system-x86_64 -accel kvm -cpu host` (KVM)
+- **Intel Windows**: `qemu-system-x86_64 -accel whpx -cpu host` (Windows Hypervisor Platform)
+
+**Key Insight:** QEMU works GREAT on Intel with proper acceleration! The slowness was configuration, not a QEMU limitation.
+
+**Why Not VMware/VirtualBox?**
+- VMware Fusion/Workstation: No live memory access, only snapshots
+- VirtualBox: Only snapshot-based introspection (.sav files)
+- QEMU is the ONLY hypervisor with memory-backend-file for live introspection
+
+**Created:**
+- `scripts/launch_ubuntu_x86_64_macos.sh` - Intel macOS with HVF
+- `scripts/launch_ubuntu_x86_64_linux.sh` - Intel Linux with KVM
+- `scripts/launch_ubuntu_x86_64_windows.bat` - Intel Windows with WHPX
+- `docs/qemu_intel_acceleration.md` - Comprehensive acceleration guide
+- `docs/intel_deployment.md` - Quick reference for Intel platforms
+
+**Next Steps:**
+- Test on Intel hardware with HVF/KVM/WHPX
+- Create x86_64 kernel profiles (different offsets than ARM64)
+- Validate identical workflow across all platforms
+
+### VirtualBox "Secret Range" Patch - Backup Plan
+
+**Discovered:** VirtualBox allocates guest RAM in 2MB chunks with **no intrusive metadata**.
+
+**Key Finding:** VirtualBox's `GMMCHUNK` metadata is stored separately from the actual 2MB chunk. Each chunk is pure guest RAM - exactly 2,097,152 bytes with no headers or pointers.
+
+**Elegant Solution:** "Secret Range" patch redirects chunk allocation to pre-mapped shared memory file:
+1. Pre-allocate mmap'd file at `/dev/shm/vbox-vm-mem` (4GB for 4GB VM)
+2. Patch `rtR0MemObjLinuxAllocPagesFromShared()` to allocate from this region
+3. Chunks laid out sequentially: 0x0, 0x200000, 0x400000, ...
+4. Zero copy - guest writes appear instantly in file (MAP_SHARED)
+5. Haywire sees identical layout to QEMU's memory-backend-file
+
+**Complexity:** ~150 lines of code, 2-3 weeks effort
+
+**Status:** Documented as fallback if WSL2+KVM doesn't work out
+
+**Why it's clever:** 
+- No background sync thread needed (unlike original copy-based approach)
+- Zero overhead (same physical pages)
+- Byte-for-byte identical to QEMU's layout
+
+**Documentation:** `docs/virtualbox_secret_range_patch.md`
