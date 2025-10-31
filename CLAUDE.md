@@ -9,9 +9,11 @@ Haywire is a VM memory introspection tool that bypasses QEMU's memory isolation 
 **Platform Support**:
 - QEMU/KVM on x86_64 Linux (native performance via KVM)
 - QEMU on Intel macOS (native performance via HVF)
-- QEMU on Intel Windows (native performance via WHPX)
+- QEMU on Intel Windows via WSL2+KVM (native performance, recommended)
+- QEMU on Intel Windows via WHPX (buggy with Linux guests, not recommended)
 - QEMU on ARM64 macOS (current dev environment)
 - VMware/VirtualBox support requires snapshot-based introspection (not live)
+- **VirtualBox with "secret range" patch**: Live memory access possible with ~150 lines of code (backup plan)
 
 ## Key Technical Context
 
@@ -847,3 +849,68 @@ Enhanced swapper_pgd discovery to work without QMP using functional validation:
 - Byte-for-byte identical to QEMU's layout
 
 **Documentation:** `docs/virtualbox_secret_range_patch.md`
+
+## Recent Progress (October 31, 2025)
+
+### VirtualBox "Secret Range" Implementation Plan
+
+Created comprehensive implementation plan for adding live memory access to VirtualBox on both macOS and Windows platforms.
+
+**Approach:**
+- Redirect VirtualBox's 2MB chunk allocator to pre-allocated shared memory file
+- Works because VirtualBox chunks contain pure guest RAM with no intrusive metadata
+- Identical to QEMU's memory-backend-file from Haywire's perspective
+
+**Key Components:**
+
+1. **Shared Memory Backend** (`src/VBox/VMM/VMMR3/PGM.cpp`):
+   - POSIX version: Uses `shm_open()` + `mmap()` with MAP_SHARED
+   - Windows version: Uses `CreateFileMapping()` + `MapViewOfFile()`
+   - Optional huge pages (2MB) for zero fragmentation
+   - Simple bump allocator (sequential chunk allocation)
+
+2. **Kernel Allocator Redirect**:
+   - Linux: `src/VBox/Runtime/r0drv/linux/memobj-r0drv-linux.c`
+   - macOS: `src/VBox/Runtime/r0drv/darwin/memobj-r0drv-darwin.cpp`
+   - Windows: `src/VBox/Runtime/r0drv/nt/memobj-r0drv-nt.cpp`
+   - Intercept 2MB chunk requests before kernel allocator
+   - Fall back to normal allocation if shared memory exhausted
+
+3. **Memory Paths**:
+   - Linux: `/dev/shm/vbox-vm-mem`
+   - macOS: `/tmp/vbox-vm-mem` (via shm_open)
+   - Windows: `Global\vbox-vm-mem` (via CreateFileMapping)
+
+**Implementation Phases:**
+1. VirtualBox setup on both platforms
+2. Locate and modify source files
+3. Add shared memory backend (userspace)
+4. Redirect kernel allocator
+5. Build VirtualBox from source
+6. Test with Ubuntu VM
+7. Validate with Haywire
+
+**Testing Checklist:**
+- Shared memory file created with correct size (VM RAM size)
+- VirtualBox logs show chunk allocations from shared memory
+- VM boots and runs normally
+- Haywire can discover swapper_pgd and processes
+- Memory contents match guest RAM
+
+**Benefits:**
+- Zero-copy live memory access (MAP_SHARED)
+- Works with existing VirtualBox VMs
+- No background sync overhead
+- Byte-for-byte identical to QEMU layout
+
+**Trade-offs:**
+- Custom fork to maintain (~150 lines of code)
+- Must reapply patches to new VirtualBox versions
+- Not likely to be accepted upstream (niche use case)
+- Alternative: QEMU with proper acceleration is simpler
+
+**Status:** Complete implementation plan with platform-specific code ready to apply
+
+**Documentation:**
+- `docs/virtualbox_implementation_plan.md` - Detailed implementation guide
+- `docs/virtualbox_secret_range_patch.md` - Conceptual design
