@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
     // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     
     ImGui::StyleColorsDark();
-    
+
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
     
