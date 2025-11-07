@@ -29,8 +29,10 @@ public:
     ~MemoryMapper();
 
     // Query QEMU and build the memory map
-    bool DiscoverMemoryMap(const std::string& monitor_host = "localhost", 
-                           int monitor_port = 4444);
+    // arch_hint: 0=auto, 1=x86_64, 2=ARM64
+    bool DiscoverMemoryMap(const std::string& monitor_host = "localhost",
+                           int monitor_port = 4444,
+                           int arch_hint = 0);
 
     // Translate guest physical address to file offset
     // Returns -1 if address not found in any region
@@ -52,7 +54,7 @@ private:
     bool discovered_;
 
     // Parse QEMU monitor output
-    bool ParseMtreeOutput(const std::string& output);
+    bool ParseMtreeOutput(const std::string& output, int arch_hint = 0);
     
     // Send command to QEMU monitor and get response
     std::string QueryMonitor(const std::string& host, int port, const std::string& command);

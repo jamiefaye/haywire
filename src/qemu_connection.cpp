@@ -80,9 +80,8 @@ QemuConnection::QemuConnection()
         useMemoryBackend = true;
         std::cerr << "Memory backend auto-detected and enabled!\n";
 
-        // Initialize memory mapping discovery
-        std::cerr << "Discovering memory regions from QEMU monitor...\n";
-        memoryBackend->InitializeMemoryMapping("localhost", 4444);
+        // NOTE: Memory mapping initialization deferred until after command-line parsing
+        // so that arch_hint can be set correctly (main.cpp will call InitializeMemoryMapping)
     }
 }
 

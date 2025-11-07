@@ -20,6 +20,7 @@
 // Memory access headers
 #include "memory_file_reader.h"  // For bitmap viewers' memory access
 #include "memory_types.h"  // For SectionEntry
+#include "ikernel_discovery.h"  // For GuestOS enum
 #include "kernel_discovery_backend.h"
 #include "pid_selector.h"
 #include "memory_mapper.h"
@@ -42,6 +43,7 @@ int main(int argc, char** argv) {
     // Parse command-line arguments
     bool noQemu = false;
     std::string memoryFilePath = "/tmp/haywire-vm-mem";
+    GuestOS guestOsHint = GuestOS::Unknown;
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -51,12 +53,24 @@ int main(int argc, char** argv) {
         } else if (arg == "--memory-file" && i + 1 < argc) {
             memoryFilePath = argv[++i];
             std::cout << "Using memory file: " << memoryFilePath << "\n";
+        } else if (arg == "--guest-os" && i + 1 < argc) {
+            std::string osType = argv[++i];
+            if (osType == "linux") {
+                guestOsHint = GuestOS::Linux;
+                std::cout << "Guest OS hint: Linux\n";
+            } else if (osType == "windows") {
+                guestOsHint = GuestOS::Windows;
+                std::cout << "Guest OS hint: Windows\n";
+            } else {
+                std::cerr << "Unknown guest OS type: " << osType << " (use 'linux' or 'windows')\n";
+            }
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "Haywire - VM Memory Visualizer\n\n";
             std::cout << "Usage: haywire [options]\n\n";
             std::cout << "Options:\n";
             std::cout << "  --no-qemu              Skip QEMU connection (standalone mode)\n";
             std::cout << "  --memory-file <path>   Use specific memory file (default: /tmp/haywire-vm-mem)\n";
+            std::cout << "  --guest-os <type>      Specify guest OS (linux|windows, default: auto-detect)\n";
             std::cout << "  --help, -h             Show this help message\n";
             std::cout << "\nStandalone mode (--no-qemu):\n";
             std::cout << "  - No QEMU/QMP connection required\n";
@@ -126,16 +140,33 @@ int main(int argc, char** argv) {
 
     // Auto-connect to QEMU for memory access (unless --no-qemu)
     bool autoConnected = false;
+    // Calculate arch hint: 1=x86_64 (Windows), 2=ARM64 (Linux), 0=auto
+    int arch_hint = (guestOsHint == GuestOS::Windows) ? 1 : (guestOsHint == GuestOS::Linux) ? 2 : 0;
+
     if (!noQemu) {
         autoConnected = qemu.AutoConnect();
 
         // If connected, initialize memory mapper
         if (autoConnected) {
-            memoryMapper->DiscoverMemoryMap("localhost", 4444);
+            memoryMapper->DiscoverMemoryMap("localhost", 4444, arch_hint);
             memoryMapper->LogRegions();
         }
     } else {
         std::cout << "Skipping QEMU connection (--no-qemu mode)\n";
+        // Still need to initialize memory mapper with defaults for visualization
+        const char* arch_name = (arch_hint == 1) ? "x86_64" : (arch_hint == 2) ? "ARM64" : "auto-detect";
+        std::cout << "Initializing memory mapper with default " << arch_name << " layout\n";
+        memoryMapper->DiscoverMemoryMap("localhost", 4444, arch_hint);  // Will use defaults
+        memoryMapper->LogRegions();
+
+        // Create memory-mapped source for visualization
+        auto mappedSource = std::make_shared<MappedFileMemorySource>();
+        if (mappedSource->OpenFile(memoryFilePath)) {
+            visualizer.SetMemoryDataSource(mappedSource);
+            std::cout << "Memory file mapped for visualization\n";
+        } else {
+            std::cerr << "Warning: Could not memory-map file for visualization\n";
+        }
     }
 
     // Kernel discovery backend (replacing beacon data reading)
@@ -505,7 +536,7 @@ int main(int argc, char** argv) {
     bool show_overview = false;
     // Show connection window to configure memory file and QMP port
     // Only show connection window if not using kernel discovery AND auto-connect failed
-    bool show_connection_window = !useKernelDiscovery && !autoConnected;
+    bool show_connection_window = !noQemu && !useKernelDiscovery && !autoConnected;
     bool show_binary_loader = false;
     std::string binary_file_path;
     BinaryLoader binary_loader;
