@@ -523,19 +523,82 @@ bool QemuConnection::ReadMemoryDirect(uint64_t address, size_t size, std::vector
     return bytesRead == size;
 }
 
+bool QemuConnection::ReadMemoryViaQMP(uint64_t address, size_t size, std::vector<uint8_t>& buffer) {
+    // Use QMP JSON protocol with human-monitor-command
+    // This is more reliable than raw monitor telnet protocol
+
+    if (!connected || qmpSocket < 0) {
+        return false;
+    }
+
+    buffer.resize(size);
+
+    // Build monitor command
+    std::stringstream cmdLine;
+    cmdLine << "xp/" << size << "xb 0x" << std::hex << address;
+
+    // Send via QMP
+    nlohmann::json cmd;
+    cmd["execute"] = "human-monitor-command";
+    cmd["arguments"]["command-line"] = cmdLine.str();
+
+    nlohmann::json response;
+    if (!SendQMPCommand(cmd, response)) {
+        return false;
+    }
+
+    // Parse response
+    if (!response.contains("return") || !response["return"].is_string()) {
+        return false;
+    }
+
+    std::string output = response["return"];
+
+    // Parse hex bytes from output
+    size_t bytesRead = 0;
+    size_t pos = 0;
+
+    while (pos < output.length() && bytesRead < size) {
+        // Look for "0x" pattern
+        size_t hexPos = output.find("0x", pos);
+        if (hexPos == std::string::npos) break;
+
+        // Check if this is an address (has colon after)
+        size_t colonPos = output.find(':', hexPos);
+        if (colonPos != std::string::npos && colonPos < hexPos + 20) {
+            pos = colonPos + 1;
+            continue;
+        }
+
+        // Parse hex byte
+        if (hexPos + 4 <= output.length()) {
+            char hex[3] = {output[hexPos + 2], output[hexPos + 3], 0};
+            char* end;
+            long val = strtol(hex, &end, 16);
+            if (end != hex) {
+                buffer[bytesRead++] = static_cast<uint8_t>(val);
+            }
+        }
+        pos = hexPos + 4;
+    }
+
+    return bytesRead == size;
+}
+
 bool QemuConnection::SendQMPCommand(const nlohmann::json& command, nlohmann::json& response) {
     if (qmpSocket < 0) {
         return false;
     }
-    
+
     std::lock_guard<std::mutex> lock(qmpMutex);
-    
+
     std::string cmdStr = command.dump() + "\n";
     if (send(qmpSocket, cmdStr.c_str(), cmdStr.length(), 0) < 0) {
         return false;
     }
-    
-    char buffer[4096];
+
+    // Use large buffer for page table reads (~30KB for 4KB of data)
+    char buffer[65536];
     int received = recv(qmpSocket, buffer, sizeof(buffer)-1, 0);
     if (received > 0) {
         buffer[received] = '\0';
@@ -546,7 +609,7 @@ bool QemuConnection::SendQMPCommand(const nlohmann::json& command, nlohmann::jso
             return false;
         }
     }
-    
+
     return false;
 }
 

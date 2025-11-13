@@ -10,6 +10,7 @@
 #include <fstream>
 #include <vector>
 #include <map>
+#include <unordered_map>
 #include <set>
 #include <algorithm>
 #include <cstring>
@@ -469,6 +470,13 @@ private:
     std::vector<ProcessInfo> processes;
     KernelInfo kernelInfo;
 
+    // Page table caching (512 entries = 4KB per table)
+    struct PageTable {
+        uint64_t entries[512];
+        bool valid = false;
+    };
+    std::unordered_map<uint64_t, PageTable> pageTableCache;  // Key = base PA (page-aligned)
+
     /**
      * Check if memory location looks like valid EPROCESS structure
      */
@@ -591,23 +599,50 @@ private:
     }
 
     /**
-     * Read physical memory for page tables (ALWAYS use monitor, bypass memory backend!)
+     * Read physical memory for page tables (use QMP JSON protocol with caching)
      * Page tables are NOT in memory-backend-file on Windows!
+     *
+     * Optimization: Cache entire 4KB page tables (512 entries) to reduce QMP overhead
      */
     bool ReadPageTableEntry(uint64_t physAddr, uint8_t* buffer, size_t size) {
-        if (!qmp || !qmp->IsConnected()) {
+        if (!qmp || !qmp->IsQMPConnected()) {
             std::cerr << "[ReadPageTableEntry] QMP not available!" << std::endl;
             return false;
         }
 
-        // CRITICAL: Call ReadMemoryDirect to bypass memory backend
-        // Regular ReadMemory() uses memory file which has garbage for page tables
-        std::vector<uint8_t> vec(size);
-        bool success = qmp->ReadMemoryDirect(physAddr, size, vec);
-        if (success) {
-            memcpy(buffer, vec.data(), size);
+        if (size != 8) {
+            std::cerr << "[ReadPageTableEntry] Only 8-byte reads supported" << std::endl;
+            return false;
         }
-        return success;
+
+        // Calculate page table base and index
+        uint64_t tableBase = physAddr & ~0xFFFULL;  // Page-aligned base
+        size_t index = (physAddr & 0xFFF) / 8;      // Entry index (0-511)
+
+        // Check if we have this page table cached
+        auto it = pageTableCache.find(tableBase);
+        if (it != pageTableCache.end() && it->second.valid) {
+            // Cache hit!
+            memcpy(buffer, &it->second.entries[index], 8);
+            return true;
+        }
+
+        // Cache miss - read entire page table (4KB = 512 entries) in one QMP call
+        std::vector<uint8_t> tableData(4096);
+        bool success = qmp->ReadMemoryViaQMP(tableBase, 4096, tableData);
+
+        if (success) {
+            // Store entire page table in cache
+            PageTable& table = pageTableCache[tableBase];
+            memcpy(table.entries, tableData.data(), 4096);
+            table.valid = true;
+
+            // Return requested entry
+            memcpy(buffer, &table.entries[index], 8);
+            return true;
+        }
+
+        return false;
     }
 
     /**

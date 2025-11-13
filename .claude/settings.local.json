@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wsl bash -c \"dpkg -l | grep python3-venv\")",
+      "Bash(wsl bash -c \"dpkg -l | grep -E ''libcapstone|libgl1|libglfw|libfreetype'' | awk ''{print $2}''\")",
+      "Bash(wsl bash:*)",
+      "Bash(git add:*)",
+      "Bash(cmake --build:*)",
+      "Bash(cmake:*)",
+      "Bash(\"/c/Program Files/Oracle/VirtualBox/VBoxManage.exe\" startvm \"Ubuntu-x86_64-Haywire\" --type headless)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nImplement Windows VAD tree walking for memory region discovery\n\nCompleted VAD (Virtual Address Descriptor) tree walking implementation:\n\nImplementation:\n- ExtractProcessMemoryMap(): Reads VadRoot from EPROCESS and walks AVL tree\n- WalkVADTree(): Recursively walks VAD tree, extracts memory regions  \n- System DTB storage: Stores System process DTB for kernel VA translation\n- ReadMemoryDirect(): Bypass memory backend, use QMP monitor for page tables\n\nKey Discovery - Page Tables NOT in Memory File:\n- Windows page tables are NOT included in memory-backend-file\n- File contains 0xffffffffffffffff at page table locations\n- Must use QMP monitor protocol to read page tables\n- Added ReadPageTableEntry() to force QMP reads\n\nKPTI Workaround:\n- User process DTBs cannot translate kernel VAs (KPTI protection)\n- VAD tree nodes are kernel VAs (0xffff860f...)\n- Solution: Use System process DTB (0x1ae000) for all kernel VA translations\n\nCurrent Status:\n- ✅ VadRoot extraction from EPROCESS working\n- ✅ System DTB storage working  \n- ✅ VAD tree walking logic complete\n- ⏳ Monitor protocol parsing has bug (returns 0x13131313... garbage)\n- ⏳ Need to fix SendMonitorCommand or switch to QMP JSON protocol\n\nNext Steps:\n- Debug monitor text protocol parsing in SendMonitorCommand\n- OR: Implement QMP JSON protocol reads (like Python test)\n- Optimize to minimize QMP overhead\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

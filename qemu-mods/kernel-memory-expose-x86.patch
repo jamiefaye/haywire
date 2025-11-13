@@ -1,0 +1,98 @@
+diff --git a/softmmu/physmem.c b/softmmu/physmem.c
+--- a/softmmu/physmem.c
++++ b/softmmu/physmem.c
+@@ -60,6 +60,15 @@
+ #include "migration/vmstate.h"
+ #include "qemu/range.h"
+
++/* Haywire kernel memory exposure */
++static int haywire_kernel_fd = -1;
++static void *haywire_kernel_map = NULL;
++static size_t haywire_kernel_size = 0;
++#define HAYWIRE_KERNEL_FILE "/tmp/haywire-kernel-mem"
++/* Track kernel memory regions beyond guest RAM */
++#define KERNEL_MEM_START 0x100000000ULL  /* Beyond 5GB guest RAM */
++#define KERNEL_MEM_SIZE  0x100000000ULL  /* 4GB window for kernel structures */
++
+ //#define DEBUG_SUBPAGE
+
+ #if !defined(CONFIG_USER_ONLY)
+@@ -2000,6 +2009,44 @@ static void ram_block_add(RAMBlock *new_block, Error **errp)
+     ram_list.mru_block = NULL;
+     ram_list.version++;
+     qemu_mutex_unlock_ramlist();
++
++    /* Haywire: Expose kernel memory regions to external file */
++    if (new_block->mr && new_block->host) {
++        hwaddr phys_addr = new_block->mr->addr;
++
++        /* Check if this is a kernel memory region (beyond guest RAM) */
++        if (phys_addr >= KERNEL_MEM_START) {
++            /* Initialize kernel memory file if not done yet */
++            if (haywire_kernel_fd < 0) {
++                haywire_kernel_fd = open(HAYWIRE_KERNEL_FILE,
++                                        O_RDWR | O_CREAT | O_TRUNC, 0600);
++                if (haywire_kernel_fd >= 0) {
++                    /* Size the file to hold all kernel regions */
++                    ftruncate(haywire_kernel_fd, KERNEL_MEM_SIZE);
++
++                    /* Map the file */
++                    haywire_kernel_map = mmap(NULL, KERNEL_MEM_SIZE,
++                                             PROT_READ | PROT_WRITE,
++                                             MAP_SHARED, haywire_kernel_fd, 0);
++                    if (haywire_kernel_map == MAP_FAILED) {
++                        haywire_kernel_map = NULL;
++                    } else {
++                        haywire_kernel_size = KERNEL_MEM_SIZE;
++                        fprintf(stderr, "Haywire: Kernel memory file created at %s\n",
++                               HAYWIRE_KERNEL_FILE);
++                    }
++                }
++            }
++
++            /* Copy kernel memory to our file */
++            if (haywire_kernel_map && phys_addr >= KERNEL_MEM_START) {
++                size_t offset = phys_addr - KERNEL_MEM_START;
++                if (offset + new_block->used_length <= haywire_kernel_size) {
++                    memcpy((char*)haywire_kernel_map + offset,
++                          new_block->host, new_block->used_length);
++                    msync(haywire_kernel_map, haywire_kernel_size, MS_ASYNC);
++                }
++            }
++        }
++    }
+
+     cpu_physical_memory_set_dirty_range(new_block->offset,
+                                          new_block->used_length,
+@@ -2500,6 +2547,31 @@ static void invalidate_and_set_dirty(MemoryRegion *mr, hwaddr addr,
+     cpu_physical_memory_set_dirty_range(addr, length, dirty_log_mask);
+ }
+
++/* Haywire: Hook memory writes to update kernel memory file */
++static void haywire_update_kernel_mem(hwaddr addr, const void *buf, hwaddr len)
++{
++    if (haywire_kernel_map && addr >= KERNEL_MEM_START) {
++        size_t offset = addr - KERNEL_MEM_START;
++        if (offset + len <= haywire_kernel_size) {
++            memcpy((char*)haywire_kernel_map + offset, buf, len);
++            /* Sync lazily for performance */
++            if ((random() % 100) == 0) {
++                msync(haywire_kernel_map, haywire_kernel_size, MS_ASYNC);
++            }
++        }
++    }
++}
++
++/* Hook into cpu_physical_memory_write_rom to catch kernel updates */
++void cpu_physical_memory_write_rom(AddressSpace *as, hwaddr addr,
++                                   const void *buf, hwaddr len)
++{
++    /* Original function body here... */
++
++    /* Add Haywire hook */
++    haywire_update_kernel_mem(addr, buf, len);
++}
++
+ void cpu_flush_icache_range(hwaddr start, hwaddr len)
+ {
+     /*
