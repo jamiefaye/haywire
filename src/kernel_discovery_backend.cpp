@@ -7,6 +7,7 @@
 
 #include "kernel_discovery_backend.h"
 #include "memory_types.h"  // For SectionEntry definition
+#include "../include/ikernel_discovery.h"  // For CreateKernelDiscovery factory
 #include <iostream>
 #include <iomanip>
 #include <algorithm>
@@ -26,16 +27,22 @@ KernelDiscoveryBackend::~KernelDiscoveryBackend() {
 
 bool KernelDiscoveryBackend::Initialize(const std::string& memoryPath,
                                         const std::string& qmpHost,
-                                        int qmpPort) {
+                                        int qmpPort,
+                                        GuestOS guestOS) {
     if (initialized) {
         return true;
     }
 
     std::cout << "[KernelDiscovery] Initializing with memory file: " << memoryPath << std::endl;
     std::cout << "[KernelDiscovery] QMP connection: " << qmpHost << ":" << qmpPort << std::endl;
+    std::cout << "[KernelDiscovery] Guest OS: " << (guestOS == GuestOS::Windows ? "Windows" : guestOS == GuestOS::Linux ? "Linux" : "Auto-detect") << std::endl;
 
-    // Initialize kernel discovery with memory file and QMP settings
-    discovery = std::make_unique<KernelDiscovery>(memoryPath);
+    // Create kernel discovery using factory (supports Linux and Windows)
+    discovery = CreateKernelDiscovery(memoryPath, "", guestOS);
+    if (!discovery) {
+        std::cerr << "[KernelDiscovery] Failed to create kernel discovery backend" << std::endl;
+        return false;
+    }
 
     std::cout << "[KernelDiscovery] Calling Initialize()..." << std::endl;
     if (!discovery->Initialize()) {
@@ -317,7 +324,7 @@ bool KernelDiscoveryBackend::ShouldRefresh() {
     return elapsed >= 5;
 }
 
-const KernelDiscovery::ProcessInfo* KernelDiscoveryBackend::GetCurrentProcess() const {
+const IKernelDiscovery::ProcessInfo* KernelDiscoveryBackend::GetCurrentProcess() const {
     if (currentPID == 0) return nullptr;
 
     auto it = pidMap.find(currentPID);

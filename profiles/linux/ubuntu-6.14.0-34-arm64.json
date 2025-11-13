@@ -1,0 +1,68 @@
+{
+  "profile": {
+    "name": "Ubuntu 6.14.0-34 Generic ARM64",
+    "kernel_version": "6.14.0-34-generic",
+    "architecture": "aarch64",
+    "os": "Ubuntu",
+    "os_version": "24.04 LTS",
+    "date_created": "2025-10-24",
+    "verified": true,
+    "source": "pahole /sys/kernel/btf/vmlinux"
+  },
+
+  "offsets": {
+    "task_struct": {
+      "size": 9088,
+      "fields": {
+        "pid": {"offset": 888, "size": 4, "type": "pid_t"},
+        "tgid": {"offset": 892, "size": 4, "type": "pid_t"},
+        "comm": {"offset": 1144, "size": 16, "type": "char[16]"},
+        "mm": {"offset": 1064, "size": 8, "type": "struct mm_struct *"},
+        "tasks": {"offset": 1664, "size": 16, "type": "struct list_head"},
+        "tasks_next": {"offset": 1664, "size": 8, "type": "struct list_head *"},
+        "tasks_prev": {"offset": 1672, "size": 8, "type": "struct list_head *"}
+      }
+    },
+
+    "mm_struct": {
+      "size": 1216,
+      "fields": {
+        "pgd": {"offset": 104, "size": 8, "type": "pgd_t *", "note": "0x68 in hex"},
+        "mm_mt": {"offset": 64, "size": 32, "type": "struct maple_tree", "note": "0x40 in hex"},
+        "mm_users": {"offset": 116, "size": 4, "type": "atomic_t", "note": "0x74 in hex"}
+      }
+    },
+
+    "vm_area_struct": {
+      "size": 200,
+      "fields": {
+        "vm_start": {"offset": 0, "size": 8, "type": "unsigned long"},
+        "vm_end": {"offset": 8, "size": 8, "type": "unsigned long"},
+        "vm_next": {"offset": 16, "size": 8, "type": "struct vm_area_struct *"},
+        "vm_flags": {"offset": 32, "size": 8, "type": "vm_flags_t", "note": "0x20 in hex - changed from 0x50 in kernel 6.14.0-32"},
+        "vm_file": {"offset": 128, "size": 8, "type": "struct file *", "note": "0x80 in hex - changed from 0x90 in kernel 6.14.0-32"}
+      }
+    }
+  },
+
+  "constants": {
+    "TASK_STRUCT_SIZE": 9088,
+    "PAGE_SIZE": 4096,
+    "PAGE_SHIFT": 12,
+    "KERNEL_VA_BASE": "0xffff800000000000",
+    "USER_VA_MAX": "0x0000ffffffffffff"
+  },
+
+  "detection": {
+    "kernel_banner": "Linux version 6.14.0-34-generic",
+    "slab_offsets": [0, 9216, 18432],
+    "page_straddle_offsets": [0, 896, 1792]
+  },
+
+  "notes": [
+    "Offsets are in decimal unless marked with 0x prefix",
+    "vm_flags and vm_file changed between 6.14.0-32 and 6.14.0-34",
+    "maple_tree root is at mm_struct + 0x40 + 0x8 (offset within maple_tree struct)",
+    "Use pahole -C <struct_name> /sys/kernel/btf/vmlinux to verify"
+  ]
+}

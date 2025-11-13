@@ -13,13 +13,8 @@
 #include <string>
 #include <chrono>
 
-// Forward declare to avoid including the whole kernel_discovery.cpp
-namespace Haywire {
-    class KernelDiscovery;
-}
-
-// Include our kernel discovery implementation
-#include "../src/kernel_discovery.cpp"
+// Include IKernelDiscovery interface
+#include "ikernel_discovery.h"
 
 namespace Haywire {
 
@@ -46,10 +41,11 @@ public:
     KernelDiscoveryBackend();
     ~KernelDiscoveryBackend();
 
-    // Initialize with memory file path and QMP settings
+    // Initialize with memory file path, QMP settings, and guest OS hint
     bool Initialize(const std::string& memoryPath = "/tmp/haywire-vm-mem",
                    const std::string& qmpHost = "localhost",
-                   int qmpPort = 4445);
+                   int qmpPort = 4445,
+                   GuestOS guestOS = GuestOS::Unknown);
     void Cleanup();
 
     // Process discovery
@@ -85,14 +81,14 @@ public:
     bool ShouldRefresh();
 
     // Get direct access to kernel discovery
-    KernelDiscovery* GetDiscovery() const { return discovery.get(); }
+    IKernelDiscovery* GetDiscovery() const { return discovery.get(); }
 
-    // Get current process info
-    const KernelDiscovery::ProcessInfo* GetCurrentProcess() const;
+    // Get current process info (from IKernelDiscovery::ProcessInfo)
+    const IKernelDiscovery::ProcessInfo* GetCurrentProcess() const;
 
 private:
-    std::unique_ptr<KernelDiscovery> discovery;
-    std::unordered_map<uint32_t, const KernelDiscovery::ProcessInfo*> pidMap;
+    std::unique_ptr<IKernelDiscovery> discovery;
+    std::unordered_map<uint32_t, const IKernelDiscovery::ProcessInfo*> pidMap;
     uint32_t currentPID;
     bool initialized;
     std::chrono::steady_clock::time_point lastRefreshTime;

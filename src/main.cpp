@@ -200,7 +200,7 @@ int main(int argc, char** argv) {
 
         // Try to initialize kernel discovery with default settings
         // Use QMP port 4445 to get correct swapper PGD
-        if (kernelDiscovery->Initialize(memoryFilePath, "localhost", 4445)) {
+        if (kernelDiscovery->Initialize(memoryFilePath, "localhost", 4445, guestOsHint)) {
             std::cout << "Kernel discovery initialized successfully\n";
             kernelDiscoveryInitialized = true;
 

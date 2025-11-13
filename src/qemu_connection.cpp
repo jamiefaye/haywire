@@ -987,6 +987,88 @@ bool QemuConnection::QueryKernelInfo(int cpuIndex, uint64_t& swapperPgd, uint64_
     return false;
 }
 
+bool QemuConnection::QueryCR3(int cpuIndex, uint64_t& cr3) {
+    if (!connected || qmpSocket < 0) {
+        std::cerr << "[QMP] Not connected - cannot query CR3" << std::endl;
+        return false;
+    }
+
+    // Use human-monitor-command to execute "info registers"
+    nlohmann::json cmd = {
+        {"execute", "human-monitor-command"},
+        {"arguments", {
+            {"command-line", "info registers"}
+        }}
+    };
+
+    nlohmann::json response;
+    if (!SendQMPCommand(cmd, response)) {
+        std::cerr << "[QMP] Failed to send human-monitor-command" << std::endl;
+        return false;
+    }
+
+    // Parse response - should contain register dump as a string
+    if (!response.contains("return")) {
+        std::cerr << "[QMP] No return field in response" << std::endl;
+        return false;
+    }
+
+    std::string registerDump = response["return"];
+
+    // Look for CR3= in the output (x86_64)
+    // Format: "CR0=80050033 CR2=00007ff6a5b2d000 CR3=000000001234000 CR4=00370678"
+    size_t cr3Pos = registerDump.find("CR3=");
+    if (cr3Pos != std::string::npos) {
+        // Extract hex value after "CR3="
+        std::string cr3Str = registerDump.substr(cr3Pos + 4);
+
+        // Find end of hex value (space or newline)
+        size_t endPos = cr3Str.find_first_not_of("0123456789abcdefABCDEF");
+        if (endPos != std::string::npos) {
+            cr3Str = cr3Str.substr(0, endPos);
+        }
+
+        // Parse hex string
+        try {
+            cr3 = std::stoull(cr3Str, nullptr, 16);
+            std::cout << "[QMP] Got CR3 from CPU: 0x" << std::hex << cr3 << std::dec << std::endl;
+            return true;
+        } catch (const std::exception& e) {
+            std::cerr << "[QMP] Failed to parse CR3 value: " << cr3Str << std::endl;
+            return false;
+        }
+    }
+
+    // Look for TTBR1_EL1 in the output (ARM64)
+    size_t ttbr1Pos = registerDump.find("TTBR1_EL1");
+    if (ttbr1Pos != std::string::npos) {
+        // Extract value after "TTBR1_EL1=" or similar
+        std::string ttbr1Str = registerDump.substr(ttbr1Pos);
+        size_t eqPos = ttbr1Str.find('=');
+        if (eqPos != std::string::npos) {
+            ttbr1Str = ttbr1Str.substr(eqPos + 1);
+            size_t endPos = ttbr1Str.find_first_not_of("0123456789abcdefABCDEF");
+            if (endPos != std::string::npos) {
+                ttbr1Str = ttbr1Str.substr(0, endPos);
+            }
+
+            try {
+                cr3 = std::stoull(ttbr1Str, nullptr, 16);
+                // Mask off non-address bits for ARM64
+                cr3 &= 0xFFFFFFFFF000ULL;
+                std::cout << "[QMP] Got TTBR1_EL1 from CPU: 0x" << std::hex << cr3 << std::dec << std::endl;
+                return true;
+            } catch (const std::exception& e) {
+                std::cerr << "[QMP] Failed to parse TTBR1 value: " << ttbr1Str << std::endl;
+                return false;
+            }
+        }
+    }
+
+    std::cerr << "[QMP] Could not find CR3 or TTBR1 in register dump" << std::endl;
+    return false;
+}
+
 bool QemuConnection::TranslateVA2PA(int cpuIndex, uint64_t virtualAddr, uint64_t& physicalAddr) {
     if (!connected || qmpSocket < 0) {
         return false;

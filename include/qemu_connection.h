@@ -81,6 +81,9 @@ public:
     // Query kernel info (swapper PGD, current task, etc.)
     bool QueryKernelInfo(int cpuIndex, uint64_t& swapperPgd, uint64_t& currentTask);
 
+    // Query CPU registers (x86_64: returns CR3, ARM64: returns TTBR0/TTBR1)
+    bool QueryCR3(int cpuIndex, uint64_t& cr3);
+
     // Public for MMapReader
     bool SendQMPCommand(const nlohmann::json& command, nlohmann::json& response);
     

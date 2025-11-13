@@ -134,6 +134,7 @@ add_executable(haywire
     src/memory_file_reader.cpp
     # beacon files completely removed - using memory_file_reader instead
     src/kernel_discovery_backend.cpp
+    src/kernel_discovery_factory.cpp
     # Page database and memory view system
     src/page_database.cpp
     src/memory_view.cpp
