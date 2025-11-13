@@ -64,6 +64,7 @@ public:
     
     bool ReadMemory(uint64_t address, size_t size, std::vector<uint8_t>& buffer);
     bool ReadMemoryMMap(uint64_t address, size_t size, std::vector<uint8_t>& buffer);
+    bool ReadMemoryDirect(uint64_t address, size_t size, std::vector<uint8_t>& buffer);  // Bypass memory backend, use monitor directly
 
     // Test if a memory page contains any non-zero bytes (zero-copy when possible)
     bool TestPageNonZero(uint64_t address, size_t size = 4096);

@@ -99,12 +99,18 @@ public:
         std::cout << "[WindowsKernelDiscovery] Memory file opened: "
                  << (memorySize / (1024*1024)) << " MB" << std::endl;
 
-        // Initialize QMP connection for reading kernel structures outside memory-backend-file
+        // Initialize QMP and Monitor connections for reading kernel structures
         qmp = &QemuConnection::getInstance();
         if (!qmp->ConnectQMP("localhost", 4445)) {
             std::cerr << "[WindowsKernelDiscovery] Warning: QMP connection failed - "
                      << "kernel structure access will be limited" << std::endl;
-            // Don't fail initialization - we can still scan the memory file
+        }
+
+        // CRITICAL: Connect to monitor for page table reads (page tables NOT in memory file!)
+        if (!qmp->ConnectMonitor("localhost", 4444)) {
+            std::cerr << "[WindowsKernelDiscovery] Warning: Monitor connection failed - "
+                     << "page table translation will not work!" << std::endl;
+            // Don't fail - we can still do limited discovery
         }
 
         return true;
@@ -148,6 +154,7 @@ public:
         }
 
         // Extract DTBs from the found processes
+        // CRITICAL: Store System's DTB for VAD tree walking
         std::vector<uint64_t> knownGoodDTBs;
         for (const auto& proc : processes) {
             uint64_t dtb_addr = proc.task_addr + profile.kprocess_directory_table_base;
@@ -160,6 +167,15 @@ public:
                     knownGoodDTBs.push_back(dtb);
                     std::cout << "[WindowsKernelDiscovery] " << proc.comm << " has DTB=0x"
                               << std::hex << dtb << std::dec << std::endl;
+
+                    // Store System's DTB for kernel VA translation (KPTI workaround)
+                    if (proc.pid == 4 && proc.comm == "System") {
+                        kernelInfo.swapper_pgd = dtb;
+                        kernelInfo.init_task = proc.task_addr;
+                        std::cout << "[WindowsKernelDiscovery] ✓ Found System process DTB=0x"
+                                  << std::hex << dtb << " at PA 0x" << proc.task_addr
+                                  << std::dec << std::endl;
+                    }
                 }
             }
         }
@@ -276,9 +292,62 @@ public:
     }
 
     bool ExtractProcessMemoryMap(uint32_t pid) override {
-        // TODO: Implement VAD tree walking
-        std::cout << "[WindowsKernelDiscovery] VAD tree walking not yet implemented" << std::endl;
-        return false;
+        // Find process by PID
+        auto it = std::find_if(processes.begin(), processes.end(),
+            [pid](const ProcessInfo& p) { return p.pid == pid; });
+
+        if (it == processes.end()) {
+            std::cerr << "[WindowsKernelDiscovery] Process PID " << pid << " not found" << std::endl;
+            return false;
+        }
+
+        ProcessInfo& proc = *it;
+        proc.sections.clear();
+
+        // Read VadRoot from EPROCESS
+        uint64_t eprocess_pa = proc.task_addr;
+        uint64_t vadroot_va = 0;
+
+        if (!ReadPhysicalMemory(eprocess_pa + profile.eprocess_vad_root,
+                               reinterpret_cast<uint8_t*>(&vadroot_va), 8)) {
+            std::cerr << "[WindowsKernelDiscovery] Failed to read VadRoot from EPROCESS" << std::endl;
+            return false;
+        }
+
+        std::cout << "[WindowsKernelDiscovery] PID " << pid << " VadRoot VA: 0x"
+                  << std::hex << vadroot_va << std::dec << std::endl;
+
+        // Check if VadRoot is valid
+        if ((vadroot_va >> 48) != 0xffff) {
+            std::cout << "[WindowsKernelDiscovery] VadRoot is not a kernel VA (empty VAD tree)" << std::endl;
+            return false;  // Not kernel VA - likely empty tree
+        }
+
+        if (vadroot_va == 0xffffffffffffffff || vadroot_va == 0) {
+            std::cout << "[WindowsKernelDiscovery] VadRoot is null/sentinel (empty VAD tree)" << std::endl;
+            return false;  // Sentinel/null
+        }
+
+        // CRITICAL: Translate VadRoot VA to PA using System's DTB
+        // User process DTBs cannot translate kernel VAs due to KPTI
+        uint64_t vadroot_pa = TranslateVA(vadroot_va, kernelInfo.swapper_pgd);
+        if (vadroot_pa == 0) {
+            std::cerr << "[WindowsKernelDiscovery] Failed to translate VadRoot VA to PA" << std::endl;
+            std::cerr << "[WindowsKernelDiscovery] Using System DTB: 0x" << std::hex
+                      << kernelInfo.swapper_pgd << std::dec << std::endl;
+            return false;
+        }
+
+        std::cout << "[WindowsKernelDiscovery] VadRoot PA: 0x" << std::hex
+                  << vadroot_pa << std::dec << std::endl;
+
+        // Walk VAD tree recursively
+        WalkVADTree(vadroot_pa, proc.sections);
+
+        std::cout << "[WindowsKernelDiscovery] Found " << proc.sections.size()
+                  << " memory regions for PID " << pid << std::endl;
+
+        return !proc.sections.empty();
     }
 
     void ExtractProcessPGDs() override {
@@ -319,11 +388,11 @@ public:
         uint64_t pt_index = (va >> 12) & 0x1FF;
         uint64_t offset = va & 0xFFF;
 
-        // Read PML4 entry
+        // Read PML4 entry (CRITICAL: Use QMP, not file!)
         uint64_t pml4_addr = (pgdBase & 0x000FFFFFFFFFF000ULL) + (pml4_index * 8);
         uint64_t pml4e;
-        if (!ReadPhysicalMemory(pml4_addr, reinterpret_cast<uint8_t*>(&pml4e), 8)) {
-            std::cerr << " MemoryBackend::Read failed for PML4 entry" << std::endl;
+        if (!ReadPageTableEntry(pml4_addr, reinterpret_cast<uint8_t*>(&pml4e), 8)) {
+            std::cerr << " Failed to read PML4 entry via QMP" << std::endl;
             return 0;
         }
         std::cout << " PML4E=0x" << std::hex << pml4e << std::dec
@@ -333,35 +402,57 @@ public:
         // Read PDPT entry - mask to get physical address (bits 12-51)
         uint64_t pdpt_addr = (pml4e & 0x000FFFFFFFFFF000ULL) + (pdpt_index * 8);
         uint64_t pdpte;
-        if (!ReadPhysicalMemory(pdpt_addr, reinterpret_cast<uint8_t*>(&pdpte), 8)) {
+        if (!ReadPageTableEntry(pdpt_addr, reinterpret_cast<uint8_t*>(&pdpte), 8)) {
+            std::cerr << " Failed to read PDPT via QMP" << std::endl;
             return 0;
         }
+        std::cout << " PDPTE=0x" << std::hex << pdpte << std::dec << std::endl;
+
+        // Validate PDPTE is not garbage (all 1's is invalid)
+        if (pdpte == 0xffffffffffffffff) {
+            std::cerr << " [TranslateVA] PDPTE is invalid (all 1's)" << std::endl;
+            return 0;
+        }
+
+        std::cout << " Present=" << (pdpte & 0x1)
+                  << " Huge=" << ((pdpte & 0x80) ? 1 : 0) << std::endl;
         if (!(pdpte & 0x1)) return 0;  // Not present
         if (pdpte & 0x80) {  // 1GB huge page
-            return (pdpte & 0x000FFFFFC0000000ULL) + (va & 0x3FFFFFFF);
+            uint64_t pa = (pdpte & 0x000FFFFFC0000000ULL) + (va & 0x3FFFFFFF);
+            std::cout << " [TranslateVA] 1GB huge page → PA 0x" << std::hex << pa << std::dec << std::endl;
+            return pa;
         }
 
         // Read PD entry - mask to get physical address (bits 12-51)
         uint64_t pd_addr = (pdpte & 0x000FFFFFFFFFF000ULL) + (pd_index * 8);
         uint64_t pde;
-        if (!ReadPhysicalMemory(pd_addr, reinterpret_cast<uint8_t*>(&pde), 8)) {
+        if (!ReadPageTableEntry(pd_addr, reinterpret_cast<uint8_t*>(&pde), 8)) {
+            std::cerr << " Failed to read PD via QMP" << std::endl;
             return 0;
         }
+        std::cout << " PDE=0x" << std::hex << pde << " Present=" << (pde & 0x1)
+                  << " Huge=" << ((pde & 0x80) ? 1 : 0) << std::dec << std::endl;
         if (!(pde & 0x1)) return 0;  // Not present
         if (pde & 0x80) {  // 2MB huge page
-            return (pde & 0x000FFFFFFFE00000ULL) + (va & 0x1FFFFF);
+            uint64_t pa = (pde & 0x000FFFFFFFE00000ULL) + (va & 0x1FFFFF);
+            std::cout << " [TranslateVA] 2MB huge page → PA 0x" << std::hex << pa << std::dec << std::endl;
+            return pa;
         }
 
         // Read PT entry - mask to get physical address (bits 12-51)
         uint64_t pt_addr = (pde & 0x000FFFFFFFFFF000ULL) + (pt_index * 8);
         uint64_t pte;
-        if (!ReadPhysicalMemory(pt_addr, reinterpret_cast<uint8_t*>(&pte), 8)) {
+        if (!ReadPageTableEntry(pt_addr, reinterpret_cast<uint8_t*>(&pte), 8)) {
+            std::cerr << " Failed to read PT via QMP" << std::endl;
             return 0;
         }
+        std::cout << " PTE=0x" << std::hex << pte << " Present=" << (pte & 0x1) << std::dec << std::endl;
         if (!(pte & 0x1)) return 0;  // Not present
 
         // 4KB page - mask to get physical address (bits 12-51)
-        return (pte & 0x000FFFFFFFFFF000ULL) + offset;
+        uint64_t pa = (pte & 0x000FFFFFFFFFF000ULL) + offset;
+        std::cout << " [TranslateVA] 4KB page → PA 0x" << std::hex << pa << std::dec << std::endl;
+        return pa;
     }
 
     const char* GetOSType() const override { return "Windows"; }
@@ -497,6 +588,26 @@ private:
         }
 
         return false;
+    }
+
+    /**
+     * Read physical memory for page tables (ALWAYS use monitor, bypass memory backend!)
+     * Page tables are NOT in memory-backend-file on Windows!
+     */
+    bool ReadPageTableEntry(uint64_t physAddr, uint8_t* buffer, size_t size) {
+        if (!qmp || !qmp->IsConnected()) {
+            std::cerr << "[ReadPageTableEntry] QMP not available!" << std::endl;
+            return false;
+        }
+
+        // CRITICAL: Call ReadMemoryDirect to bypass memory backend
+        // Regular ReadMemory() uses memory file which has garbage for page tables
+        std::vector<uint8_t> vec(size);
+        bool success = qmp->ReadMemoryDirect(physAddr, size, vec);
+        if (success) {
+            memcpy(buffer, vec.data(), size);
+        }
+        return success;
     }
 
     /**
@@ -775,6 +886,67 @@ private:
         }
 
         return count;
+    }
+
+    /**
+     * Recursively walk VAD tree (AVL tree of memory regions)
+     *
+     * @param vad_pa Physical address of MMVAD node
+     * @param sections Output vector of memory sections
+     */
+    void WalkVADTree(uint64_t vad_pa, std::vector<MemorySection>& sections) {
+        // Read MMVAD_SHORT structure (64 bytes minimum)
+        // Layout: RTL_BALANCED_NODE (24 bytes) + StartingVpn (4) + EndingVpn (4) + ... + VadFlags (at 48)
+        constexpr size_t MMVAD_READ_SIZE = 64;
+        uint8_t vad_data[MMVAD_READ_SIZE];
+
+        if (!ReadPhysicalMemory(vad_pa, vad_data, MMVAD_READ_SIZE)) {
+            std::cerr << "[WalkVADTree] Failed to read VAD at PA 0x" << std::hex << vad_pa << std::dec << std::endl;
+            return;
+        }
+
+        // Extract Left and Right child pointers (offsets 0 and 8 within RTL_BALANCED_NODE)
+        uint64_t left_va = *reinterpret_cast<uint64_t*>(vad_data + 0);
+        uint64_t right_va = *reinterpret_cast<uint64_t*>(vad_data + 8);
+
+        // Extract StartingVpn and EndingVpn (offsets 24 and 28)
+        uint32_t starting_vpn = *reinterpret_cast<uint32_t*>(vad_data + 24);
+        uint32_t ending_vpn = *reinterpret_cast<uint32_t*>(vad_data + 28);
+
+        // Extract VadFlags (offset 48) for protection bits
+        uint32_t vad_flags = *reinterpret_cast<uint32_t*>(vad_data + 48);
+
+        // Convert VPN to virtual address (VPN = VA >> 12)
+        uint64_t start_va = static_cast<uint64_t>(starting_vpn) << 12;
+        uint64_t end_va = ((static_cast<uint64_t>(ending_vpn) + 1) << 12) - 1;
+
+        // Add this VAD's region to sections
+        MemorySection section;
+        section.start = start_va;
+        section.end = end_va;
+        section.flags = vad_flags;
+        section.type = MemorySection::UNKNOWN;  // TODO: Parse VadFlags to determine type
+        section.name = "";  // TODO: Extract filename from MMVAD.Subsection if file-backed
+
+        sections.push_back(section);
+
+        // Recursively walk left child
+        if (left_va != 0 && (left_va >> 48) == 0xffff) {
+            // CRITICAL: Use System DTB for kernel VA translation
+            uint64_t left_pa = TranslateVA(left_va, kernelInfo.swapper_pgd);
+            if (left_pa != 0) {
+                WalkVADTree(left_pa, sections);
+            }
+        }
+
+        // Recursively walk right child
+        if (right_va != 0 && (right_va >> 48) == 0xffff) {
+            // CRITICAL: Use System DTB for kernel VA translation
+            uint64_t right_pa = TranslateVA(right_va, kernelInfo.swapper_pgd);
+            if (right_pa != 0) {
+                WalkVADTree(right_pa, sections);
+            }
+        }
     }
 };
 

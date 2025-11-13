@@ -463,6 +463,66 @@ bool QemuConnection::ReadMemory(uint64_t address, size_t size, std::vector<uint8
     return true;
 }
 
+bool QemuConnection::ReadMemoryDirect(uint64_t address, size_t size, std::vector<uint8_t>& buffer) {
+    // CRITICAL: Bypass memory backend and go straight to monitor protocol
+    // Used for reading page tables which are NOT in memory-backend-file
+
+    if (!connected || monitorSocket < 0) {
+        return false;
+    }
+
+    buffer.resize(size);
+    size_t bytesRead = 0;
+
+    while (bytesRead < size) {
+        size_t chunkSize = std::min(size - bytesRead, size_t(1024));
+
+        std::stringstream cmd;
+        cmd << "xp/" << chunkSize << "xb 0x" << std::hex << (address + bytesRead);
+
+        std::string response;
+        if (!SendMonitorCommand(cmd.str(), response)) {
+            buffer.resize(bytesRead);
+            return bytesRead > 0;
+        }
+
+        // Parse the response for hex bytes
+        size_t pos = 0;
+        while (pos < response.length() && bytesRead < size) {
+            // Look for hex pattern "0x" followed by 2 hex digits
+            size_t hexPos = response.find("0x", pos);
+            if (hexPos == std::string::npos) break;
+
+            // Check if this is an address (has colon after) or a data byte
+            size_t colonPos = response.find(':', hexPos);
+            if (colonPos != std::string::npos && colonPos < hexPos + 20) {
+                // This is an address line, skip to after colon
+                pos = colonPos + 1;
+                continue;
+            }
+
+            // Try to parse as hex byte
+            char hex[3] = {0};
+            if (hexPos + 3 < response.length()) {
+                hex[0] = response[hexPos + 2];
+                hex[1] = response[hexPos + 3];
+                char* end;
+                long val = strtol(hex, &end, 16);
+                if (end != hex) {
+                    buffer[bytesRead++] = static_cast<uint8_t>(val);
+                }
+            }
+            pos = hexPos + 4;
+        }
+
+        if (pos == 0) {
+            break;
+        }
+    }
+
+    return bytesRead == size;
+}
+
 bool QemuConnection::SendQMPCommand(const nlohmann::json& command, nlohmann::json& response) {
     if (qmpSocket < 0) {
         return false;

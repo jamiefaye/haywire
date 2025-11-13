@@ -258,6 +258,18 @@ bool KernelDiscoveryBackend::GetProcessSections(uint32_t pid, std::vector<Sectio
 
     const auto* proc = it->second;
 
+    // If sections haven't been extracted yet, do it now
+    if (proc->sections.empty()) {
+        discovery->ExtractProcessMemoryMap(pid);
+        // Note: proc pointer may be invalidated after ExtractProcessMemoryMap
+        // Re-fetch from map
+        it = pidMap.find(pid);
+        if (it == pidMap.end()) {
+            return false;
+        }
+        proc = it->second;
+    }
+
     for (const auto& sec : proc->sections) {
         SectionEntry entry;
         entry.type = 2;  // ENTRY_SECTION
