@@ -286,10 +286,10 @@ public:
         return kernelInfo;
     }
 
-    // Per-process operations (stub implementations for now)
+    // Per-process operations
     void WalkProcessPageTables(ProcessInfo& proc) override {
-        // TODO: Implement Windows page table walking
-        std::cout << "[WindowsKernelDiscovery] Page table walking not yet implemented" << std::endl;
+        // Call PTE extraction for this process
+        ExtractPTEsForProcess(proc.pid);
     }
 
     bool ExtractProcessMemoryMap(uint32_t pid) override {
@@ -343,6 +343,168 @@ public:
         WalkVADTree(vadroot_pa, proc.sections);
 
         return !proc.sections.empty();
+    }
+
+    /**
+     * Extract PTEs for a process by walking page tables for each VAD region
+     * This populates proc.ptes with individual page mappings
+     */
+    bool ExtractPTEsForProcess(uint32_t pid) {
+        // Find process
+        auto it = std::find_if(processes.begin(), processes.end(),
+            [pid](const ProcessInfo& p) { return p.pid == pid; });
+
+        if (it == processes.end()) {
+            std::cerr << "[WindowsKernelDiscovery] Process PID " << pid << " not found" << std::endl;
+            return false;
+        }
+
+        ProcessInfo& proc = *it;
+
+        if (proc.pgd == 0) {
+            std::cerr << "[WindowsKernelDiscovery] Process PID " << pid << " has no DTB" << std::endl;
+            return false;
+        }
+
+        if (proc.sections.empty()) {
+            std::cerr << "[WindowsKernelDiscovery] Process PID " << pid << " has no VAD regions" << std::endl;
+            return false;
+        }
+
+        proc.ptes.clear();
+
+        std::cout << "[ExtractPTEs] Processing " << proc.sections.size()
+                  << " VAD regions for PID " << pid << std::endl;
+
+        size_t pages_scanned = 0;
+        size_t pages_present = 0;
+
+        // For each VAD region, walk page tables
+        for (const auto& section : proc.sections) {
+            // Sanity check: skip unreasonably large regions (> 1GB)
+            uint64_t region_size = section.end - section.start + 1;
+            if (region_size > (1024ULL * 1024 * 1024)) {
+                std::cout << "  Skipping huge VAD region: 0x" << std::hex << section.start
+                          << " - 0x" << section.end << " (size: " << std::dec
+                          << (region_size / (1024*1024)) << " MB)" << std::endl;
+                continue;
+            }
+
+            // Walk each 4KB page in the region
+            for (uint64_t va = section.start; va < section.end; va += 4096) {
+                pages_scanned++;
+
+                // Extract PTE for this virtual address
+                PTE pte = ExtractPTE(va, proc.pgd);
+
+                if (pte.present) {
+                    proc.ptes.push_back(pte);
+                    pages_present++;
+                }
+
+                // Progress indicator for large regions (every 10000 pages = ~40MB)
+                if (pages_scanned % 10000 == 0) {
+                    std::cout << "  Scanned " << pages_scanned << " pages, found "
+                              << pages_present << " present" << std::endl;
+                }
+
+                // Safety limit: stop if scanning too many pages (> 1 million = 4GB VA)
+                if (pages_scanned > 1000000) {
+                    std::cout << "  WARNING: Reached safety limit of 1M pages scanned" << std::endl;
+                    break;
+                }
+            }
+
+            if (pages_scanned > 1000000) break;  // Break outer loop too
+        }
+
+        std::cout << "[ExtractPTEs] PID " << pid << ": Scanned " << pages_scanned
+                  << " pages, found " << pages_present << " present PTEs" << std::endl;
+
+        return !proc.ptes.empty();
+    }
+
+    /**
+     * Extract a single PTE by walking 4-level page tables
+     * Returns PTE with present=false if page is not mapped
+     */
+    PTE ExtractPTE(uint64_t va, uint64_t pgdBase) {
+        PTE pte;
+        pte.va = va;
+        pte.pa = 0;
+        pte.size = 4096;  // Default to 4KB
+        pte.present = false;
+        pte.writable = false;
+        pte.executable = false;
+
+        // x64 4-level paging: PML4 → PDPT → PD → PT → Physical
+        uint64_t pml4_index = (va >> 39) & 0x1FF;
+        uint64_t pdpt_index = (va >> 30) & 0x1FF;
+        uint64_t pd_index = (va >> 21) & 0x1FF;
+        uint64_t pt_index = (va >> 12) & 0x1FF;
+        uint64_t offset = va & 0xFFF;
+
+        // Read PML4 entry
+        uint64_t pml4_addr = (pgdBase & 0x000FFFFFFFFFF000ULL) + (pml4_index * 8);
+        uint64_t pml4e;
+        if (!ReadPageTableEntry(pml4_addr, reinterpret_cast<uint8_t*>(&pml4e), 8)) {
+            return pte;  // Not present
+        }
+        if (!(pml4e & 0x1)) return pte;  // Not present
+
+        // Read PDPT entry
+        uint64_t pdpt_addr = (pml4e & 0x000FFFFFFFFFF000ULL) + (pdpt_index * 8);
+        uint64_t pdpte;
+        if (!ReadPageTableEntry(pdpt_addr, reinterpret_cast<uint8_t*>(&pdpte), 8)) {
+            return pte;
+        }
+        if (pdpte == 0xffffffffffffffff) return pte;  // Invalid
+        if (!(pdpte & 0x1)) return pte;  // Not present
+
+        // Check for 1GB huge page
+        if (pdpte & 0x80) {
+            pte.pa = (pdpte & 0x000FFFFFC0000000ULL) + (va & 0x3FFFFFFF);
+            pte.size = 1024 * 1024 * 1024;  // 1GB
+            pte.present = true;
+            pte.writable = (pdpte & 0x2) != 0;
+            pte.executable = !(pdpte & 0x8000000000000000ULL);  // NX bit
+            return pte;
+        }
+
+        // Read PD entry
+        uint64_t pd_addr = (pdpte & 0x000FFFFFFFFFF000ULL) + (pd_index * 8);
+        uint64_t pde;
+        if (!ReadPageTableEntry(pd_addr, reinterpret_cast<uint8_t*>(&pde), 8)) {
+            return pte;
+        }
+        if (!(pde & 0x1)) return pte;  // Not present
+
+        // Check for 2MB huge page
+        if (pde & 0x80) {
+            pte.pa = (pde & 0x000FFFFFFFE00000ULL) + (va & 0x1FFFFF);
+            pte.size = 2 * 1024 * 1024;  // 2MB
+            pte.present = true;
+            pte.writable = (pde & 0x2) != 0;
+            pte.executable = !(pde & 0x8000000000000000ULL);  // NX bit
+            return pte;
+        }
+
+        // Read PT entry (4KB page)
+        uint64_t pt_addr = (pde & 0x000FFFFFFFFFF000ULL) + (pt_index * 8);
+        uint64_t pte_entry;
+        if (!ReadPageTableEntry(pt_addr, reinterpret_cast<uint8_t*>(&pte_entry), 8)) {
+            return pte;
+        }
+        if (!(pte_entry & 0x1)) return pte;  // Not present
+
+        // Extract 4KB page information
+        pte.pa = (pte_entry & 0x000FFFFFFFFFF000ULL) + offset;
+        pte.size = 4096;
+        pte.present = true;
+        pte.writable = (pte_entry & 0x2) != 0;
+        pte.executable = !(pte_entry & 0x8000000000000000ULL);  // NX bit
+
+        return pte;
     }
 
     void ExtractProcessPGDs() override {

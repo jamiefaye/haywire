@@ -268,6 +268,17 @@ bool KernelDiscoveryBackend::GetProcessSections(uint32_t pid, std::vector<Sectio
             return false;
         }
         proc = it->second;
+
+        // Also extract PTEs if not done yet
+        if (proc->ptes.empty()) {
+            discovery->WalkProcessPageTables(const_cast<IKernelDiscovery::ProcessInfo&>(*proc));
+            // Re-fetch again in case PTEs modified the process
+            it = pidMap.find(pid);
+            if (it == pidMap.end()) {
+                return false;
+            }
+            proc = it->second;
+        }
     }
 
     for (const auto& sec : proc->sections) {
