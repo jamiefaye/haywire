@@ -339,14 +339,8 @@ public:
             return false;
         }
 
-        std::cout << "[WindowsKernelDiscovery] VadRoot PA: 0x" << std::hex
-                  << vadroot_pa << std::dec << std::endl;
-
         // Walk VAD tree recursively
         WalkVADTree(vadroot_pa, proc.sections);
-
-        std::cout << "[WindowsKernelDiscovery] Found " << proc.sections.size()
-                  << " memory regions for PID " << pid << std::endl;
 
         return !proc.sections.empty();
     }
@@ -932,13 +926,18 @@ private:
     void WalkVADTree(uint64_t vad_pa, std::vector<MemorySection>& sections) {
         // Read MMVAD_SHORT structure (64 bytes minimum)
         // Layout: RTL_BALANCED_NODE (24 bytes) + StartingVpn (4) + EndingVpn (4) + ... + VadFlags (at 48)
+        //
+        // CRITICAL: VAD nodes are kernel structures NOT in memory-backend-file!
+        // Must use QMP to read them (like page tables)
         constexpr size_t MMVAD_READ_SIZE = 64;
-        uint8_t vad_data[MMVAD_READ_SIZE];
+        std::vector<uint8_t> vad_buffer;
 
-        if (!ReadPhysicalMemory(vad_pa, vad_data, MMVAD_READ_SIZE)) {
+        if (!qmp || !qmp->ReadMemoryViaQMP(vad_pa, MMVAD_READ_SIZE, vad_buffer)) {
             std::cerr << "[WalkVADTree] Failed to read VAD at PA 0x" << std::hex << vad_pa << std::dec << std::endl;
             return;
         }
+
+        uint8_t* vad_data = vad_buffer.data();
 
         // Extract Left and Right child pointers (offsets 0 and 8 within RTL_BALANCED_NODE)
         uint64_t left_va = *reinterpret_cast<uint64_t*>(vad_data + 0);
