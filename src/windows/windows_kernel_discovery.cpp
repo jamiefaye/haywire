@@ -378,6 +378,9 @@ public:
 
         size_t pages_scanned = 0;
         size_t pages_present = 0;
+        size_t huge_pages_2mb = 0;
+        size_t huge_pages_1gb = 0;
+        size_t normal_pages_4kb = 0;
 
         // For each VAD region, walk page tables
         for (const auto& section : proc.sections) {
@@ -400,6 +403,15 @@ public:
                 if (pte.present) {
                     proc.ptes.push_back(pte);
                     pages_present++;
+
+                    // Track page sizes
+                    if (pte.size == 1024 * 1024 * 1024) {
+                        huge_pages_1gb++;
+                    } else if (pte.size == 2 * 1024 * 1024) {
+                        huge_pages_2mb++;
+                    } else {
+                        normal_pages_4kb++;
+                    }
                 }
 
                 // Progress indicator for large regions (every 10000 pages = ~40MB)
@@ -420,6 +432,20 @@ public:
 
         std::cout << "[ExtractPTEs] PID " << pid << ": Scanned " << pages_scanned
                   << " pages, found " << pages_present << " present PTEs" << std::endl;
+
+        // Show page size breakdown
+        if (pages_present > 0) {
+            std::cout << "  Page size breakdown:" << std::endl;
+            std::cout << "    4KB pages:  " << normal_pages_4kb << std::endl;
+            std::cout << "    2MB pages:  " << huge_pages_2mb << std::endl;
+            std::cout << "    1GB pages:  " << huge_pages_1gb << std::endl;
+
+            // Calculate actual RAM usage
+            uint64_t ram_bytes = (normal_pages_4kb * 4096ULL) +
+                                 (huge_pages_2mb * 2ULL * 1024 * 1024) +
+                                 (huge_pages_1gb * 1024ULL * 1024 * 1024);
+            std::cout << "    Total RAM:  " << (ram_bytes / (1024 * 1024)) << " MB" << std::endl;
+        }
 
         return !proc.ptes.empty();
     }
@@ -1253,6 +1279,22 @@ private:
         //   Bit 2-4: VadType (0=Private, 1=Mapped, 2=Image/Section)
         //   Bit 5-9: Protection (PAGE_NOACCESS, PAGE_READONLY, etc.)
         uint32_t vad_type = (vad_flags >> 2) & 0x7;  // Extract bits 2-4
+
+        // Debug: Track VAD types (only print for first process to avoid spam)
+        static bool logged_types = false;
+        static int type_counts[8] = {0};
+        type_counts[vad_type]++;
+
+        if (!logged_types && type_counts[0] + type_counts[1] + type_counts[2] + type_counts[3] +
+            type_counts[4] + type_counts[5] + type_counts[6] + type_counts[7] > 100) {
+            std::cout << "[WalkVADTree] VAD type distribution (first 100+ regions):" << std::endl;
+            for (int i = 0; i < 8; i++) {
+                if (type_counts[i] > 0) {
+                    std::cout << "  Type " << i << ": " << type_counts[i] << " regions" << std::endl;
+                }
+            }
+            logged_types = true;
+        }
 
         switch (vad_type) {
             case 0:  // Private memory (heap, stack, anonymous)
