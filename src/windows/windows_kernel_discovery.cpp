@@ -1080,6 +1080,131 @@ private:
     }
 
     /**
+     * Extract filename from a file-backed VAD node
+     * Follows: MMVAD → Subsection → ControlArea → FilePointer → FileName
+     */
+    std::string ExtractVADFilename(uint64_t vad_pa) {
+        // Read full MMVAD structure (128 bytes) to get Subsection pointer
+        constexpr size_t MMVAD_SIZE = 128;
+        std::vector<uint8_t> mmvad_buffer;
+
+        if (!qmp || !qmp->ReadMemoryViaQMP(vad_pa, MMVAD_SIZE, mmvad_buffer)) {
+            return "";
+        }
+
+        // Subsection pointer is at offset 72 in MMVAD
+        uint64_t subsection_va = *reinterpret_cast<uint64_t*>(mmvad_buffer.data() + 72);
+
+        // Validate it's a kernel VA
+        if ((subsection_va >> 48) != 0xffff || subsection_va == 0) {
+            // Silently skip - most VADs don't have file backing
+            return "";  // Not a file-backed VAD
+        }
+
+        // Successfully found subsection VA
+
+        // Translate Subsection VA to PA using System DTB
+        uint64_t subsection_pa = TranslateVA(subsection_va, kernelInfo.swapper_pgd);
+        if (subsection_pa == 0) {
+            std::cerr << "[ExtractVADFilename] Failed to translate Subsection VA" << std::endl;
+            return "";
+        }
+
+        // Read SUBSECTION structure (first 64 bytes)
+        std::vector<uint8_t> subsection_buffer;
+        if (!qmp || !qmp->ReadMemoryViaQMP(subsection_pa, 64, subsection_buffer)) {
+            std::cerr << "[ExtractVADFilename] Failed to read SUBSECTION" << std::endl;
+            return "";
+        }
+
+        // ControlArea pointer is at offset 0 in SUBSECTION
+        uint64_t control_area_va = *reinterpret_cast<uint64_t*>(subsection_buffer.data() + 0);
+        if ((control_area_va >> 48) != 0xffff || control_area_va == 0) {
+            std::cerr << "[ExtractVADFilename] Invalid ControlArea VA: 0x" << std::hex << control_area_va << std::dec << std::endl;
+            return "";
+        }
+
+        std::cout << "[ExtractVADFilename]   ControlArea VA: 0x" << std::hex << control_area_va << std::dec << std::endl;
+
+        // Translate ControlArea VA to PA
+        uint64_t control_area_pa = TranslateVA(control_area_va, kernelInfo.swapper_pgd);
+        if (control_area_pa == 0) {
+            std::cerr << "[ExtractVADFilename] Failed to translate ControlArea VA" << std::endl;
+            return "";
+        }
+
+        // Read CONTROL_AREA structure (first 128 bytes)
+        std::vector<uint8_t> control_area_buffer;
+        if (!qmp || !qmp->ReadMemoryViaQMP(control_area_pa, 128, control_area_buffer)) {
+            std::cerr << "[ExtractVADFilename] Failed to read CONTROL_AREA" << std::endl;
+            return "";
+        }
+
+        // FilePointer is at offset 64 in CONTROL_AREA
+        uint64_t file_object_va_raw = *reinterpret_cast<uint64_t*>(control_area_buffer.data() + 64);
+
+        // Windows often stores flags/refcounts in lower bits of pointers
+        // Mask off lower 4 bits to get actual pointer
+        uint64_t file_object_va = file_object_va_raw & ~0xFULL;
+
+        if ((file_object_va >> 48) != 0xffff || file_object_va == 0) {
+            // Silently skip - many VADs don't have FILE_OBJECT (e.g., private memory)
+            return "";
+        }
+
+        std::cout << "[ExtractVADFilename]     FileObject VA: 0x" << std::hex << file_object_va
+                  << " (raw: 0x" << file_object_va_raw << ")" << std::dec << std::endl;
+
+        // Translate FILE_OBJECT VA to PA
+        uint64_t file_object_pa = TranslateVA(file_object_va, kernelInfo.swapper_pgd);
+        if (file_object_pa == 0) return "";
+
+        // Read FILE_OBJECT structure (first 128 bytes)
+        std::vector<uint8_t> file_object_buffer;
+        if (!qmp || !qmp->ReadMemoryViaQMP(file_object_pa, 128, file_object_buffer)) {
+            return "";
+        }
+
+        // FileName is a UNICODE_STRING at offset 88 in FILE_OBJECT
+        // UNICODE_STRING: Length (2), MaximumLength (2), padding (4), Buffer pointer (8)
+        uint16_t length = *reinterpret_cast<uint16_t*>(file_object_buffer.data() + 88);
+        uint64_t buffer_va = *reinterpret_cast<uint64_t*>(file_object_buffer.data() + 96);
+
+        if (length == 0 || length > 512 || (buffer_va >> 48) != 0xffff) {
+            return "";  // Invalid
+        }
+
+        // Translate filename buffer VA to PA
+        uint64_t buffer_pa = TranslateVA(buffer_va, kernelInfo.swapper_pgd);
+        if (buffer_pa == 0) return "";
+
+        // Read Unicode filename
+        std::vector<uint8_t> filename_buffer;
+        if (!qmp || !qmp->ReadMemoryViaQMP(buffer_pa, length, filename_buffer)) {
+            return "";
+        }
+
+        // Convert Unicode (UTF-16LE) to ASCII
+        std::string filename;
+        for (size_t i = 0; i + 1 < filename_buffer.size(); i += 2) {
+            wchar_t wc = filename_buffer[i] | (filename_buffer[i+1] << 8);
+            if (wc < 128 && wc != 0) {  // Simple ASCII conversion
+                filename += static_cast<char>(wc);
+            } else if (wc == 0) {
+                break;  // Null terminator
+            }
+        }
+
+        // Extract just the filename from full path
+        size_t last_slash = filename.find_last_of("\\/");
+        if (last_slash != std::string::npos) {
+            filename = filename.substr(last_slash + 1);
+        }
+
+        return filename;
+    }
+
+    /**
      * Recursively walk VAD tree (AVL tree of memory regions)
      *
      * @param vad_pa Physical address of MMVAD node
@@ -1121,8 +1246,38 @@ private:
         section.start = start_va;
         section.end = end_va;
         section.flags = vad_flags;
-        section.type = MemorySection::UNKNOWN;  // TODO: Parse VadFlags to determine type
-        section.name = "";  // TODO: Extract filename from MMVAD.Subsection if file-backed
+
+        // Parse VadFlags to determine type
+        // VadFlags bits (Windows kernel):
+        //   Bit 0-1: MemCommit (0=NoCommit, 1=Committed)
+        //   Bit 2-4: VadType (0=Private, 1=Mapped, 2=Image/Section)
+        //   Bit 5-9: Protection (PAGE_NOACCESS, PAGE_READONLY, etc.)
+        uint32_t vad_type = (vad_flags >> 2) & 0x7;  // Extract bits 2-4
+
+        switch (vad_type) {
+            case 0:  // Private memory (heap, stack, anonymous)
+                section.type = MemorySection::ANONYMOUS;
+                section.name = "[private]";
+                break;
+            case 1:  // Mapped file (data file, shared memory)
+                section.type = MemorySection::FILE_BACKED;
+                section.name = ExtractVADFilename(vad_pa);
+                if (section.name.empty()) {
+                    section.name = "[mapped]";
+                }
+                break;
+            case 2:  // Image/Section (DLL, EXE)
+                section.type = MemorySection::SHARED_LIB;  // Most images are DLLs
+                section.name = ExtractVADFilename(vad_pa);
+                if (section.name.empty()) {
+                    section.name = "[image]";
+                }
+                break;
+            default:
+                section.type = MemorySection::UNKNOWN;
+                section.name = "[unknown]";
+                break;
+        }
 
         sections.push_back(section);
 
