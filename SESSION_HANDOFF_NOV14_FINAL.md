@@ -1,5 +1,7 @@
 # Session Handoff - November 14, 2025 - Windows Support Complete + Next Steps
 
+⚠️ **OUTDATED**: The memory optimization plan in this document is based on incorrect assumptions. See `SESSION_HANDOFF_NOV17_2025_MEMORY_MAPPING.md` for corrections. Page tables/VAD nodes ARE accessible via mmap - we just needed to use `ReadMemory()` instead of `ReadMemoryViaQMP()`.
+
 ## Session Overview
 
 Successfully completed Windows VAD tree walking, PTE extraction, and investigated the "missing bitmap" mystery. Identified critical performance optimization opportunity for next week.

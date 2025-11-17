@@ -809,9 +809,9 @@ private:
             return true;
         }
 
-        // Cache miss - read entire page table (4KB = 512 entries) in one QMP call
+        // Cache miss - read entire page table (4KB = 512 entries), try mmap first
         std::vector<uint8_t> tableData(4096);
-        bool success = qmp->ReadMemoryViaQMP(tableBase, 4096, tableData);
+        bool success = qmp->ReadMemory(tableBase, 4096, tableData);
 
         if (success) {
             // Store entire page table in cache
@@ -1114,7 +1114,7 @@ private:
         constexpr size_t MMVAD_SIZE = 128;
         std::vector<uint8_t> mmvad_buffer;
 
-        if (!qmp || !qmp->ReadMemoryViaQMP(vad_pa, MMVAD_SIZE, mmvad_buffer)) {
+        if (!qmp || !qmp->ReadMemory(vad_pa, MMVAD_SIZE, mmvad_buffer)) {
             return "";
         }
 
@@ -1138,7 +1138,7 @@ private:
 
         // Read SUBSECTION structure (first 64 bytes)
         std::vector<uint8_t> subsection_buffer;
-        if (!qmp || !qmp->ReadMemoryViaQMP(subsection_pa, 64, subsection_buffer)) {
+        if (!qmp || !qmp->ReadMemory(subsection_pa, 64, subsection_buffer)) {
             std::cerr << "[ExtractVADFilename] Failed to read SUBSECTION" << std::endl;
             return "";
         }
@@ -1161,7 +1161,7 @@ private:
 
         // Read CONTROL_AREA structure (first 128 bytes)
         std::vector<uint8_t> control_area_buffer;
-        if (!qmp || !qmp->ReadMemoryViaQMP(control_area_pa, 128, control_area_buffer)) {
+        if (!qmp || !qmp->ReadMemory(control_area_pa, 128, control_area_buffer)) {
             std::cerr << "[ExtractVADFilename] Failed to read CONTROL_AREA" << std::endl;
             return "";
         }
@@ -1187,7 +1187,7 @@ private:
 
         // Read FILE_OBJECT structure (first 128 bytes)
         std::vector<uint8_t> file_object_buffer;
-        if (!qmp || !qmp->ReadMemoryViaQMP(file_object_pa, 128, file_object_buffer)) {
+        if (!qmp || !qmp->ReadMemory(file_object_pa, 128, file_object_buffer)) {
             return "";
         }
 
@@ -1206,7 +1206,7 @@ private:
 
         // Read Unicode filename
         std::vector<uint8_t> filename_buffer;
-        if (!qmp || !qmp->ReadMemoryViaQMP(buffer_pa, length, filename_buffer)) {
+        if (!qmp || !qmp->ReadMemory(buffer_pa, length, filename_buffer)) {
             return "";
         }
 
@@ -1240,12 +1240,11 @@ private:
         // Read MMVAD_SHORT structure (64 bytes minimum)
         // Layout: RTL_BALANCED_NODE (24 bytes) + StartingVpn (4) + EndingVpn (4) + ... + VadFlags (at 48)
         //
-        // CRITICAL: VAD nodes are kernel structures NOT in memory-backend-file!
-        // Must use QMP to read them (like page tables)
+        // With 12GB memory-backend-file, try mmap first before QMP fallback
         constexpr size_t MMVAD_READ_SIZE = 64;
         std::vector<uint8_t> vad_buffer;
 
-        if (!qmp || !qmp->ReadMemoryViaQMP(vad_pa, MMVAD_READ_SIZE, vad_buffer)) {
+        if (!qmp || !qmp->ReadMemory(vad_pa, MMVAD_READ_SIZE, vad_buffer)) {
             std::cerr << "[WalkVADTree] Failed to read VAD at PA 0x" << std::hex << vad_pa << std::dec << std::endl;
             return;
         }

@@ -8,26 +8,52 @@ Haywire is a VM memory introspection tool that bypasses QEMU's memory isolation 
 
 ## Key Technical Context
 
-### Memory Protection Discovery
-- QEMU intentionally separates guest RAM from kernel structures
-- Kernel page tables and task_structs are allocated beyond memory-backend-file boundaries
-- This is a security feature, not a bug - it prevents casual host-level kernel inspection
-- We bypass this using QMP commands with cpu_physical_memory_read()
+### Memory Access: The Truth About memory-backend-file
+
+**CRITICAL UNDERSTANDING** (discovered 2025-11-17 after 3 platform iterations):
+
+The memory-backend-file contains **ALL guest RAM**, including kernel structures like page tables and VAD nodes. Previous documentation incorrectly stated these were "outside" the file - this was wrong!
+
+**How QEMU Maps RAM to the File:**
+
+QEMU's memory-backend-file backs the entire guest RAM, but guest physical addresses may be non-contiguous due to architectural features (PCI holes, RAM base offsets). You need the correct mapping formula:
+
+#### ARM64 (Linux):
+```
+Guest RAM starts at: 0x40000000 (not 0x0)
+file_offset = guest_pa - 0x40000000
+```
+
+Example: Kernel structure at PA 0x1b4dbf000 (6.8GB) → File offset 0x174dbf000 (5.8GB) ✓
+
+#### x86_64 (Windows/Linux):
+```
+RAM split around PCI MMIO hole (2GB-4GB):
+  0x00000000 - 0x7FFFFFFF   (0-2GB)   → file[0x00000000 - 0x7FFFFFFF]
+  0x100000000 - 0x27FFFFFFF (4GB-10GB) → file[0x80000000 - 0x1FFFFFFFF]
+
+Mapping formula:
+if (guest_pa < 0x80000000)
+    file_offset = guest_pa
+else if (guest_pa >= 0x100000000)
+    file_offset = guest_pa - 0x80000000  // Subtract 2GB PCI hole
+```
+
+Example: Page table at PA 0x25f000000 (9.75GB) → File offset 0x1df000000 (7.47GB) ✓
+
+**Verified empirically**: Data read from file matches QMP `xp` command exactly.
 
 ### Memory Access Methods
+
 - **Primary**: Memory-mapped file with MAP_SHARED (`/tmp/haywire-vm-mem`)
+  - Contains ALL guest RAM after applying platform-specific offset mapping
   - Provides instant access to live QEMU memory updates
   - Critical: Must use MAP_SHARED, not MAP_PRIVATE (which creates static snapshot)
-  - Used for display, change detection, and all performance-critical paths
-- **Secondary**: QMP commands for kernel structures outside RAM bounds
-  - Only needed for memory beyond memory-backend-file boundaries
-  - Used sparingly due to performance overhead
+  - Used for ALL memory access (kernel structures, user pages, everything)
 
-### Important Memory Addresses (ARM64 Ubuntu)
-- Guest RAM: 0x40000000 to configured size (2GB/4GB/6GB)
-- Kernel structures with highmem=on: ~0x1b4dbf000 (6.8GB)
-- Kernel structures with highmem=off: ~0xb11bf000 (2.77GB)
-- Both are outside memory-backend-file scope
+- **QMP fallback**: Only for addresses outside actual guest RAM
+  - Should rarely be needed in practice
+  - Code should try mmap first via `ReadMemory()`, not `ReadMemoryViaQMP()` directly
 
 ## Project Structure
 
