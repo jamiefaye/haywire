@@ -3237,7 +3237,7 @@ void MemoryVisualizer::HandleInput() {
                 std::cerr << "VIEWPORT CLAMPED TO 0 (was trying " << newAddress << ")" << std::endl;
                 newAddress = 0;
             }
-            if (newAddress > 0x200000000ULL) newAddress = 0x200000000ULL;  // Cap at 8GB
+            if (newAddress > 0x300000000ULL) newAddress = 0x300000000ULL;  // Cap at 12GB
 
             // Align to stride boundary to prevent horizontal jiggling
             uint64_t strideBytes = viewport.stride * viewport.format.bytesPerPixel;
@@ -4065,8 +4065,8 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
     }
 
     // Physical address mode - use QemuConnection like the display code does
-    // We'll scan up to 8GB of physical memory
-    const uint64_t maxAddress = 8ULL * 1024 * 1024 * 1024;  // 8GB limit
+    // We'll scan up to 12GB of physical memory (expanded for Windows page tables/VAD nodes)
+    const uint64_t maxAddress = 12ULL * 1024 * 1024 * 1024;  // 12GB limit
 
     // Start from next/previous page relative to current position
     uint64_t currentPage = (viewport.baseAddress / pageSize) * pageSize;
