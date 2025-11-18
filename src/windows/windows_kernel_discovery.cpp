@@ -286,10 +286,10 @@ public:
         return kernelInfo;
     }
 
-    // Per-process operations
+    // Per-process operations (stub implementations for now)
     void WalkProcessPageTables(ProcessInfo& proc) override {
-        // Call PTE extraction for this process
-        ExtractPTEsForProcess(proc.pid);
+        // TODO: Implement Windows page table walking
+        std::cout << "[WindowsKernelDiscovery] Page table walking not yet implemented" << std::endl;
     }
 
     bool ExtractProcessMemoryMap(uint32_t pid) override {
@@ -342,195 +342,14 @@ public:
         // Walk VAD tree recursively
         WalkVADTree(vadroot_pa, proc.sections);
 
+        // Extract PTEs for each memory section
+        if (!proc.sections.empty()) {
+            std::cout << "[WindowsKernelDiscovery] Extracting PTEs for " << proc.sections.size() << " sections..." << std::endl;
+            ExtractPTEsForProcess(proc);
+            std::cout << "[WindowsKernelDiscovery] Extracted " << proc.ptes.size() << " PTEs" << std::endl;
+        }
+
         return !proc.sections.empty();
-    }
-
-    /**
-     * Extract PTEs for a process by walking page tables for each VAD region
-     * This populates proc.ptes with individual page mappings
-     */
-    bool ExtractPTEsForProcess(uint32_t pid) {
-        // Find process
-        auto it = std::find_if(processes.begin(), processes.end(),
-            [pid](const ProcessInfo& p) { return p.pid == pid; });
-
-        if (it == processes.end()) {
-            std::cerr << "[WindowsKernelDiscovery] Process PID " << pid << " not found" << std::endl;
-            return false;
-        }
-
-        ProcessInfo& proc = *it;
-
-        if (proc.pgd == 0) {
-            std::cerr << "[WindowsKernelDiscovery] Process PID " << pid << " has no DTB" << std::endl;
-            return false;
-        }
-
-        if (proc.sections.empty()) {
-            std::cerr << "[WindowsKernelDiscovery] Process PID " << pid << " has no VAD regions" << std::endl;
-            return false;
-        }
-
-        proc.ptes.clear();
-
-        std::cout << "[ExtractPTEs] Processing " << proc.sections.size()
-                  << " VAD regions for PID " << pid << std::endl;
-
-        size_t pages_scanned = 0;
-        size_t pages_present = 0;
-        size_t huge_pages_2mb = 0;
-        size_t huge_pages_1gb = 0;
-        size_t normal_pages_4kb = 0;
-
-        // For each VAD region, walk page tables
-        for (const auto& section : proc.sections) {
-            // Sanity check: skip unreasonably large regions (> 1GB)
-            uint64_t region_size = section.end - section.start + 1;
-            if (region_size > (1024ULL * 1024 * 1024)) {
-                std::cout << "  Skipping huge VAD region: 0x" << std::hex << section.start
-                          << " - 0x" << section.end << " (size: " << std::dec
-                          << (region_size / (1024*1024)) << " MB)" << std::endl;
-                continue;
-            }
-
-            // Walk each 4KB page in the region
-            for (uint64_t va = section.start; va < section.end; va += 4096) {
-                pages_scanned++;
-
-                // Extract PTE for this virtual address
-                PTE pte = ExtractPTE(va, proc.pgd);
-
-                if (pte.present) {
-                    proc.ptes.push_back(pte);
-                    pages_present++;
-
-                    // Track page sizes
-                    if (pte.size == 1024 * 1024 * 1024) {
-                        huge_pages_1gb++;
-                    } else if (pte.size == 2 * 1024 * 1024) {
-                        huge_pages_2mb++;
-                    } else {
-                        normal_pages_4kb++;
-                    }
-                }
-
-                // Progress indicator for large regions (every 10000 pages = ~40MB)
-                if (pages_scanned % 10000 == 0) {
-                    std::cout << "  Scanned " << pages_scanned << " pages, found "
-                              << pages_present << " present" << std::endl;
-                }
-
-                // Safety limit: stop if scanning too many pages (> 1 million = 4GB VA)
-                if (pages_scanned > 1000000) {
-                    std::cout << "  WARNING: Reached safety limit of 1M pages scanned" << std::endl;
-                    break;
-                }
-            }
-
-            if (pages_scanned > 1000000) break;  // Break outer loop too
-        }
-
-        std::cout << "[ExtractPTEs] PID " << pid << ": Scanned " << pages_scanned
-                  << " pages, found " << pages_present << " present PTEs" << std::endl;
-
-        // Show page size breakdown
-        if (pages_present > 0) {
-            std::cout << "  Page size breakdown:" << std::endl;
-            std::cout << "    4KB pages:  " << normal_pages_4kb << std::endl;
-            std::cout << "    2MB pages:  " << huge_pages_2mb << std::endl;
-            std::cout << "    1GB pages:  " << huge_pages_1gb << std::endl;
-
-            // Calculate actual RAM usage
-            uint64_t ram_bytes = (normal_pages_4kb * 4096ULL) +
-                                 (huge_pages_2mb * 2ULL * 1024 * 1024) +
-                                 (huge_pages_1gb * 1024ULL * 1024 * 1024);
-            std::cout << "    Total RAM:  " << (ram_bytes / (1024 * 1024)) << " MB" << std::endl;
-        }
-
-        return !proc.ptes.empty();
-    }
-
-    /**
-     * Extract a single PTE by walking 4-level page tables
-     * Returns PTE with present=false if page is not mapped
-     */
-    PTE ExtractPTE(uint64_t va, uint64_t pgdBase) {
-        PTE pte;
-        pte.va = va;
-        pte.pa = 0;
-        pte.size = 4096;  // Default to 4KB
-        pte.present = false;
-        pte.writable = false;
-        pte.executable = false;
-
-        // x64 4-level paging: PML4 → PDPT → PD → PT → Physical
-        uint64_t pml4_index = (va >> 39) & 0x1FF;
-        uint64_t pdpt_index = (va >> 30) & 0x1FF;
-        uint64_t pd_index = (va >> 21) & 0x1FF;
-        uint64_t pt_index = (va >> 12) & 0x1FF;
-        uint64_t offset = va & 0xFFF;
-
-        // Read PML4 entry
-        uint64_t pml4_addr = (pgdBase & 0x000FFFFFFFFFF000ULL) + (pml4_index * 8);
-        uint64_t pml4e;
-        if (!ReadPageTableEntry(pml4_addr, reinterpret_cast<uint8_t*>(&pml4e), 8)) {
-            return pte;  // Not present
-        }
-        if (!(pml4e & 0x1)) return pte;  // Not present
-
-        // Read PDPT entry
-        uint64_t pdpt_addr = (pml4e & 0x000FFFFFFFFFF000ULL) + (pdpt_index * 8);
-        uint64_t pdpte;
-        if (!ReadPageTableEntry(pdpt_addr, reinterpret_cast<uint8_t*>(&pdpte), 8)) {
-            return pte;
-        }
-        if (pdpte == 0xffffffffffffffff) return pte;  // Invalid
-        if (!(pdpte & 0x1)) return pte;  // Not present
-
-        // Check for 1GB huge page
-        if (pdpte & 0x80) {
-            pte.pa = (pdpte & 0x000FFFFFC0000000ULL) + (va & 0x3FFFFFFF);
-            pte.size = 1024 * 1024 * 1024;  // 1GB
-            pte.present = true;
-            pte.writable = (pdpte & 0x2) != 0;
-            pte.executable = !(pdpte & 0x8000000000000000ULL);  // NX bit
-            return pte;
-        }
-
-        // Read PD entry
-        uint64_t pd_addr = (pdpte & 0x000FFFFFFFFFF000ULL) + (pd_index * 8);
-        uint64_t pde;
-        if (!ReadPageTableEntry(pd_addr, reinterpret_cast<uint8_t*>(&pde), 8)) {
-            return pte;
-        }
-        if (!(pde & 0x1)) return pte;  // Not present
-
-        // Check for 2MB huge page
-        if (pde & 0x80) {
-            pte.pa = (pde & 0x000FFFFFFFE00000ULL) + (va & 0x1FFFFF);
-            pte.size = 2 * 1024 * 1024;  // 2MB
-            pte.present = true;
-            pte.writable = (pde & 0x2) != 0;
-            pte.executable = !(pde & 0x8000000000000000ULL);  // NX bit
-            return pte;
-        }
-
-        // Read PT entry (4KB page)
-        uint64_t pt_addr = (pde & 0x000FFFFFFFFFF000ULL) + (pt_index * 8);
-        uint64_t pte_entry;
-        if (!ReadPageTableEntry(pt_addr, reinterpret_cast<uint8_t*>(&pte_entry), 8)) {
-            return pte;
-        }
-        if (!(pte_entry & 0x1)) return pte;  // Not present
-
-        // Extract 4KB page information
-        pte.pa = (pte_entry & 0x000FFFFFFFFFF000ULL) + offset;
-        pte.size = 4096;
-        pte.present = true;
-        pte.writable = (pte_entry & 0x2) != 0;
-        pte.executable = !(pte_entry & 0x8000000000000000ULL);  // NX bit
-
-        return pte;
     }
 
     void ExtractProcessPGDs() override {
@@ -565,9 +384,10 @@ public:
         uint64_t pdpt_index = (va >> 30) & 0x1FF;
         uint64_t pd_index = (va >> 21) & 0x1FF;
 
-        std::cout << "[TranslateVA] VA=0x" << std::hex << va
-                  << " PGD=0x" << pgdBase
-                  << " PML4_idx=" << pml4_index << std::dec << std::endl;
+        // Debug output disabled to avoid flooding console during PTE extraction
+        // std::cout << "[TranslateVA] VA=0x" << std::hex << va
+        //           << " PGD=0x" << pgdBase
+        //           << " PML4_idx=" << pml4_index << std::dec << std::endl;
         uint64_t pt_index = (va >> 12) & 0x1FF;
         uint64_t offset = va & 0xFFF;
 
@@ -578,31 +398,31 @@ public:
             std::cerr << " Failed to read PML4 entry via QMP" << std::endl;
             return 0;
         }
-        std::cout << " PML4E=0x" << std::hex << pml4e << std::dec
-                  << " Present=" << (pml4e & 0x1) << std::endl;
+        // std::cout << " PML4E=0x" << std::hex << pml4e << std::dec
+        //           << " Present=" << (pml4e & 0x1) << std::endl;
         if (!(pml4e & 0x1)) return 0;  // Not present
 
         // Read PDPT entry - mask to get physical address (bits 12-51)
         uint64_t pdpt_addr = (pml4e & 0x000FFFFFFFFFF000ULL) + (pdpt_index * 8);
         uint64_t pdpte;
         if (!ReadPageTableEntry(pdpt_addr, reinterpret_cast<uint8_t*>(&pdpte), 8)) {
-            std::cerr << " Failed to read PDPT via QMP" << std::endl;
+            // std::cerr << " Failed to read PDPT via QMP" << std::endl;
             return 0;
         }
-        std::cout << " PDPTE=0x" << std::hex << pdpte << std::dec << std::endl;
+        // std::cout << " PDPTE=0x" << std::hex << pdpte << std::dec << std::endl;
 
         // Validate PDPTE is not garbage (all 1's is invalid)
         if (pdpte == 0xffffffffffffffff) {
-            std::cerr << " [TranslateVA] PDPTE is invalid (all 1's)" << std::endl;
+            // std::cerr << " [TranslateVA] PDPTE is invalid (all 1's)" << std::endl;
             return 0;
         }
 
-        std::cout << " Present=" << (pdpte & 0x1)
-                  << " Huge=" << ((pdpte & 0x80) ? 1 : 0) << std::endl;
+        // std::cout << " Present=" << (pdpte & 0x1)
+        //           << " Huge=" << ((pdpte & 0x80) ? 1 : 0) << std::endl;
         if (!(pdpte & 0x1)) return 0;  // Not present
         if (pdpte & 0x80) {  // 1GB huge page
             uint64_t pa = (pdpte & 0x000FFFFFC0000000ULL) + (va & 0x3FFFFFFF);
-            std::cout << " [TranslateVA] 1GB huge page → PA 0x" << std::hex << pa << std::dec << std::endl;
+            // std::cout << " [TranslateVA] 1GB huge page → PA 0x" << std::hex << pa << std::dec << std::endl;
             return pa;
         }
 
@@ -610,15 +430,15 @@ public:
         uint64_t pd_addr = (pdpte & 0x000FFFFFFFFFF000ULL) + (pd_index * 8);
         uint64_t pde;
         if (!ReadPageTableEntry(pd_addr, reinterpret_cast<uint8_t*>(&pde), 8)) {
-            std::cerr << " Failed to read PD via QMP" << std::endl;
+            // std::cerr << " Failed to read PD via QMP" << std::endl;
             return 0;
         }
-        std::cout << " PDE=0x" << std::hex << pde << " Present=" << (pde & 0x1)
-                  << " Huge=" << ((pde & 0x80) ? 1 : 0) << std::dec << std::endl;
+        // std::cout << " PDE=0x" << std::hex << pde << " Present=" << (pde & 0x1)
+        //           << " Huge=" << ((pde & 0x80) ? 1 : 0) << std::dec << std::endl;
         if (!(pde & 0x1)) return 0;  // Not present
         if (pde & 0x80) {  // 2MB huge page
             uint64_t pa = (pde & 0x000FFFFFFFE00000ULL) + (va & 0x1FFFFF);
-            std::cout << " [TranslateVA] 2MB huge page → PA 0x" << std::hex << pa << std::dec << std::endl;
+            // std::cout << " [TranslateVA] 2MB huge page → PA 0x" << std::hex << pa << std::dec << std::endl;
             return pa;
         }
 
@@ -626,15 +446,15 @@ public:
         uint64_t pt_addr = (pde & 0x000FFFFFFFFFF000ULL) + (pt_index * 8);
         uint64_t pte;
         if (!ReadPageTableEntry(pt_addr, reinterpret_cast<uint8_t*>(&pte), 8)) {
-            std::cerr << " Failed to read PT via QMP" << std::endl;
+            // std::cerr << " Failed to read PT via QMP" << std::endl;
             return 0;
         }
-        std::cout << " PTE=0x" << std::hex << pte << " Present=" << (pte & 0x1) << std::dec << std::endl;
+        // std::cout << " PTE=0x" << std::hex << pte << " Present=" << (pte & 0x1) << std::dec << std::endl;
         if (!(pte & 0x1)) return 0;  // Not present
 
         // 4KB page - mask to get physical address (bits 12-51)
         uint64_t pa = (pte & 0x000FFFFFFFFFF000ULL) + offset;
-        std::cout << " [TranslateVA] 4KB page → PA 0x" << std::hex << pa << std::dec << std::endl;
+        // std::cout << " [TranslateVA] 4KB page → PA 0x" << std::hex << pa << std::dec << std::endl;
         return pa;
     }
 
@@ -665,7 +485,10 @@ private:
     bool IsValidEPROCESS(const uint8_t* data, uint64_t physAddr) {
         // 1. Check PID is reasonable
         uint32_t pid = *reinterpret_cast<const uint32_t*>(data + profile.eprocess_unique_process_id);
-        if (pid == 0 || pid > 100000) return false;
+
+        if (pid == 0 || pid > 100000) {
+            return false;
+        }
 
         // 2. Check DirectoryTableBase (CR3) is a valid physical address
         uint64_t dtb_raw = *reinterpret_cast<const uint64_t*>(data + profile.kprocess_directory_table_base);
@@ -676,11 +499,28 @@ private:
         // - Non-zero
         // - Within actual physical memory range (not kernel VA)
         // - Not suspiciously round values like exactly 4GB
-        if (dtb == 0) return false;
-        if (dtb >= 0xFFFF000000000000ULL) return false;  // Not a kernel VA (should be impossible after mask)
-        if (dtb >= memorySize) return false;  // Must be within actual RAM
-        if (dtb == 0x100000000ULL) return false;  // Reject exactly 4GB (common false positive)
-        if (dtb == 0x80000000ULL) return false;  // Reject exactly 2GB (common false positive)
+        if (dtb == 0) {
+            return false;
+        }
+        if (dtb >= 0xFFFF000000000000ULL) {
+            return false;
+        }
+        // DTB must be within physical RAM range (0-2GB OR 4-10GB, NOT in PCI hole)
+        // Maximum physical address is 0x280000000 (10GB)
+        const uint64_t MAX_PHYSICAL_ADDR = 0x280000000ULL;  // 10GB
+        if (dtb >= MAX_PHYSICAL_ADDR) {
+            return false;
+        }
+        // Also reject DTBs in the PCI hole (2-4GB range)
+        if (dtb >= 0x80000000ULL && dtb < 0x100000000ULL) {
+            return false;
+        }
+        if (dtb == 0x100000000ULL) {
+            return false;
+        }
+        if (dtb == 0x80000000ULL) {
+            return false;
+        }
 
         // 3. Check process name at ImageFileName offset
         const char* name = reinterpret_cast<const char*>(data + profile.eprocess_image_file_name);
@@ -699,16 +539,22 @@ private:
         procName = procName.substr(0, procName.find('\0'));
 
         // Name validation: must be at least 2 chars and have .exe or be System
-        if (procName.length() < 2) return false;
+        if (procName.length() < 2) {
+            return false;
+        }
 
         bool isExe = (procName.find(".exe") != std::string::npos);
         bool isSystem = (procName == "System");
-        if (!isExe && !isSystem) return false;
+        if (!isExe && !isSystem) {
+            return false;
+        }
 
         // 4. ActiveProcessLinks Flink should be a kernel VA
         uint64_t flink = *reinterpret_cast<const uint64_t*>(data + profile.eprocess_active_process_links);
         // Flink should be in kernel VA range (0xFFFF...)
-        if (flink != 0 && flink < 0xFFFF000000000000ULL) return false;
+        if (flink != 0 && flink < 0xFFFF000000000000ULL) {
+            return false;
+        }
 
         return true;
     }
@@ -752,12 +598,53 @@ private:
     }
 
     /**
+     * Convert physical address to file offset (accounting for PCI hole on x86-64)
+     */
+    int64_t PhysAddrToFileOffset(uint64_t physAddr) {
+        // x86-64 memory layout with PCI hole at 2-4GB:
+        // Physical 0x0-0x7FFFFFFF (0-2GB) → File 0x0-0x7FFFFFFF
+        // Physical 0x80000000-0xFFFFFFFF (2-4GB) → PCI hole (NOT in file)
+        // Physical 0x100000000-0x27FFFFFFF (4-10GB) → File 0x80000000-0x1FFFFFFFF
+
+        if (physAddr < 0x80000000ULL) {
+            // Below PCI hole - direct mapping
+            return physAddr;
+        } else if (physAddr < 0x100000000ULL) {
+            // In PCI hole - not in file
+            return -1;
+        } else if (physAddr < 0x280000000ULL) {
+            // Above PCI hole - subtract 2GB gap
+            return physAddr - 0x80000000ULL;
+        } else {
+            // Beyond our RAM
+            return -1;
+        }
+    }
+
+    /**
+     * Convert file offset to physical address (accounting for PCI hole on x86-64)
+     */
+    uint64_t FileOffsetToPhysAddr(uint64_t fileOffset) {
+        // Reverse of PhysAddrToFileOffset
+        if (fileOffset < 0x80000000ULL) {
+            // First 2GB of file → Physical 0-2GB
+            return fileOffset;
+        } else {
+            // Rest of file → Physical 4GB+
+            return fileOffset + 0x80000000ULL;
+        }
+    }
+
+    /**
      * Read physical memory (from file or via QMP)
      */
     bool ReadPhysicalMemory(uint64_t physAddr, uint8_t* buffer, size_t size) {
+        // Convert physical address to file offset
+        int64_t fileOffset = PhysAddrToFileOffset(physAddr);
+
         // Try memory file first
-        if (physAddr < memorySize) {
-            ssize_t bytesRead = pread(memfd, buffer, size, physAddr);
+        if (fileOffset >= 0 && fileOffset + size <= memorySize) {
+            ssize_t bytesRead = pread(memfd, buffer, size, fileOffset);
             return (bytesRead == static_cast<ssize_t>(size));
         }
 
@@ -809,9 +696,9 @@ private:
             return true;
         }
 
-        // Cache miss - read entire page table (4KB = 512 entries), try mmap first
+        // Cache miss - read entire page table (4KB = 512 entries) in one QMP call
         std::vector<uint8_t> tableData(4096);
-        bool success = qmp->ReadMemory(tableBase, 4096, tableData);
+        bool success = qmp->ReadMemoryViaQMP(tableBase, 4096, tableData);
 
         if (success) {
             // Store entire page table in cache
@@ -857,7 +744,8 @@ private:
             // Scan for EPROCESS structures at 8-byte aligned offsets
             // This covers both 16-byte aligned (0, 16, 32...) and 8-byte aligned (8, 24, 40...)
             for (size_t i = 0; i + MIN_EPROCESS_SIZE < bytesRead; i += 8) {
-                uint64_t physAddr = offset + i;
+                // Convert file offset to physical address (accounting for PCI hole)
+                uint64_t physAddr = FileOffsetToPhysAddr(offset + i);
 
                 // Validate using IsValidEPROCESS
                 if (!IsValidEPROCESS(buffer.data() + i, physAddr)) {
@@ -902,7 +790,8 @@ private:
                 // Check name at offset
                 const char* name = reinterpret_cast<const char*>(buffer.data() + i + profile.eprocess_image_file_name);
                 if (strncmp(name, "System", 6) == 0 && name[6] == '\0') {
-                    uint64_t addr = offset + i;
+                    // Convert file offset to physical address (accounting for PCI hole)
+                    uint64_t addr = FileOffsetToPhysAddr(offset + i);
 
                     // Read and validate DirectoryTableBase BEFORE adding as candidate
                     uint64_t dtb_offset = profile.kprocess_directory_table_base;
@@ -1106,128 +995,57 @@ private:
     }
 
     /**
-     * Extract filename from a file-backed VAD node
-     * Follows: MMVAD → Subsection → ControlArea → FilePointer → FileName
+     * Extract PTEs for all memory sections in a process
+     *
+     * @param proc Process to extract PTEs for
      */
-    std::string ExtractVADFilename(uint64_t vad_pa) {
-        // Read full MMVAD structure (128 bytes) to get Subsection pointer
-        constexpr size_t MMVAD_SIZE = 128;
-        std::vector<uint8_t> mmvad_buffer;
-
-        if (!qmp || !qmp->ReadMemory(vad_pa, MMVAD_SIZE, mmvad_buffer)) {
-            return "";
+    void ExtractPTEsForProcess(ProcessInfo& proc) {
+        if (proc.pgd == 0) {
+            std::cerr << "[ExtractPTEs] Process PGD is 0, skipping PTE extraction" << std::endl;
+            return;
         }
 
-        // Subsection pointer is at offset 72 in MMVAD
-        uint64_t subsection_va = *reinterpret_cast<uint64_t*>(mmvad_buffer.data() + 72);
+        const uint64_t PAGE_SIZE = 4096;  // 4KB pages
+        size_t total_pages = 0;
+        size_t extracted_ptes = 0;
 
-        // Validate it's a kernel VA
-        if ((subsection_va >> 48) != 0xffff || subsection_va == 0) {
-            // Silently skip - most VADs don't have file backing
-            return "";  // Not a file-backed VAD
-        }
+        // Iterate through each memory section
+        for (const auto& section : proc.sections) {
+            uint64_t start_va = section.start;
+            uint64_t end_va = section.end;
 
-        // Successfully found subsection VA
+            // Calculate number of pages in this section
+            size_t section_pages = (end_va - start_va + PAGE_SIZE - 1) / PAGE_SIZE;
+            total_pages += section_pages;
 
-        // Translate Subsection VA to PA using System DTB
-        uint64_t subsection_pa = TranslateVA(subsection_va, kernelInfo.swapper_pgd);
-        if (subsection_pa == 0) {
-            std::cerr << "[ExtractVADFilename] Failed to translate Subsection VA" << std::endl;
-            return "";
-        }
+            // Limit per-section extraction to avoid excessive output
+            // (We can remove this limit later if needed)
+            size_t max_pages_per_section = 1024;  // Extract up to 1024 pages (4MB) per section
+            size_t pages_to_extract = std::min(section_pages, max_pages_per_section);
 
-        // Read SUBSECTION structure (first 64 bytes)
-        std::vector<uint8_t> subsection_buffer;
-        if (!qmp || !qmp->ReadMemory(subsection_pa, 64, subsection_buffer)) {
-            std::cerr << "[ExtractVADFilename] Failed to read SUBSECTION" << std::endl;
-            return "";
-        }
+            // Walk page tables for each page in the section
+            for (uint64_t va = start_va; va < end_va && (va - start_va) / PAGE_SIZE < pages_to_extract; va += PAGE_SIZE) {
+                // Translate VA to PA using process DTB
+                uint64_t pa = TranslateVA(va, proc.pgd);
 
-        // ControlArea pointer is at offset 0 in SUBSECTION
-        uint64_t control_area_va = *reinterpret_cast<uint64_t*>(subsection_buffer.data() + 0);
-        if ((control_area_va >> 48) != 0xffff || control_area_va == 0) {
-            std::cerr << "[ExtractVADFilename] Invalid ControlArea VA: 0x" << std::hex << control_area_va << std::dec << std::endl;
-            return "";
-        }
+                if (pa != 0) {
+                    // Create PTE entry
+                    PTE pte;
+                    pte.va = va;
+                    pte.pa = pa;
+                    pte.size = PAGE_SIZE;
+                    pte.present = true;
+                    pte.writable = true;   // TODO: Parse page table flags
+                    pte.executable = false; // TODO: Parse NX bit
 
-        std::cout << "[ExtractVADFilename]   ControlArea VA: 0x" << std::hex << control_area_va << std::dec << std::endl;
-
-        // Translate ControlArea VA to PA
-        uint64_t control_area_pa = TranslateVA(control_area_va, kernelInfo.swapper_pgd);
-        if (control_area_pa == 0) {
-            std::cerr << "[ExtractVADFilename] Failed to translate ControlArea VA" << std::endl;
-            return "";
-        }
-
-        // Read CONTROL_AREA structure (first 128 bytes)
-        std::vector<uint8_t> control_area_buffer;
-        if (!qmp || !qmp->ReadMemory(control_area_pa, 128, control_area_buffer)) {
-            std::cerr << "[ExtractVADFilename] Failed to read CONTROL_AREA" << std::endl;
-            return "";
-        }
-
-        // FilePointer is at offset 64 in CONTROL_AREA
-        uint64_t file_object_va_raw = *reinterpret_cast<uint64_t*>(control_area_buffer.data() + 64);
-
-        // Windows often stores flags/refcounts in lower bits of pointers
-        // Mask off lower 4 bits to get actual pointer
-        uint64_t file_object_va = file_object_va_raw & ~0xFULL;
-
-        if ((file_object_va >> 48) != 0xffff || file_object_va == 0) {
-            // Silently skip - many VADs don't have FILE_OBJECT (e.g., private memory)
-            return "";
-        }
-
-        std::cout << "[ExtractVADFilename]     FileObject VA: 0x" << std::hex << file_object_va
-                  << " (raw: 0x" << file_object_va_raw << ")" << std::dec << std::endl;
-
-        // Translate FILE_OBJECT VA to PA
-        uint64_t file_object_pa = TranslateVA(file_object_va, kernelInfo.swapper_pgd);
-        if (file_object_pa == 0) return "";
-
-        // Read FILE_OBJECT structure (first 128 bytes)
-        std::vector<uint8_t> file_object_buffer;
-        if (!qmp || !qmp->ReadMemory(file_object_pa, 128, file_object_buffer)) {
-            return "";
-        }
-
-        // FileName is a UNICODE_STRING at offset 88 in FILE_OBJECT
-        // UNICODE_STRING: Length (2), MaximumLength (2), padding (4), Buffer pointer (8)
-        uint16_t length = *reinterpret_cast<uint16_t*>(file_object_buffer.data() + 88);
-        uint64_t buffer_va = *reinterpret_cast<uint64_t*>(file_object_buffer.data() + 96);
-
-        if (length == 0 || length > 512 || (buffer_va >> 48) != 0xffff) {
-            return "";  // Invalid
-        }
-
-        // Translate filename buffer VA to PA
-        uint64_t buffer_pa = TranslateVA(buffer_va, kernelInfo.swapper_pgd);
-        if (buffer_pa == 0) return "";
-
-        // Read Unicode filename
-        std::vector<uint8_t> filename_buffer;
-        if (!qmp || !qmp->ReadMemory(buffer_pa, length, filename_buffer)) {
-            return "";
-        }
-
-        // Convert Unicode (UTF-16LE) to ASCII
-        std::string filename;
-        for (size_t i = 0; i + 1 < filename_buffer.size(); i += 2) {
-            wchar_t wc = filename_buffer[i] | (filename_buffer[i+1] << 8);
-            if (wc < 128 && wc != 0) {  // Simple ASCII conversion
-                filename += static_cast<char>(wc);
-            } else if (wc == 0) {
-                break;  // Null terminator
+                    proc.ptes.push_back(pte);
+                    extracted_ptes++;
+                }
             }
         }
 
-        // Extract just the filename from full path
-        size_t last_slash = filename.find_last_of("\\/");
-        if (last_slash != std::string::npos) {
-            filename = filename.substr(last_slash + 1);
-        }
-
-        return filename;
+        std::cout << "[ExtractPTEs] Process pages: " << total_pages
+                  << ", extracted: " << extracted_ptes << std::endl;
     }
 
     /**
@@ -1240,7 +1058,8 @@ private:
         // Read MMVAD_SHORT structure (64 bytes minimum)
         // Layout: RTL_BALANCED_NODE (24 bytes) + StartingVpn (4) + EndingVpn (4) + ... + VadFlags (at 48)
         //
-        // With 12GB memory-backend-file, try mmap first before QMP fallback
+        // VAD nodes ARE accessible via memory-backend-file with correct PA→file offset mapping
+        // Use ReadMemory which tries mmap first (fast!) with PCI hole-aware offset calculation
         constexpr size_t MMVAD_READ_SIZE = 64;
         std::vector<uint8_t> vad_buffer;
 
@@ -1254,6 +1073,8 @@ private:
         // Extract Left and Right child pointers (offsets 0 and 8 within RTL_BALANCED_NODE)
         uint64_t left_va = *reinterpret_cast<uint64_t*>(vad_data + 0);
         uint64_t right_va = *reinterpret_cast<uint64_t*>(vad_data + 8);
+
+        std::cerr << "[WalkVADTree] VAD at PA 0x" << std::hex << vad_pa << " Left=0x" << left_va << " Right=0x" << right_va << std::dec << std::endl;
 
         // Extract StartingVpn and EndingVpn (offsets 24 and 28)
         uint32_t starting_vpn = *reinterpret_cast<uint32_t*>(vad_data + 24);
@@ -1271,54 +1092,8 @@ private:
         section.start = start_va;
         section.end = end_va;
         section.flags = vad_flags;
-
-        // Parse VadFlags to determine type
-        // VadFlags bits (Windows kernel):
-        //   Bit 0-1: MemCommit (0=NoCommit, 1=Committed)
-        //   Bit 2-4: VadType (0=Private, 1=Mapped, 2=Image/Section)
-        //   Bit 5-9: Protection (PAGE_NOACCESS, PAGE_READONLY, etc.)
-        uint32_t vad_type = (vad_flags >> 2) & 0x7;  // Extract bits 2-4
-
-        // Debug: Track VAD types (only print for first process to avoid spam)
-        static bool logged_types = false;
-        static int type_counts[8] = {0};
-        type_counts[vad_type]++;
-
-        if (!logged_types && type_counts[0] + type_counts[1] + type_counts[2] + type_counts[3] +
-            type_counts[4] + type_counts[5] + type_counts[6] + type_counts[7] > 100) {
-            std::cout << "[WalkVADTree] VAD type distribution (first 100+ regions):" << std::endl;
-            for (int i = 0; i < 8; i++) {
-                if (type_counts[i] > 0) {
-                    std::cout << "  Type " << i << ": " << type_counts[i] << " regions" << std::endl;
-                }
-            }
-            logged_types = true;
-        }
-
-        switch (vad_type) {
-            case 0:  // Private memory (heap, stack, anonymous)
-                section.type = MemorySection::ANONYMOUS;
-                section.name = "[private]";
-                break;
-            case 1:  // Mapped file (data file, shared memory)
-                section.type = MemorySection::FILE_BACKED;
-                section.name = ExtractVADFilename(vad_pa);
-                if (section.name.empty()) {
-                    section.name = "[mapped]";
-                }
-                break;
-            case 2:  // Image/Section (DLL, EXE)
-                section.type = MemorySection::SHARED_LIB;  // Most images are DLLs
-                section.name = ExtractVADFilename(vad_pa);
-                if (section.name.empty()) {
-                    section.name = "[image]";
-                }
-                break;
-            default:
-                section.type = MemorySection::UNKNOWN;
-                section.name = "[unknown]";
-                break;
-        }
+        section.type = MemorySection::UNKNOWN;  // TODO: Parse VadFlags to determine type
+        section.name = "";  // TODO: Extract filename from MMVAD.Subsection if file-backed
 
         sections.push_back(section);
 
@@ -1326,18 +1101,24 @@ private:
         if (left_va != 0 && (left_va >> 48) == 0xffff) {
             // CRITICAL: Use System DTB for kernel VA translation
             uint64_t left_pa = TranslateVA(left_va, kernelInfo.swapper_pgd);
+            std::cerr << "[WalkVADTree] Left child VA=0x" << std::hex << left_va << " → PA=0x" << left_pa << std::dec << std::endl;
             if (left_pa != 0) {
                 WalkVADTree(left_pa, sections);
             }
+        } else if (left_va != 0) {
+            std::cerr << "[WalkVADTree] Left VA=0x" << std::hex << left_va << " not a kernel VA (bits 63-48 = 0x" << (left_va >> 48) << ")" << std::dec << std::endl;
         }
 
         // Recursively walk right child
         if (right_va != 0 && (right_va >> 48) == 0xffff) {
             // CRITICAL: Use System DTB for kernel VA translation
             uint64_t right_pa = TranslateVA(right_va, kernelInfo.swapper_pgd);
+            std::cerr << "[WalkVADTree] Right child VA=0x" << std::hex << right_va << " → PA=0x" << right_pa << std::dec << std::endl;
             if (right_pa != 0) {
                 WalkVADTree(right_pa, sections);
             }
+        } else if (right_va != 0) {
+            std::cerr << "[WalkVADTree] Right VA=0x" << std::hex << right_va << " not a kernel VA (bits 63-48 = 0x" << (right_va >> 48) << ")" << std::dec << std::endl;
         }
     }
 };
