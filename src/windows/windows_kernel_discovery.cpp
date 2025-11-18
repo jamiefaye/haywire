@@ -1059,16 +1059,14 @@ private:
         // Layout: RTL_BALANCED_NODE (24 bytes) + StartingVpn (4) + EndingVpn (4) + ... + VadFlags (at 48)
         //
         // VAD nodes ARE accessible via memory-backend-file with correct PA→file offset mapping
-        // Use ReadMemory which tries mmap first (fast!) with PCI hole-aware offset calculation
+        // Use ReadPhysicalMemory which has PCI hole-aware offset calculation
         constexpr size_t MMVAD_READ_SIZE = 64;
-        std::vector<uint8_t> vad_buffer;
+        uint8_t vad_data[MMVAD_READ_SIZE];
 
-        if (!qmp || !qmp->ReadMemory(vad_pa, MMVAD_READ_SIZE, vad_buffer)) {
+        if (!ReadPhysicalMemory(vad_pa, vad_data, MMVAD_READ_SIZE)) {
             std::cerr << "[WalkVADTree] Failed to read VAD at PA 0x" << std::hex << vad_pa << std::dec << std::endl;
             return;
         }
-
-        uint8_t* vad_data = vad_buffer.data();
 
         // Extract Left and Right child pointers (offsets 0 and 8 within RTL_BALANCED_NODE)
         uint64_t left_va = *reinterpret_cast<uint64_t*>(vad_data + 0);

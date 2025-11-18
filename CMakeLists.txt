@@ -182,6 +182,9 @@ if(CAPSTONE_FOUND)
     target_link_libraries(haywire PRIVATE ${CAPSTONE_LIBRARIES})
 endif()
 
+# Enable AVX2 for change_detector.cpp
+set_source_files_properties(src/change_detector.cpp PROPERTIES COMPILE_FLAGS "-mavx2")
+
 # Auto-sign on macOS for debugging privileges
 if(APPLE)
     add_custom_command(

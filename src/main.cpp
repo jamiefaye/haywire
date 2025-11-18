@@ -150,6 +150,13 @@ int main(int argc, char** argv) {
         if (autoConnected) {
             memoryMapper->DiscoverMemoryMap("localhost", 4444, arch_hint);
             memoryMapper->LogRegions();
+
+            // CRITICAL: Also initialize the QemuConnection's MemoryBackend mapper
+            // This is needed for ReadMemory() to use correct PA→file offset translation
+            MemoryBackend* memBackend = qemu.GetMemoryBackend();
+            if (memBackend) {
+                memBackend->InitializeMemoryMapping("localhost", 4444);
+            }
         }
     } else {
         std::cout << "Skipping QEMU connection (--no-qemu mode)\n";
