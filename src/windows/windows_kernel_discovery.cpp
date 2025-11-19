@@ -1008,7 +1008,7 @@ private:
         uint8_t mmvad_buffer[MMVAD_SIZE];
 
         if (!ReadPhysicalMemory(vad_pa, mmvad_buffer, MMVAD_SIZE)) {
-            return "";
+            return "";  // Failed to read MMVAD
         }
 
         // Subsection pointer is at offset 72 in MMVAD
@@ -1021,50 +1021,69 @@ private:
 
         // Translate Subsection VA to PA using System DTB
         uint64_t subsection_pa = TranslateVA(subsection_va, kernelInfo.swapper_pgd);
-        if (subsection_pa == 0) return "";
+        if (subsection_pa == 0) {
+            return "";  // Translation failed
+        }
 
         // Read SUBSECTION structure (first 64 bytes)
         uint8_t subsection_buffer[64];
-        if (!ReadPhysicalMemory(subsection_pa, subsection_buffer, 64)) return "";
+        if (!ReadPhysicalMemory(subsection_pa, subsection_buffer, 64)) {
+            return "";  // Failed to read SUBSECTION
+        }
 
         // ControlArea pointer is at offset 0 in SUBSECTION
         uint64_t control_area_va = *reinterpret_cast<uint64_t*>(subsection_buffer + 0);
-        if ((control_area_va >> 48) != 0xffff || control_area_va == 0) return "";
+        if ((control_area_va >> 48) != 0xffff || control_area_va == 0) {
+            return "";  // Invalid ControlArea VA
+        }
 
         // Translate ControlArea VA to PA
         uint64_t control_area_pa = TranslateVA(control_area_va, kernelInfo.swapper_pgd);
-        if (control_area_pa == 0) return "";
+        if (control_area_pa == 0) {
+            return "";  // Translation failed
+        }
 
         // Read CONTROL_AREA structure (first 128 bytes)
         uint8_t control_area_buffer[128];
-        if (!ReadPhysicalMemory(control_area_pa, control_area_buffer, 128)) return "";
+        if (!ReadPhysicalMemory(control_area_pa, control_area_buffer, 128)) {
+            return "";  // Failed to read CONTROL_AREA
+        }
 
-        // FilePointer is at offset 64 in CONTROL_AREA
-        uint64_t file_object_va_raw = *reinterpret_cast<uint64_t*>(control_area_buffer + 64);
+        // FilePointer (_EX_FAST_REF) is at offset 0x40 (64) in CONTROL_AREA (Windows 11 25H2/26200)
+        // _EX_FAST_REF encodes pointer in bits 4-63, refcount in bits 0-3
+        uint64_t file_object_va_raw = *reinterpret_cast<uint64_t*>(control_area_buffer + 0x40);
+        uint64_t file_object_va = file_object_va_raw & ~0xFULL;  // Mask lower 4 bits (refcount)
 
-        // Windows stores flags/refcounts in lower 4 bits - mask them off
-        uint64_t file_object_va = file_object_va_raw & ~0xFULL;
-
-        if ((file_object_va >> 48) != 0xffff || file_object_va == 0) return "";
+        if ((file_object_va >> 48) != 0xffff || file_object_va == 0) {
+            return "";  // Not a file-backed section (NULL or invalid pointer)
+        }
 
         // Translate FILE_OBJECT VA to PA
         uint64_t file_object_pa = TranslateVA(file_object_va, kernelInfo.swapper_pgd);
-        if (file_object_pa == 0) return "";
+        if (file_object_pa == 0) {
+            return "";  // Translation failed
+        }
 
         // Read FILE_OBJECT structure (first 128 bytes)
         uint8_t file_object_buffer[128];
-        if (!ReadPhysicalMemory(file_object_pa, file_object_buffer, 128)) return "";
+        if (!ReadPhysicalMemory(file_object_pa, file_object_buffer, 128)) {
+            return "";  // Failed to read FILE_OBJECT
+        }
 
         // FileName is a UNICODE_STRING at offset 88 in FILE_OBJECT
         // UNICODE_STRING: Length (2), MaximumLength (2), padding (4), Buffer pointer (8)
         uint16_t length = *reinterpret_cast<uint16_t*>(file_object_buffer + 88);
         uint64_t buffer_va = *reinterpret_cast<uint64_t*>(file_object_buffer + 96);
 
-        if (length == 0 || length > 512 || (buffer_va >> 48) != 0xffff) return "";
+        if (length == 0 || length > 512 || (buffer_va >> 48) != 0xffff) {
+            return "";  // Invalid filename buffer
+        }
 
         // Translate filename buffer VA to PA
         uint64_t buffer_pa = TranslateVA(buffer_va, kernelInfo.swapper_pgd);
-        if (buffer_pa == 0) return "";
+        if (buffer_pa == 0) {
+            return "";  // Translation failed
+        }
 
         // Read Unicode filename
         uint8_t filename_buffer[512];
