@@ -995,6 +995,103 @@ private:
     }
 
     /**
+     * Extract filename from VAD structure by following pointer chain
+     *
+     * Chain: MMVAD → Subsection → ControlArea → FILE_OBJECT → FileName
+     *
+     * @param vad_pa Physical address of MMVAD structure
+     * @return Filename string, or empty if not file-backed
+     */
+    std::string ExtractVADFilename(uint64_t vad_pa) {
+        // Read full MMVAD structure (128 bytes) to get Subsection pointer
+        constexpr size_t MMVAD_SIZE = 128;
+        uint8_t mmvad_buffer[MMVAD_SIZE];
+
+        if (!ReadPhysicalMemory(vad_pa, mmvad_buffer, MMVAD_SIZE)) {
+            return "";
+        }
+
+        // Subsection pointer is at offset 72 in MMVAD
+        uint64_t subsection_va = *reinterpret_cast<uint64_t*>(mmvad_buffer + 72);
+
+        // Validate it's a kernel VA
+        if ((subsection_va >> 48) != 0xffff || subsection_va == 0) {
+            return "";  // Not a file-backed VAD
+        }
+
+        // Translate Subsection VA to PA using System DTB
+        uint64_t subsection_pa = TranslateVA(subsection_va, kernelInfo.swapper_pgd);
+        if (subsection_pa == 0) return "";
+
+        // Read SUBSECTION structure (first 64 bytes)
+        uint8_t subsection_buffer[64];
+        if (!ReadPhysicalMemory(subsection_pa, subsection_buffer, 64)) return "";
+
+        // ControlArea pointer is at offset 0 in SUBSECTION
+        uint64_t control_area_va = *reinterpret_cast<uint64_t*>(subsection_buffer + 0);
+        if ((control_area_va >> 48) != 0xffff || control_area_va == 0) return "";
+
+        // Translate ControlArea VA to PA
+        uint64_t control_area_pa = TranslateVA(control_area_va, kernelInfo.swapper_pgd);
+        if (control_area_pa == 0) return "";
+
+        // Read CONTROL_AREA structure (first 128 bytes)
+        uint8_t control_area_buffer[128];
+        if (!ReadPhysicalMemory(control_area_pa, control_area_buffer, 128)) return "";
+
+        // FilePointer is at offset 64 in CONTROL_AREA
+        uint64_t file_object_va_raw = *reinterpret_cast<uint64_t*>(control_area_buffer + 64);
+
+        // Windows stores flags/refcounts in lower 4 bits - mask them off
+        uint64_t file_object_va = file_object_va_raw & ~0xFULL;
+
+        if ((file_object_va >> 48) != 0xffff || file_object_va == 0) return "";
+
+        // Translate FILE_OBJECT VA to PA
+        uint64_t file_object_pa = TranslateVA(file_object_va, kernelInfo.swapper_pgd);
+        if (file_object_pa == 0) return "";
+
+        // Read FILE_OBJECT structure (first 128 bytes)
+        uint8_t file_object_buffer[128];
+        if (!ReadPhysicalMemory(file_object_pa, file_object_buffer, 128)) return "";
+
+        // FileName is a UNICODE_STRING at offset 88 in FILE_OBJECT
+        // UNICODE_STRING: Length (2), MaximumLength (2), padding (4), Buffer pointer (8)
+        uint16_t length = *reinterpret_cast<uint16_t*>(file_object_buffer + 88);
+        uint64_t buffer_va = *reinterpret_cast<uint64_t*>(file_object_buffer + 96);
+
+        if (length == 0 || length > 512 || (buffer_va >> 48) != 0xffff) return "";
+
+        // Translate filename buffer VA to PA
+        uint64_t buffer_pa = TranslateVA(buffer_va, kernelInfo.swapper_pgd);
+        if (buffer_pa == 0) return "";
+
+        // Read Unicode filename
+        uint8_t filename_buffer[512];
+        size_t bytes_to_read = std::min(static_cast<size_t>(length), sizeof(filename_buffer));
+        if (!ReadPhysicalMemory(buffer_pa, filename_buffer, bytes_to_read)) return "";
+
+        // Convert Unicode (UTF-16LE) to ASCII
+        std::string filename;
+        for (size_t i = 0; i + 1 < bytes_to_read; i += 2) {
+            wchar_t wc = filename_buffer[i] | (filename_buffer[i+1] << 8);
+            if (wc < 128 && wc != 0) {
+                filename += static_cast<char>(wc);
+            } else if (wc == 0) {
+                break;
+            }
+        }
+
+        // Extract just the filename from full path
+        size_t last_slash = filename.find_last_of("\\/");
+        if (last_slash != std::string::npos) {
+            filename = filename.substr(last_slash + 1);
+        }
+
+        return filename;
+    }
+
+    /**
      * Extract PTEs for all memory sections in a process
      *
      * @param proc Process to extract PTEs for
@@ -1090,8 +1187,35 @@ private:
         section.start = start_va;
         section.end = end_va;
         section.flags = vad_flags;
-        section.type = MemorySection::UNKNOWN;  // TODO: Parse VadFlags to determine type
-        section.name = "";  // TODO: Extract filename from MMVAD.Subsection if file-backed
+
+        // Parse VadFlags to determine type
+        // VadFlags bits: 0-1=MemCommit, 2-4=VadType, 5-9=Protection
+        uint32_t vad_type = (vad_flags >> 2) & 0x7;  // Extract bits 2-4
+
+        switch (vad_type) {
+            case 0:  // Private memory (heap, stack, etc.)
+                section.type = MemorySection::ANONYMOUS;
+                section.name = "[private]";
+                break;
+            case 1:  // Mapped file
+                section.type = MemorySection::FILE_BACKED;
+                section.name = ExtractVADFilename(vad_pa);
+                if (section.name.empty()) {
+                    section.name = "[mapped]";
+                }
+                break;
+            case 2:  // Image/Section (DLL, EXE)
+                section.type = MemorySection::SHARED_LIB;
+                section.name = ExtractVADFilename(vad_pa);
+                if (section.name.empty()) {
+                    section.name = "[image]";
+                }
+                break;
+            default:
+                section.type = MemorySection::UNKNOWN;
+                section.name = "[unknown]";
+                break;
+        }
 
         sections.push_back(section);
 
