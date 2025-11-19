@@ -346,9 +346,7 @@ size_t PageDatabase::AttributeProcessPages(const ProcessInfo& proc,
     // processes with large sparse address spaces.
 
     for (const auto& [va, pa] : ptes) {
-        // Skip pages outside RAM
-        if (pa < ramBase || pa >= ramBase + ramSize) continue;
-
+        // PhysToIndex() returns SIZE_MAX for invalid addresses (PCI hole, beyond RAM)
         size_t pageIndex = PhysToIndex(pa);
         if (pageIndex >= pages.size()) continue;
 

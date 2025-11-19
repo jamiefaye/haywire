@@ -995,6 +995,134 @@ private:
     }
 
     /**
+     * Extract filename from VAD structure by following pointer chain
+     *
+     * Chain: MMVAD → Subsection → ControlArea → FILE_OBJECT → FileName
+     *
+     * @param vad_pa Physical address of MMVAD structure
+     * @return Filename string, or empty if not file-backed
+     */
+    std::string ExtractVADFilename(uint64_t vad_pa) {
+        // Read full MMVAD structure (128 bytes) to get Subsection pointer
+        constexpr size_t MMVAD_SIZE = 128;
+        uint8_t mmvad_buffer[MMVAD_SIZE];
+
+        if (!ReadPhysicalMemory(vad_pa, mmvad_buffer, MMVAD_SIZE)) {
+            return "";  // Failed to read MMVAD
+        }
+
+        // Subsection pointer is at offset 72 in MMVAD
+        uint64_t subsection_va = *reinterpret_cast<uint64_t*>(mmvad_buffer + 72);
+
+        // Validate it's a kernel VA
+        if ((subsection_va >> 48) != 0xffff || subsection_va == 0) {
+            return "";  // Not a file-backed VAD
+        }
+
+        // Translate Subsection VA to PA using System DTB
+        uint64_t subsection_pa = TranslateVA(subsection_va, kernelInfo.swapper_pgd);
+        if (subsection_pa == 0) {
+            return "";  // Translation failed
+        }
+
+        // Read SUBSECTION structure (first 64 bytes)
+        uint8_t subsection_buffer[64];
+        if (!ReadPhysicalMemory(subsection_pa, subsection_buffer, 64)) {
+            return "";  // Failed to read SUBSECTION
+        }
+
+        // ControlArea pointer is at offset 0 in SUBSECTION
+        uint64_t control_area_va = *reinterpret_cast<uint64_t*>(subsection_buffer + 0);
+        if ((control_area_va >> 48) != 0xffff || control_area_va == 0) {
+            return "";  // Invalid ControlArea VA
+        }
+
+        // Translate ControlArea VA to PA
+        uint64_t control_area_pa = TranslateVA(control_area_va, kernelInfo.swapper_pgd);
+        if (control_area_pa == 0) {
+            return "";  // Translation failed
+        }
+
+        // Read CONTROL_AREA structure (first 128 bytes)
+        uint8_t control_area_buffer[128];
+        if (!ReadPhysicalMemory(control_area_pa, control_area_buffer, 128)) {
+            return "";  // Failed to read CONTROL_AREA
+        }
+
+        // FilePointer (_EX_FAST_REF) is at offset 0x40 (64) in CONTROL_AREA (Windows 11 25H2/26200)
+        // _EX_FAST_REF encodes pointer in bits 4-63, refcount in bits 0-3
+        uint64_t file_object_va_raw = *reinterpret_cast<uint64_t*>(control_area_buffer + 0x40);
+        uint64_t file_object_va = file_object_va_raw & ~0xFULL;  // Mask lower 4 bits (refcount)
+
+        if ((file_object_va >> 48) != 0xffff || file_object_va == 0) {
+            return "";  // Not a file-backed section (NULL or invalid pointer)
+        }
+
+        fprintf(stderr, "[ExtractVAD] ControlArea PA 0x%lx -> FILE_OBJECT VA 0x%lx (raw: 0x%lx)\n",
+                control_area_pa, file_object_va, file_object_va_raw);
+
+        // Translate FILE_OBJECT VA to PA
+        uint64_t file_object_pa = TranslateVA(file_object_va, kernelInfo.swapper_pgd);
+        if (file_object_pa == 0) {
+            fprintf(stderr, "[ExtractVAD] FAILED: FILE_OBJECT VA->PA translation failed for VA 0x%lx\n", file_object_va);
+            return "";  // Translation failed
+        }
+
+        fprintf(stderr, "[ExtractVAD] FILE_OBJECT translated to PA 0x%lx\n", file_object_pa);
+
+        // Read FILE_OBJECT structure (first 128 bytes)
+        uint8_t file_object_buffer[128];
+        if (!ReadPhysicalMemory(file_object_pa, file_object_buffer, 128)) {
+            return "";  // Failed to read FILE_OBJECT
+        }
+
+        // FileName is a UNICODE_STRING at offset 88 in FILE_OBJECT
+        // UNICODE_STRING: Length (2), MaximumLength (2), padding (4), Buffer pointer (8)
+        uint16_t length = *reinterpret_cast<uint16_t*>(file_object_buffer + 88);
+        uint64_t buffer_va = *reinterpret_cast<uint64_t*>(file_object_buffer + 96);
+
+        if (length == 0 || length > 512 || (buffer_va >> 48) != 0xffff) {
+            return "";  // Invalid filename buffer
+        }
+
+        fprintf(stderr, "[ExtractVAD] Filename buffer VA 0x%lx, length %d\n", buffer_va, length);
+
+        // Translate filename buffer VA to PA
+        uint64_t buffer_pa = TranslateVA(buffer_va, kernelInfo.swapper_pgd);
+        if (buffer_pa == 0) {
+            fprintf(stderr, "[ExtractVAD] FAILED: Filename buffer VA->PA translation failed for VA 0x%lx\n", buffer_va);
+            return "";  // Translation failed
+        }
+
+        fprintf(stderr, "[ExtractVAD] Filename buffer translated to PA 0x%lx\n", buffer_pa);
+
+        // Read Unicode filename
+        uint8_t filename_buffer[512];
+        size_t bytes_to_read = std::min(static_cast<size_t>(length), sizeof(filename_buffer));
+        if (!ReadPhysicalMemory(buffer_pa, filename_buffer, bytes_to_read)) return "";
+
+        // Convert Unicode (UTF-16LE) to ASCII
+        std::string filename;
+        for (size_t i = 0; i + 1 < bytes_to_read; i += 2) {
+            wchar_t wc = filename_buffer[i] | (filename_buffer[i+1] << 8);
+            if (wc < 128 && wc != 0) {
+                filename += static_cast<char>(wc);
+            } else if (wc == 0) {
+                break;
+            }
+        }
+
+        // Extract just the filename from full path
+        size_t last_slash = filename.find_last_of("\\/");
+        if (last_slash != std::string::npos) {
+            filename = filename.substr(last_slash + 1);
+        }
+
+        fprintf(stderr, "[ExtractVAD] SUCCESS: Extracted filename '%s'\n", filename.c_str());
+        return filename;
+    }
+
+    /**
      * Extract PTEs for all memory sections in a process
      *
      * @param proc Process to extract PTEs for
@@ -1090,8 +1218,38 @@ private:
         section.start = start_va;
         section.end = end_va;
         section.flags = vad_flags;
-        section.type = MemorySection::UNKNOWN;  // TODO: Parse VadFlags to determine type
-        section.name = "";  // TODO: Extract filename from MMVAD.Subsection if file-backed
+
+        // Parse VadFlags to determine type
+        // VadFlags bits: 0-1=MemCommit, 2-4=VadType, 5-9=Protection
+        uint32_t vad_type = (vad_flags >> 2) & 0x7;  // Extract bits 2-4
+        fprintf(stderr, "[WalkVAD] VAD at PA 0x%lx has VadType=%u (flags=0x%x)\n", vad_pa, vad_type, vad_flags);
+
+        switch (vad_type) {
+            case 0:  // Private memory (heap, stack, etc.)
+                section.type = MemorySection::ANONYMOUS;
+                section.name = "[private]";
+                break;
+            case 1:  // Mapped file
+                fprintf(stderr, "[WalkVAD] VAD type 1 (Mapped file) at PA 0x%lx - calling ExtractVADFilename\n", vad_pa);
+                section.type = MemorySection::FILE_BACKED;
+                section.name = ExtractVADFilename(vad_pa);
+                if (section.name.empty()) {
+                    section.name = "[mapped]";
+                }
+                break;
+            case 2:  // Image/Section (DLL, EXE)
+                fprintf(stderr, "[WalkVAD] VAD type 2 (Image/DLL) at PA 0x%lx - calling ExtractVADFilename\n", vad_pa);
+                section.type = MemorySection::SHARED_LIB;
+                section.name = ExtractVADFilename(vad_pa);
+                if (section.name.empty()) {
+                    section.name = "[image]";
+                }
+                break;
+            default:
+                section.type = MemorySection::UNKNOWN;
+                section.name = "[unknown]";
+                break;
+        }
 
         sections.push_back(section);
 
