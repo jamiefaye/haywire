@@ -342,6 +342,9 @@ public:
         // Walk VAD tree recursively
         WalkVADTree(vadroot_pa, proc.sections);
 
+        // Extract modules from PEB (provides .exe and all DLLs with names)
+        ExtractModulesFromPEB(proc, proc.sections);
+
         // Extract PTEs for each memory section
         if (!proc.sections.empty()) {
             std::cout << "[WindowsKernelDiscovery] Extracting PTEs for " << proc.sections.size() << " sections..." << std::endl;
@@ -995,6 +998,150 @@ private:
     }
 
     /**
+     * Extract modules from PEB (Process Environment Block)
+     *
+     * Walks PEB→Ldr→InLoadOrderModuleList to extract all loaded modules.
+     * First entry is always the main .exe, followed by DLLs.
+     *
+     * @param proc Process information (contains PID, EPROCESS address, DTB)
+     * @param sections Output vector to append module entries
+     */
+    void ExtractModulesFromPEB(const ProcessInfo& proc, std::vector<MemorySection>& sections) {
+        // Read PEB pointer from EPROCESS.Peb
+        fprintf(stderr, "[ExtractPEB] PID %d: Starting PEB extraction (EPROCESS.Peb offset=%zu)\n", proc.pid, profile.eprocess_peb);
+
+        uint64_t pebVA = 0;
+        if (!ReadPhysicalMemory(proc.task_addr + profile.eprocess_peb, (uint8_t*)&pebVA, 8)) {
+            fprintf(stderr, "[ExtractPEB] PID %d: Failed to read PEB pointer\n", proc.pid);
+            return;  // Failed to read PEB pointer
+        }
+
+        fprintf(stderr, "[ExtractPEB] PID %d: PEB VA = 0x%lx\n", proc.pid, pebVA);
+
+        // On Windows x86-64, user-mode addresses can have high bits set due to ASLR
+        // Kernel addresses have top 16 bits = 0xFFFF, user-mode should not
+        if (pebVA == 0 || (pebVA & 0xFFFF000000000000ULL) == 0xFFFF000000000000ULL) {
+            fprintf(stderr, "[ExtractPEB] PID %d: Invalid PEB pointer (null or kernel VA)\n", proc.pid);
+            return;  // Invalid PEB pointer
+        }
+
+        // Translate PEB VA to PA using process DTB
+        uint64_t dtb = 0;
+        if (!ReadPhysicalMemory(proc.task_addr + profile.kprocess_directory_table_base, (uint8_t*)&dtb, 8)) {
+            return;  // Failed to read DTB
+        }
+
+        uint64_t pebPA = TranslateVA(pebVA, dtb);
+        if (pebPA == 0) {
+            return;  // PEB not mapped
+        }
+
+        // Read PEB.Ldr pointer (offset 24 in PEB)
+        uint64_t ldrVA = 0;
+        if (!ReadPhysicalMemory(pebPA + 24, (uint8_t*)&ldrVA, 8)) {
+            return;  // Failed to read Ldr pointer
+        }
+
+        if (ldrVA == 0) {
+            return;  // PEB not fully initialized
+        }
+
+        uint64_t ldrPA = TranslateVA(ldrVA, dtb);
+        if (ldrPA == 0) {
+            return;  // Ldr not mapped
+        }
+
+        // Read PEB_LDR_DATA.InLoadOrderModuleList head (offset 16)
+        uint64_t listHead[2];  // Flink, Blink
+        if (!ReadPhysicalMemory(ldrPA + 16, (uint8_t*)listHead, 16)) {
+            return;  // Failed to read module list head
+        }
+
+        uint64_t currentVA = listHead[0];  // Flink points to first module
+        uint64_t headVA = ldrVA + 16;  // Address of list head itself
+
+        int moduleCount = 0;
+        const int MAX_MODULES = 200;  // Safety limit
+
+        while (currentVA != headVA && moduleCount < MAX_MODULES) {
+            // Translate LDR_DATA_TABLE_ENTRY VA to PA
+            uint64_t entryPA = TranslateVA(currentVA, dtb);
+            if (entryPA == 0) {
+                break;  // Entry not mapped
+            }
+
+            // Read LDR_DATA_TABLE_ENTRY (we need first 120 bytes)
+            uint8_t entryBuffer[120];
+            if (!ReadPhysicalMemory(entryPA, entryBuffer, 120)) {
+                break;  // Failed to read entry
+            }
+
+            // Extract Flink for next iteration
+            uint64_t flink = *reinterpret_cast<uint64_t*>(entryBuffer + 0);
+
+            // Extract DllBase (offset 48)
+            uint64_t dllBase = *reinterpret_cast<uint64_t*>(entryBuffer + 48);
+
+            // Extract SizeOfImage (offset 64)
+            uint32_t sizeOfImage = *reinterpret_cast<uint32_t*>(entryBuffer + 64);
+
+            // Extract BaseDllName UNICODE_STRING (offset 88)
+            // UNICODE_STRING: Length (2 bytes), MaxLength (2 bytes), reserved (4 bytes), Buffer (8 bytes)
+            uint16_t nameLength = *reinterpret_cast<uint16_t*>(entryBuffer + 88);
+            uint64_t nameBufferVA = *reinterpret_cast<uint64_t*>(entryBuffer + 96);
+
+            if (dllBase != 0 && sizeOfImage > 0 && nameLength > 0 && nameLength < 512) {
+                // Translate name buffer VA to PA
+                uint64_t nameBufferPA = TranslateVA(nameBufferVA, dtb);
+                if (nameBufferPA != 0) {
+                    // Read Unicode name (UTF-16LE)
+                    std::vector<uint16_t> nameUTF16(nameLength / 2 + 1, 0);
+                    if (ReadPhysicalMemory(nameBufferPA, (uint8_t*)nameUTF16.data(), nameLength)) {
+                        // Convert UTF-16LE to ASCII (simple conversion, assumes ASCII subset)
+                        std::string moduleName;
+                        moduleName.reserve(nameLength / 2);
+                        for (size_t i = 0; i < nameLength / 2; i++) {
+                            char c = (char)nameUTF16[i];
+                            if (c >= 32 && c < 127) {
+                                moduleName += c;
+                            } else {
+                                moduleName += '?';  // Non-ASCII character
+                            }
+                        }
+
+                        // Add module entry to sections
+                        MemorySection entry;
+                        entry.start = dllBase;
+                        entry.end = dllBase + sizeOfImage;
+                        entry.flags = 0x07;  // RWX (we don't have detailed permissions from PEB)
+                        entry.name = moduleName;
+                        entry.type = MemorySection::SHARED_LIB;  // Assume DLL/shared lib
+
+                        sections.push_back(entry);
+                        moduleCount++;
+
+                        // Show first 5 modules for verification
+                        if (moduleCount <= 5) {
+                            fprintf(stderr, "[ExtractPEB] PID %d: Module #%d: %s (base=0x%lx, size=0x%x)\n",
+                                    proc.pid, moduleCount, moduleName.c_str(), dllBase, sizeOfImage);
+                        }
+                    }
+                }
+            }
+
+            // Move to next entry
+            currentVA = flink;
+
+            // Safety check: detect circular list
+            if (currentVA == listHead[0] && moduleCount > 0) {
+                break;  // We've looped back to the start
+            }
+        }
+
+        fprintf(stderr, "[ExtractPEB] PID %d: Found %d modules from PEB\n", proc.pid, moduleCount);
+    }
+
+    /**
      * Extract filename from VAD structure by following pointer chain
      *
      * Chain: MMVAD → Subsection → ControlArea → FILE_OBJECT → FileName
@@ -1008,14 +1155,28 @@ private:
         uint8_t mmvad_buffer[MMVAD_SIZE];
 
         if (!ReadPhysicalMemory(vad_pa, mmvad_buffer, MMVAD_SIZE)) {
+            fprintf(stderr, "[ExtractVAD] FAILED: Cannot read MMVAD at PA 0x%lx\n", vad_pa);
             return "";  // Failed to read MMVAD
+        }
+
+        // Debug: Dump first 128 bytes of MMVAD to find kernel pointers
+        fprintf(stderr, "[ExtractVAD] MMVAD at PA 0x%lx dump:\n", vad_pa);
+        for (size_t i = 0; i < MMVAD_SIZE; i += 16) {
+            fprintf(stderr, "  +0x%02lx: ", i);
+            for (size_t j = 0; j < 16 && (i + j) < MMVAD_SIZE; j++) {
+                fprintf(stderr, "%02x ", mmvad_buffer[i + j]);
+            }
+            fprintf(stderr, "\n");
         }
 
         // Subsection pointer is at offset 72 in MMVAD
         uint64_t subsection_va = *reinterpret_cast<uint64_t*>(mmvad_buffer + 72);
 
+        fprintf(stderr, "[ExtractVAD] MMVAD at PA 0x%lx -> Subsection VA 0x%lx (from offset 72)\n", vad_pa, subsection_va);
+
         // Validate it's a kernel VA
         if ((subsection_va >> 48) != 0xffff || subsection_va == 0) {
+            fprintf(stderr, "[ExtractVAD] FAILED: Subsection VA invalid (not kernel pointer or NULL)\n");
             return "";  // Not a file-backed VAD
         }
 

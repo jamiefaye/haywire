@@ -143,6 +143,114 @@
           "description": "Parent pointer with balance bits"
         }
       }
+    },
+    "PEB": {
+      "size": 1936,
+      "description": "Process Environment Block (user-mode structure)",
+      "fields": {
+        "Ldr": {
+          "offset": 24,
+          "type": "PPEB_LDR_DATA",
+          "size": 8,
+          "description": "Loader data (contains module lists)"
+        }
+      }
+    },
+    "PEB_LDR_DATA": {
+      "size": 88,
+      "description": "Loader data containing module lists",
+      "fields": {
+        "InLoadOrderModuleList": {
+          "offset": 16,
+          "type": "LIST_ENTRY",
+          "size": 16,
+          "description": "Modules in load order (first entry is .exe)"
+        },
+        "InMemoryOrderModuleList": {
+          "offset": 32,
+          "type": "LIST_ENTRY",
+          "size": 16,
+          "description": "Modules in memory order"
+        },
+        "InInitializationOrderModuleList": {
+          "offset": 48,
+          "type": "LIST_ENTRY",
+          "size": 16,
+          "description": "Modules in initialization order"
+        }
+      }
+    },
+    "LDR_DATA_TABLE_ENTRY": {
+      "size": 304,
+      "description": "Module information entry",
+      "fields": {
+        "InLoadOrderLinks": {
+          "offset": 0,
+          "type": "LIST_ENTRY",
+          "size": 16,
+          "description": "Links in load order list"
+        },
+        "InMemoryOrderLinks": {
+          "offset": 16,
+          "type": "LIST_ENTRY",
+          "size": 16,
+          "description": "Links in memory order list"
+        },
+        "InInitializationOrderLinks": {
+          "offset": 32,
+          "type": "LIST_ENTRY",
+          "size": 16,
+          "description": "Links in initialization order list"
+        },
+        "DllBase": {
+          "offset": 48,
+          "type": "PVOID",
+          "size": 8,
+          "description": "Base address of loaded module"
+        },
+        "SizeOfImage": {
+          "offset": 64,
+          "type": "ULONG",
+          "size": 4,
+          "description": "Size of module in bytes"
+        },
+        "FullDllName": {
+          "offset": 72,
+          "type": "UNICODE_STRING",
+          "size": 16,
+          "description": "Full path (e.g. C:\\Windows\\System32\\ntdll.dll)"
+        },
+        "BaseDllName": {
+          "offset": 88,
+          "type": "UNICODE_STRING",
+          "size": 16,
+          "description": "Base name only (e.g. ntdll.dll)"
+        }
+      }
+    },
+    "UNICODE_STRING": {
+      "size": 16,
+      "description": "Unicode string structure",
+      "fields": {
+        "Length": {
+          "offset": 0,
+          "type": "USHORT",
+          "size": 2,
+          "description": "Length in bytes (not characters)"
+        },
+        "MaximumLength": {
+          "offset": 2,
+          "type": "USHORT",
+          "size": 2,
+          "description": "Buffer size"
+        },
+        "Buffer": {
+          "offset": 8,
+          "type": "PWCH",
+          "size": 8,
+          "description": "Pointer to UTF-16LE string"
+        }
+      }
     }
   },
   "symbols": {
