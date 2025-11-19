@@ -1058,11 +1058,17 @@ private:
             return "";  // Not a file-backed section (NULL or invalid pointer)
         }
 
+        fprintf(stderr, "[ExtractVAD] ControlArea PA 0x%lx -> FILE_OBJECT VA 0x%lx (raw: 0x%lx)\n",
+                control_area_pa, file_object_va, file_object_va_raw);
+
         // Translate FILE_OBJECT VA to PA
         uint64_t file_object_pa = TranslateVA(file_object_va, kernelInfo.swapper_pgd);
         if (file_object_pa == 0) {
+            fprintf(stderr, "[ExtractVAD] FAILED: FILE_OBJECT VA->PA translation failed for VA 0x%lx\n", file_object_va);
             return "";  // Translation failed
         }
+
+        fprintf(stderr, "[ExtractVAD] FILE_OBJECT translated to PA 0x%lx\n", file_object_pa);
 
         // Read FILE_OBJECT structure (first 128 bytes)
         uint8_t file_object_buffer[128];
@@ -1079,11 +1085,16 @@ private:
             return "";  // Invalid filename buffer
         }
 
+        fprintf(stderr, "[ExtractVAD] Filename buffer VA 0x%lx, length %d\n", buffer_va, length);
+
         // Translate filename buffer VA to PA
         uint64_t buffer_pa = TranslateVA(buffer_va, kernelInfo.swapper_pgd);
         if (buffer_pa == 0) {
+            fprintf(stderr, "[ExtractVAD] FAILED: Filename buffer VA->PA translation failed for VA 0x%lx\n", buffer_va);
             return "";  // Translation failed
         }
+
+        fprintf(stderr, "[ExtractVAD] Filename buffer translated to PA 0x%lx\n", buffer_pa);
 
         // Read Unicode filename
         uint8_t filename_buffer[512];
@@ -1107,6 +1118,7 @@ private:
             filename = filename.substr(last_slash + 1);
         }
 
+        fprintf(stderr, "[ExtractVAD] SUCCESS: Extracted filename '%s'\n", filename.c_str());
         return filename;
     }
 
@@ -1210,6 +1222,7 @@ private:
         // Parse VadFlags to determine type
         // VadFlags bits: 0-1=MemCommit, 2-4=VadType, 5-9=Protection
         uint32_t vad_type = (vad_flags >> 2) & 0x7;  // Extract bits 2-4
+        fprintf(stderr, "[WalkVAD] VAD at PA 0x%lx has VadType=%u (flags=0x%x)\n", vad_pa, vad_type, vad_flags);
 
         switch (vad_type) {
             case 0:  // Private memory (heap, stack, etc.)
@@ -1217,6 +1230,7 @@ private:
                 section.name = "[private]";
                 break;
             case 1:  // Mapped file
+                fprintf(stderr, "[WalkVAD] VAD type 1 (Mapped file) at PA 0x%lx - calling ExtractVADFilename\n", vad_pa);
                 section.type = MemorySection::FILE_BACKED;
                 section.name = ExtractVADFilename(vad_pa);
                 if (section.name.empty()) {
@@ -1224,6 +1238,7 @@ private:
                 }
                 break;
             case 2:  // Image/Section (DLL, EXE)
+                fprintf(stderr, "[WalkVAD] VAD type 2 (Image/DLL) at PA 0x%lx - calling ExtractVADFilename\n", vad_pa);
                 section.type = MemorySection::SHARED_LIB;
                 section.name = ExtractVADFilename(vad_pa);
                 if (section.name.empty()) {
