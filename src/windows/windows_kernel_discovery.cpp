@@ -164,7 +164,11 @@ public:
                 uint64_t dtb_raw = *reinterpret_cast<uint64_t*>(dtb_data);
                 // Mask to get physical address only (bits 12-51)
                 uint64_t dtb = dtb_raw & 0x000FFFFFFFFFF000ULL;
-                if (dtb != 0 && dtb < memorySize) {
+                // DTB must be within physical RAM: 0-2GB OR 4-10GB (NOT in PCI hole 2-4GB)
+                const uint64_t MAX_PHYSICAL_ADDR = 0x280000000ULL;  // 10GB
+                bool dtbInValidRange = (dtb != 0 && dtb < MAX_PHYSICAL_ADDR &&
+                                       !(dtb >= 0x80000000ULL && dtb < 0x100000000ULL));  // Not in PCI hole
+                if (dtbInValidRange) {
                     knownGoodDTBs.push_back(dtb);
                     std::cout << "[WindowsKernelDiscovery] " << proc.comm << " has DTB=0x"
                               << std::hex << dtb << std::dec << std::endl;
@@ -286,10 +290,11 @@ public:
         return kernelInfo;
     }
 
-    // Per-process operations (stub implementations for now)
+    // Per-process operations
     void WalkProcessPageTables(ProcessInfo& proc) override {
-        // TODO: Implement Windows page table walking
-        std::cout << "[WindowsKernelDiscovery] Page table walking not yet implemented" << std::endl;
+        // Extract PTEs for this process
+        ExtractPTEsForProcess(proc);
+        std::cout << "[WindowsKernelDiscovery] Extracted " << proc.ptes.size() << " PTEs for PID " << proc.pid << std::endl;
     }
 
     bool ExtractProcessMemoryMap(uint32_t pid) override {
@@ -677,11 +682,6 @@ private:
      * Optimization: Cache entire 4KB page tables (512 entries) to reduce QMP overhead
      */
     bool ReadPageTableEntry(uint64_t physAddr, uint8_t* buffer, size_t size) {
-        if (!qmp || !qmp->IsQMPConnected()) {
-            std::cerr << "[ReadPageTableEntry] QMP not available!" << std::endl;
-            return false;
-        }
-
         if (size != 8) {
             std::cerr << "[ReadPageTableEntry] Only 8-byte reads supported" << std::endl;
             return false;
@@ -699,14 +699,14 @@ private:
             return true;
         }
 
-        // Cache miss - read entire page table (4KB = 512 entries) in one QMP call
-        std::vector<uint8_t> tableData(4096);
-        bool success = qmp->ReadMemoryViaQMP(tableBase, 4096, tableData);
+        // Cache miss - read entire page table (4KB = 512 entries) from memory file
+        uint8_t tableData[4096];
+        bool success = ReadPhysicalMemory(tableBase, tableData, 4096);
 
         if (success) {
             // Store entire page table in cache
             PageTable& table = pageTableCache[tableBase];
-            memcpy(table.entries, tableData.data(), 4096);
+            memcpy(table.entries, tableData, 4096);
             table.valid = true;
 
             // Return requested entry
@@ -805,8 +805,11 @@ private:
                         // CR3 has flags in bits 0-11 and 52-63
                         uint64_t dtb = dtb_raw & 0x000FFFFFFFFFF000ULL;
 
-                        // Validate DTB: non-zero and within RAM size
-                        if (dtb != 0 && dtb < memorySize) {
+                        // Validate DTB: non-zero and within physical RAM (0-2GB OR 4-10GB, NOT PCI hole)
+                        const uint64_t MAX_PHYSICAL_ADDR = 0x280000000ULL;  // 10GB
+                        bool dtbInValidRange = (dtb != 0 && dtb < MAX_PHYSICAL_ADDR &&
+                                               !(dtb >= 0x80000000ULL && dtb < 0x100000000ULL));
+                        if (dtbInValidRange) {
                             // Further validate: Check PML4[256] for kernel mappings
                             // System process must have kernel text mapped in upper half
                             uint8_t pml4_256_data[8];
@@ -816,8 +819,10 @@ private:
                                 uint64_t pml4e256 = *reinterpret_cast<uint64_t*>(pml4_256_data);
                                 uint64_t pdpt_addr = pml4e256 & 0x000FFFFFFFFFF000ULL;
 
-                                // PML4[256] should be present and point to valid PDPT within RAM
-                                if ((pml4e256 & 0x1) && pdpt_addr > 0 && pdpt_addr < memorySize) {
+                                // PML4[256] should be present and point to valid PDPT within physical RAM
+                                bool pdptInValidRange = (pdpt_addr > 0 && pdpt_addr < MAX_PHYSICAL_ADDR &&
+                                                        !(pdpt_addr >= 0x80000000ULL && pdpt_addr < 0x100000000ULL));
+                                if ((pml4e256 & 0x1) && pdptInValidRange) {
                                     candidates.push_back(addr);
                                     std::cout << "[WindowsKernelDiscovery] Found System candidate at PA 0x"
                                               << std::hex << addr << " DTB=0x" << dtb
@@ -1308,8 +1313,8 @@ private:
             total_pages += section_pages;
 
             // Limit per-section extraction to avoid excessive output
-            // (We can remove this limit later if needed)
-            size_t max_pages_per_section = 1024;  // Extract up to 1024 pages (4MB) per section
+            // Increased from 1024 to handle large DLLs (some are 10-20MB)
+            size_t max_pages_per_section = 8192;  // Extract up to 8192 pages (32MB) per section
             size_t pages_to_extract = std::min(section_pages, max_pages_per_section);
 
             // Walk page tables for each page in the section

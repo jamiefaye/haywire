@@ -36,8 +36,10 @@ public:
     size_t GetMappedSize() const { return mappedSize; }
     
     // Initialize memory mapping discovery
-    bool InitializeMemoryMapping(const std::string& monitor_host = "localhost", 
-                                 int monitor_port = 4444);
+    // arch_hint: 0=auto, 1=x86_64, 2=ARM64
+    bool InitializeMemoryMapping(const std::string& monitor_host = "localhost",
+                                 int monitor_port = 4444,
+                                 int arch_hint = 0);
     
     void Unmap();
     

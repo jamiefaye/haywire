@@ -155,7 +155,7 @@ int main(int argc, char** argv) {
             // This is needed for ReadMemory() to use correct PA→file offset translation
             MemoryBackend* memBackend = qemu.GetMemoryBackend();
             if (memBackend) {
-                memBackend->InitializeMemoryMapping("localhost", 4444);
+                memBackend->InitializeMemoryMapping("localhost", 4444, arch_hint);
             }
         }
     } else {
