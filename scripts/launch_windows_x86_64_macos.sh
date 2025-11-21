@@ -106,7 +106,9 @@ qemu-system-x86_64 \
     -device qemu-xhci \
     -device usb-kbd \
     -device usb-tablet \
-    -drive if=virtio,format=qcow2,file="$DISK_IMAGE" \
+    -device ahci,id=ahci \
+    -drive if=none,id=disk,format=qcow2,file="$DISK_IMAGE" \
+    -device ide-hd,drive=disk,bus=ahci.0 \
     -object memory-backend-file,id=mem,size=$MEMORY,mem-path=$MEMFILE,share=on,prealloc=on \
     -numa node,memdev=mem \
     -qmp tcp:localhost:$QMP_PORT,server=on,wait=off \
