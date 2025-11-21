@@ -50,8 +50,9 @@ fi
 # Clean up any existing memory file
 rm -f "$MEMFILE"
 
-# OVMF (UEFI firmware) path for macOS
+# OVMF (UEFI firmware) paths for macOS
 OVMF_CODE="/opt/homebrew/share/qemu/edk2-x86_64-code.fd"
+OVMF_VARS="$SCRIPT_DIR/../vms/windows11_VARS.fd"
 
 # Check if OVMF firmware exists
 if [ ! -f "$OVMF_CODE" ]; then
@@ -67,6 +68,14 @@ if [ ! -f "$OVMF_CODE" ]; then
     exit 1
 fi
 
+# Create small VARS file if it doesn't exist (2MB to stay under 8MB combined limit)
+if [ ! -f "$OVMF_VARS" ]; then
+    echo "Creating 2MB OVMF VARS file for UEFI variables..."
+    mkdir -p "$(dirname "$OVMF_VARS")"
+    dd if=/dev/zero of="$OVMF_VARS" bs=1m count=2 2>/dev/null
+    echo "OVMF VARS file created (CODE: 3.5MB + VARS: 2MB = 5.5MB < 8MB limit)"
+fi
+
 echo "Starting Windows 11 VM with TCG emulation..."
 echo "Memory backend: $MEMFILE"
 echo "Ports: QMP=$QMP_PORT, Monitor=$MONITOR_PORT"
@@ -76,14 +85,14 @@ echo ""
 
 # Launch QEMU with TCG emulation
 # Note: No -accel flag = defaults to TCG on Apple Silicon
-# Using only CODE firmware (no VARS) to avoid 8MB combined size limit
-# UEFI variables won't persist across reboots, but Windows will boot
+# Using small VARS file (2MB) to stay under 8MB combined limit with CODE (3.5MB)
 qemu-system-x86_64 \
     -M q35 \
     -cpu qemu64 \
     -m $MEMORY \
     -smp $CORES \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+    -drive if=pflash,format=raw,file="$OVMF_VARS" \
     -device virtio-vga \
     -display default,show-cursor=on \
     -device qemu-xhci \
