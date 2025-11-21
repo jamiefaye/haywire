@@ -76,13 +76,14 @@ echo ""
 
 # Launch QEMU with TCG emulation
 # Note: No -accel flag = defaults to TCG on Apple Silicon
-# Using -bios instead of pflash to avoid combined firmware size limits
+# Using only CODE firmware (no VARS) to avoid 8MB combined size limit
+# UEFI variables won't persist across reboots, but Windows will boot
 qemu-system-x86_64 \
     -M q35 \
     -cpu qemu64 \
     -m $MEMORY \
     -smp $CORES \
-    -bios "$OVMF_CODE" \
+    -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -device virtio-vga \
     -display default,show-cursor=on \
     -device qemu-xhci \
