@@ -48,6 +48,23 @@ This directory contains the canonical scripts for launching VMs with Haywire sup
   - QEMU Monitor on port 4444
   - VirtIO drivers support
 
+**`launch_windows_x86_64_macos.sh`** - Windows 11 on macOS (Apple Silicon)
+- **Guest OS**: Windows 11 (x86_64)
+- **Host Platform**: macOS (Apple Silicon M1/M2/M3)
+- **Acceleration**: TCG (software emulation - SLOW)
+- **Use Case**: Testing Windows kernel introspection on macOS
+- **Requirements**:
+  - QEMU (`brew install qemu`)
+  - Existing Windows 11 disk image
+  - OVMF UEFI firmware (included with QEMU)
+  - 8GB RAM minimum
+- **Features**:
+  - memory-backend-file at `/tmp/haywire-vm-mem`
+  - QMP on port 4445
+  - QEMU Monitor on port 4444
+  - RDP forwarding: localhost:3389 → guest:3389
+- **Note**: Performance will be slow due to software emulation of x86_64 on ARM64
+
 ## Utility Scripts
 
 **`extract_kernel_offsets.sh`** - Extract kernel structure offsets
@@ -68,14 +85,18 @@ This directory contains the canonical scripts for launching VMs with Haywire sup
 |----------|---------------|--------|--------------|
 | Linux ARM64 | macOS (Apple Silicon) | `launch_linux_arm64_macos.sh` | HVF |
 | Linux x86_64 | Linux (Intel/AMD) | `launch_linux_x86_64_linux.sh` | KVM |
-| Windows 11 | Linux (Intel/AMD) | `launch_windows_x86_64_linux.sh` | KVM |
+| Windows 11 x86_64 | Linux (Intel/AMD) | `launch_windows_x86_64_linux.sh` | KVM |
+| Windows 11 x86_64 | macOS (Apple Silicon) | `launch_windows_x86_64_macos.sh` | TCG (slow) |
 
 ## Quick Start
 
 ### macOS (Apple Silicon)
 ```bash
-# Launch Ubuntu ARM64 VM
+# Launch Ubuntu ARM64 VM (fast, native)
 ./scripts/launch_linux_arm64_macos.sh
+
+# Or launch Windows 11 x86_64 VM (slow, emulated)
+./scripts/launch_windows_x86_64_macos.sh
 
 # In another terminal, launch Haywire
 ./build/haywire
