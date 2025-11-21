@@ -22,6 +22,9 @@
 
 namespace Haywire {
 
+// Global debug logging flag - can be set via SetDebugLogging()
+static bool g_debugLogging = false;
+
 // Kernel structure offsets - can be loaded from profile JSON or use defaults
 struct KernelOffsets {
     // task_struct offsets (verified with pahole)
@@ -105,6 +108,11 @@ public:
 
     ~LinuxKernelDiscovery() override {
         Cleanup();
+    }
+
+    // Enable/disable debug logging
+    void SetDebugLogging(bool enabled) override {
+        g_debugLogging = enabled;
     }
 
     // IKernelDiscovery interface implementation
@@ -596,10 +604,14 @@ public:
             proc.pgd = pgdPA;  // Store the physical address
 
             // Try to walk maple tree for memory sections
-            std::cout << "[Discovery] PID " << proc.pid << " calling WalkMapleTree with mmPA=0x"
-                      << std::hex << mmPA << std::dec << "\n" << std::flush;
+            if (g_debugLogging) {
+                std::cout << "[Discovery] PID " << proc.pid << " calling WalkMapleTree with mmPA=0x"
+                          << std::hex << mmPA << std::dec << "\n" << std::flush;
+            }
             WalkMapleTree(mmPA, proc.sections);
-            std::cout << "[Discovery] PID " << proc.pid << " got " << proc.sections.size() << " sections\n" << std::flush;
+            if (g_debugLogging) {
+                std::cout << "[Discovery] PID " << proc.pid << " got " << proc.sections.size() << " sections\n" << std::flush;
+            }
 
             // Walk page tables to extract PTEs
             WalkProcessPageTables(proc);
@@ -734,28 +746,59 @@ private:
             }
         }
 
-        // Heuristic detection: Look at memory layout
-        // x86_64 usually has swapper_pgd in first 2GB
-        // ARM64 usually has it in 1.75GB+ range
-        // Scan first 16MB for PGD-like patterns
-        for (uint64_t offset = 0; offset < 0x1000000 && offset < memorySize; offset += 0x1000) {
-            uint64_t first = *(uint64_t*)((uint8_t*)memBase + offset);
-            if (first == 0 || (first & 1) == 0) continue;
-
-            // Check if this looks like a PGD (has some non-zero entries)
-            int nonZero = 0;
-            for (int i = 0; i < 16; i++) {
-                uint64_t entry = *(uint64_t*)((uint8_t*)memBase + offset + i * 8);
-                if (entry != 0) nonZero++;
-            }
-
-            if (nonZero >= 2 && nonZero <= 100) {
-                // Found PGD-like structure in low memory - likely x86_64
-                return true;
+        // Try to use QMP-provided or cached swapper_pgd for architecture detection
+        // This is the most reliable method when QMP/cache is available
+        if (kernelInfo.swapper_pgd != 0) {
+            // ARM64 VMs have RAM starting at 0x40000000 (1GB), so swapper_pgd is typically > 4GB
+            // x86_64 VMs have RAM starting at 0x00000000, so swapper_pgd is typically < 4GB
+            if (kernelInfo.swapper_pgd > 0x100000000ULL) {
+                std::cout << "  Architecture hint from swapper_pgd (0x" << std::hex << kernelInfo.swapper_pgd
+                         << "): ARM64 (>4GB)" << std::dec << std::endl;
+                return false;  // ARM64
+            } else {
+                std::cout << "  Architecture hint from swapper_pgd (0x" << std::hex << kernelInfo.swapper_pgd
+                         << "): x86_64 (<4GB)" << std::dec << std::endl;
+                return true;  // x86_64
             }
         }
 
-        // Default to ARM64 if uncertain (original architecture)
+        // Fallback: Check if file starts with zeros (typical of x86_64) or non-zeros (ARM64)
+        // ARM64 VMs have 1GB offset, so file offset 0 contains kernel code/data
+        // x86_64 VMs have no offset, so file offset 0 contains low BIOS memory (mostly zeros)
+        if (memorySize > 0x100000) {  // Need at least 1MB to check
+            int zeroPages = 0;
+            int nonZeroPages = 0;
+
+            // Check first 1MB in 4KB chunks
+            for (uint64_t offset = 0; offset < 0x100000; offset += 0x1000) {
+                bool isZero = true;
+                uint64_t* page = (uint64_t*)((uint8_t*)memBase + offset);
+                for (int i = 0; i < 512; i++) {  // 512 * 8 bytes = 4KB
+                    if (page[i] != 0) {
+                        isZero = false;
+                        break;
+                    }
+                }
+                if (isZero) {
+                    zeroPages++;
+                } else {
+                    nonZeroPages++;
+                }
+            }
+
+            // If first 1MB is mostly zeros → x86_64 (low BIOS/boot memory)
+            // If first 1MB has lots of data → ARM64 (kernel memory mapped from PA 0x40000000)
+            if (zeroPages > nonZeroPages * 2) {
+                std::cout << "  Architecture hint from memory pattern: x86_64 (first 1MB mostly zeros)" << std::endl;
+                return true;  // x86_64
+            } else if (nonZeroPages > zeroPages) {
+                std::cout << "  Architecture hint from memory pattern: ARM64 (first 1MB has kernel data)" << std::endl;
+                return false;  // ARM64
+            }
+        }
+
+        // Default to ARM64 if uncertain (original target architecture)
+        std::cout << "  Architecture detection uncertain, defaulting to ARM64" << std::endl;
         return false;
     }
 
@@ -1586,16 +1629,40 @@ private:
             return false;
         }
 
-        std::cout << "[MapleTree] Walking from root: " << std::hex << rootPtrVA << std::dec << "\n" << std::flush;
+        if (g_debugLogging) {
+            std::cout << "[MapleTree] Walking from root: " << std::hex << rootPtrVA << std::dec << "\n" << std::flush;
+        }
         // Walk the maple tree starting from root
-        WalkMapleNode(rootPtrVA, sections, 0);
-        std::cout << "[MapleTree] Found " << sections.size() << " sections\n" << std::flush;
+        int nodesVisited = 0;
+        const int MAX_NODES = 500;  // Safety limit to prevent infinite loops
+        WalkMapleNode(rootPtrVA, sections, 0, nodesVisited, MAX_NODES);
+        if (g_debugLogging) {
+            std::cout << "[MapleTree] Found " << sections.size() << " sections (visited " << nodesVisited << " nodes)\n" << std::flush;
+        }
         return !sections.empty();
     }
 
-    void WalkMapleNode(uint64_t nodePtr, std::vector<MemorySection>& sections, int depth) {
+    void WalkMapleNode(uint64_t nodePtr, std::vector<MemorySection>& sections, int depth,
+                       int& nodesVisited, int maxNodes) {
+        // Safety checks
         if (!nodePtr || nodePtr == 0 || depth > 15) {
+            if (depth > 15) {
+                std::cout << "[MapleTree] Depth limit reached at " << depth << std::endl << std::flush;
+            }
             return; // Prevent infinite recursion
+        }
+
+        // Check visit counter to prevent infinite loops from bad data
+        nodesVisited++;
+        if (nodesVisited > maxNodes) {
+            std::cout << "[MapleTree] Node visit limit exceeded (" << maxNodes
+                      << ") - aborting (likely bogus data)" << std::endl << std::flush;
+            return;
+        }
+
+        if (g_debugLogging && (depth <= 3 || nodesVisited % 50 == 0)) {  // Log first few levels or every 50 nodes
+            std::cout << "[MapleTree] Visiting node " << std::hex << nodePtr << std::dec
+                      << " at depth " << depth << " (total: " << nodesVisited << ")" << std::endl << std::flush;
         }
 
         // Maple nodes have type encoding in low 8 bits (MAPLE_NODE_MASK = 0xFF)
@@ -1720,7 +1787,7 @@ private:
                 // INTERNAL NODE: Slots contain pointers to child nodes
                 if (IsKernelPointer(slotPtr)) {
                     // This looks like a kernel VA - follow it as a child node
-                    WalkMapleNode(slotPtr, sections, depth + 1);
+                    WalkMapleNode(slotPtr, sections, depth + 1, nodesVisited, maxNodes);
                 }
             } else if (isLeafNode) {
                 // LEAF NODE: Slots contain actual data (vm_area_structs)

@@ -42,6 +42,7 @@ static void glfw_error_callback(int error, const char* description) {
 int main(int argc, char** argv) {
     // Parse command-line arguments
     bool noQemu = false;
+    bool debugLogging = false;
     std::string memoryFilePath = "/tmp/haywire-vm-mem";
     GuestOS guestOsHint = GuestOS::Unknown;
 
@@ -50,6 +51,9 @@ int main(int argc, char** argv) {
         if (arg == "--no-qemu") {
             noQemu = true;
             std::cout << "QEMU connection disabled by --no-qemu flag\n";
+        } else if (arg == "--debug" || arg == "-d") {
+            debugLogging = true;
+            std::cout << "Debug logging enabled\n";
         } else if (arg == "--memory-file" && i + 1 < argc) {
             memoryFilePath = argv[++i];
             std::cout << "Using memory file: " << memoryFilePath << "\n";
@@ -69,6 +73,7 @@ int main(int argc, char** argv) {
             std::cout << "Usage: haywire [options]\n\n";
             std::cout << "Options:\n";
             std::cout << "  --no-qemu              Skip QEMU connection (standalone mode)\n";
+            std::cout << "  --debug, -d            Enable verbose debug logging\n";
             std::cout << "  --memory-file <path>   Use specific memory file (default: /tmp/haywire-vm-mem)\n";
             std::cout << "  --guest-os <type>      Specify guest OS (linux|windows, default: auto-detect)\n";
             std::cout << "  --help, -h             Show this help message\n";
@@ -178,6 +183,11 @@ int main(int argc, char** argv) {
 
     // Kernel discovery backend (replacing beacon data reading)
     auto kernelDiscovery = std::make_shared<KernelDiscoveryBackend>();
+
+    // Set debug logging if enabled via command line
+    if (debugLogging) {
+        kernelDiscovery->SetDebugLogging(true);
+    }
 
     // Create memory file reader for bitmap viewers' memory access
     auto memoryFileReader = std::make_shared<MemoryFileReader>();

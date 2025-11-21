@@ -73,6 +73,9 @@ public:
     virtual bool Initialize() = 0;
     virtual void Cleanup() = 0;
 
+    // Debug logging control
+    virtual void SetDebugLogging(bool enabled) = 0;
+
     // Discovery methods
     virtual bool DiscoverKernel() = 0;
     virtual bool DiscoverProcesses() = 0;

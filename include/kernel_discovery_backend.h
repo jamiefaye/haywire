@@ -48,6 +48,9 @@ public:
                    GuestOS guestOS = GuestOS::Unknown);
     void Cleanup();
 
+    // Control debug logging
+    void SetDebugLogging(bool enabled);
+
     // Process discovery
     bool RefreshProcessList();
     bool GetPIDList(std::vector<uint32_t>& pids);

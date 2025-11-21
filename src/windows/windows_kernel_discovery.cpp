@@ -125,6 +125,11 @@ public:
         processes.clear();
     }
 
+    void SetDebugLogging(bool enabled) override {
+        // TODO: Implement debug logging for Windows discovery
+        (void)enabled;
+    }
+
     // Discovery methods
     bool DiscoverKernel() override {
         std::cout << "[WindowsKernelDiscovery] Discovering Windows kernel structures..." << std::endl;

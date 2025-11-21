@@ -75,6 +75,12 @@ void KernelDiscoveryBackend::Cleanup() {
     initialized = false;
 }
 
+void KernelDiscoveryBackend::SetDebugLogging(bool enabled) {
+    if (discovery) {
+        discovery->SetDebugLogging(enabled);
+    }
+}
+
 bool KernelDiscoveryBackend::RefreshProcessList() {
     auto startTime = std::chrono::steady_clock::now();
 
