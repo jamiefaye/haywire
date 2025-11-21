@@ -126,33 +126,29 @@ if [ "$USE_TPM" -eq 1 ]; then
     )
 fi
 
-# Launch QEMU with TCG emulation
+# Launch QEMU with TCG emulation - match Linux script configuration
 # Note: No -accel flag = defaults to TCG on Apple Silicon
 qemu-system-x86_64 \
-    -M q35 \
-    -cpu qemu64 \
-    -m $MEMORY \
+    -machine q35 \
+    -cpu max \
     -smp $CORES \
+    -m $MEMORY \
+    -object memory-backend-file,id=mem,size=$MEMORY,mem-path=$MEMFILE,share=on \
+    -numa node,memdev=mem \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$OVMF_VARS" \
-    -nodefaults \
-    -device virtio-vga \
-    -display default,show-cursor=on \
-    -device qemu-xhci \
+    -device ahci,id=ahci \
+    -drive file="$DISK_IMAGE",if=none,id=disk,format=qcow2 \
+    -device ide-hd,drive=disk,bus=ahci.0 \
+    -boot order=c,menu=on \
+    -vga std \
+    -usb \
     -device usb-kbd \
     -device usb-tablet \
-    -device ahci,id=ahci \
-    -drive if=none,id=disk,format=qcow2,file="$DISK_IMAGE" \
-    -device ide-hd,drive=disk,bus=ahci.0 \
-    -object memory-backend-file,id=mem,size=$MEMORY,mem-path=$MEMFILE,share=on,prealloc=on \
-    -numa node,memdev=mem \
     "${TPM_PARAMS[@]}" \
     -qmp tcp:localhost:$QMP_PORT,server=on,wait=off \
     -monitor telnet:localhost:$MONITOR_PORT,server=on,wait=off \
-    -netdev user,id=net0,hostfwd=tcp::3389-:3389 \
-    -device virtio-net-pci,netdev=net0,romfile= \
-    -name "Windows11-x86_64-TCG" \
-    -serial stdio
+    -name "Windows11-x86_64-TCG"
 
 # Clean up swtpm if it was started
 if [ "$USE_TPM" -eq 1 ] && [ ! -z "$SWTPM_PID" ]; then
