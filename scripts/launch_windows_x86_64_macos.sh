@@ -83,6 +83,32 @@ if [ ! -f "$OVMF_VARS" ]; then
     fi
 fi
 
+# Setup TPM 2.0 (required for Windows 11)
+SWTPM_DIR="$SCRIPT_DIR/../vms/swtpm_win11"
+mkdir -p "$SWTPM_DIR"
+
+# Check if swtpm is installed
+if ! command -v swtpm &> /dev/null; then
+    echo "WARNING: swtpm not found (needed for TPM 2.0)"
+    echo "Install with: brew install swtpm"
+    echo ""
+    echo "Continuing without TPM - Windows 11 may not boot properly"
+    echo "Press Ctrl+C to cancel, or wait 5 seconds to continue..."
+    sleep 5
+    USE_TPM=0
+else
+    USE_TPM=1
+    # Start swtpm in background
+    echo "Starting TPM 2.0 emulation..."
+    swtpm socket --tpmstate dir="$SWTPM_DIR" \
+        --ctrl type=unixio,path="$SWTPM_DIR/swtpm-sock" \
+        --tpm2 \
+        --log level=0 &
+    SWTPM_PID=$!
+    sleep 1
+    echo "TPM 2.0 emulator started (PID: $SWTPM_PID)"
+fi
+
 echo "Starting Windows 11 VM with TCG emulation..."
 echo "Memory backend: $MEMFILE"
 echo "Ports: QMP=$QMP_PORT, Monitor=$MONITOR_PORT"
@@ -90,9 +116,18 @@ echo ""
 echo "This will be SLOW. Be patient during boot."
 echo ""
 
+# Build TPM parameters if available
+TPM_PARAMS=()
+if [ "$USE_TPM" -eq 1 ]; then
+    TPM_PARAMS=(
+        -chardev "socket,id=chrtpm,path=$SWTPM_DIR/swtpm-sock"
+        -tpmdev emulator,id=tpm0,chardev=chrtpm
+        -device tpm-tis,tpmdev=tpm0
+    )
+fi
+
 # Launch QEMU with TCG emulation
 # Note: No -accel flag = defaults to TCG on Apple Silicon
-# Using small VARS file (2MB) to stay under 8MB combined limit with CODE (3.5MB)
 qemu-system-x86_64 \
     -M q35 \
     -cpu qemu64 \
@@ -111,12 +146,19 @@ qemu-system-x86_64 \
     -device ide-hd,drive=disk,bus=ahci.0 \
     -object memory-backend-file,id=mem,size=$MEMORY,mem-path=$MEMFILE,share=on,prealloc=on \
     -numa node,memdev=mem \
+    "${TPM_PARAMS[@]}" \
     -qmp tcp:localhost:$QMP_PORT,server=on,wait=off \
     -monitor telnet:localhost:$MONITOR_PORT,server=on,wait=off \
     -netdev user,id=net0,hostfwd=tcp::3389-:3389 \
     -device virtio-net-pci,netdev=net0,romfile= \
     -name "Windows11-x86_64-TCG" \
     -serial stdio
+
+# Clean up swtpm if it was started
+if [ "$USE_TPM" -eq 1 ] && [ ! -z "$SWTPM_PID" ]; then
+    echo "Stopping TPM emulator (PID: $SWTPM_PID)..."
+    kill $SWTPM_PID 2>/dev/null || true
+fi
 
 echo ""
 echo "VM shut down."
