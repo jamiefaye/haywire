@@ -100,6 +100,7 @@ qemu-system-x86_64 \
     -smp $CORES \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$OVMF_VARS" \
+    -nodefaults \
     -device virtio-vga \
     -display default,show-cursor=on \
     -device qemu-xhci \
