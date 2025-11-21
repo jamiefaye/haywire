@@ -270,32 +270,50 @@ void ChangeDetector::ScanChunk(size_t chunk_idx) {
         return;  // No reader available
     }
 
+    // Safety check: make sure size is reasonable
+    if (size == 0 || size > chunk_size_) {
+        return;
+    }
+
     // Combined zero-check and checksum calculation in single pass
     // This saves a full page read (important since 4KB > L1 cache working set)
     uint32_t checksum = 0;
     bool is_zero = true;
 
-    // Use 64-bit processing for speed
-    const uint64_t* data64 = reinterpret_cast<const uint64_t*>(data);
-    size_t count64 = size / 8;
+    // Check if pointer is 8-byte aligned for fast 64-bit processing
+    bool is_aligned = (reinterpret_cast<uintptr_t>(data) % 8) == 0;
 
-    for (size_t i = 0; i < count64; i++) {
-        uint64_t val = data64[i];
-        if (val != 0) {
-            is_zero = false;
-            // Calculate checksum byte by byte from this qword
-            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&val);
-            for (int j = 0; j < 8; j++) {
-                checksum = ((checksum << 5) | (checksum >> 27)) ^ bytes[j];
+    if (is_aligned && size >= 8) {
+        // Use 64-bit processing for speed (only if aligned)
+        const uint64_t* data64 = reinterpret_cast<const uint64_t*>(data);
+        size_t count64 = size / 8;
+
+        for (size_t i = 0; i < count64; i++) {
+            uint64_t val = data64[i];
+            if (val != 0) {
+                is_zero = false;
+                // Calculate checksum byte by byte from this qword
+                const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&val);
+                for (int j = 0; j < 8; j++) {
+                    checksum = ((checksum << 5) | (checksum >> 27)) ^ bytes[j];
+                }
             }
         }
-    }
 
-    // Process remaining bytes
-    for (size_t i = count64 * 8; i < size; i++) {
-        if (data[i] != 0) {
-            is_zero = false;
-            checksum = ((checksum << 5) | (checksum >> 27)) ^ data[i];
+        // Process remaining bytes
+        for (size_t i = count64 * 8; i < size; i++) {
+            if (data[i] != 0) {
+                is_zero = false;
+                checksum = ((checksum << 5) | (checksum >> 27)) ^ data[i];
+            }
+        }
+    } else {
+        // Unaligned or small size: process byte by byte
+        for (size_t i = 0; i < size; i++) {
+            if (data[i] != 0) {
+                is_zero = false;
+                checksum = ((checksum << 5) | (checksum >> 27)) ^ data[i];
+            }
         }
     }
 

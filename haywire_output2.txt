@@ -1,0 +1,1 @@
+/usr/bin/bash: line 1: buildhaywire.exe: command not found

@@ -216,13 +216,13 @@ const uint8_t* MemoryBackend::GetDirectPointer(uint64_t gpa) const {
     return mappedData + fileOffset;
 }
 
-bool MemoryBackend::InitializeMemoryMapping(const std::string& monitor_host, int monitor_port) {
+bool MemoryBackend::InitializeMemoryMapping(const std::string& monitor_host, int monitor_port, int arch_hint) {
     if (!memoryMapper) {
         memoryMapper = std::make_unique<MemoryMapper>();
     }
-    
-    std::cout << "MemoryBackend: Initializing memory mapping from QEMU monitor" << std::endl;
-    bool success = memoryMapper->DiscoverMemoryMap(monitor_host, monitor_port);
+
+    std::cout << "MemoryBackend: Initializing memory mapping from QEMU monitor (arch_hint=" << arch_hint << ")" << std::endl;
+    bool success = memoryMapper->DiscoverMemoryMap(monitor_host, monitor_port, arch_hint);
     
     if (success) {
         std::cout << "MemoryBackend: Successfully discovered memory regions" << std::endl;

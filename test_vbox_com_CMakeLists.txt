@@ -1,0 +1,44 @@
+# Standalone CMake file for testing VirtualBox COM API
+#
+# Usage:
+#   mkdir test_build
+#   cd test_build
+#   cmake -G "Visual Studio 17 2022" ../ -DCMAKE_BUILD_TYPE=Release -S ../test_vbox_com
+#   cmake --build . --config Release
+#   Release\test_vbox_com.exe "Ubuntu-x86_64-Haywire"
+
+cmake_minimum_required(VERSION 3.15)
+project(test_vbox_com)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Find VirtualBox SDK
+set(VBOX_SDK "C:/Program Files/Oracle/VirtualBox/sdk")
+if(NOT EXISTS "${VBOX_SDK}")
+    message(FATAL_ERROR "VirtualBox SDK not found at: ${VBOX_SDK}")
+endif()
+
+add_executable(test_vbox_com test_vbox_com.cpp)
+
+# Include directories
+target_include_directories(test_vbox_com PRIVATE
+    "${VBOX_SDK}/bindings/mscom/include"
+)
+
+# Windows COM libraries
+target_link_libraries(test_vbox_com PRIVATE
+    ole32
+    oleaut32
+)
+
+# Compiler flags for COM
+if(MSVC)
+    target_compile_options(test_vbox_com PRIVATE /EHsc)
+endif()
+
+message(STATUS "VirtualBox SDK: ${VBOX_SDK}")
+message(STATUS "")
+message(STATUS "After building, run:")
+message(STATUS "  cd Release")
+message(STATUS "  .\\test_vbox_com.exe \"Ubuntu-x86_64-Haywire\"")

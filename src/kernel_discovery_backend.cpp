@@ -7,6 +7,7 @@
 
 #include "kernel_discovery_backend.h"
 #include "memory_types.h"  // For SectionEntry definition
+#include "../include/ikernel_discovery.h"  // For CreateKernelDiscovery factory
 #include <iostream>
 #include <iomanip>
 #include <algorithm>
@@ -26,16 +27,22 @@ KernelDiscoveryBackend::~KernelDiscoveryBackend() {
 
 bool KernelDiscoveryBackend::Initialize(const std::string& memoryPath,
                                         const std::string& qmpHost,
-                                        int qmpPort) {
+                                        int qmpPort,
+                                        GuestOS guestOS) {
     if (initialized) {
         return true;
     }
 
     std::cout << "[KernelDiscovery] Initializing with memory file: " << memoryPath << std::endl;
     std::cout << "[KernelDiscovery] QMP connection: " << qmpHost << ":" << qmpPort << std::endl;
+    std::cout << "[KernelDiscovery] Guest OS: " << (guestOS == GuestOS::Windows ? "Windows" : guestOS == GuestOS::Linux ? "Linux" : "Auto-detect") << std::endl;
 
-    // Initialize kernel discovery with memory file and QMP settings
-    discovery = std::make_unique<KernelDiscovery>(memoryPath);
+    // Create kernel discovery using factory (supports Linux and Windows)
+    discovery = CreateKernelDiscovery(memoryPath, "", guestOS);
+    if (!discovery) {
+        std::cerr << "[KernelDiscovery] Failed to create kernel discovery backend" << std::endl;
+        return false;
+    }
 
     std::cout << "[KernelDiscovery] Calling Initialize()..." << std::endl;
     if (!discovery->Initialize()) {
@@ -251,6 +258,29 @@ bool KernelDiscoveryBackend::GetProcessSections(uint32_t pid, std::vector<Sectio
 
     const auto* proc = it->second;
 
+    // If sections haven't been extracted yet, do it now
+    if (proc->sections.empty()) {
+        discovery->ExtractProcessMemoryMap(pid);
+        // Note: proc pointer may be invalidated after ExtractProcessMemoryMap
+        // Re-fetch from map
+        it = pidMap.find(pid);
+        if (it == pidMap.end()) {
+            return false;
+        }
+        proc = it->second;
+
+        // Also extract PTEs if not done yet
+        if (proc->ptes.empty()) {
+            discovery->WalkProcessPageTables(const_cast<IKernelDiscovery::ProcessInfo&>(*proc));
+            // Re-fetch again in case PTEs modified the process
+            it = pidMap.find(pid);
+            if (it == pidMap.end()) {
+                return false;
+            }
+            proc = it->second;
+        }
+    }
+
     for (const auto& sec : proc->sections) {
         SectionEntry entry;
         entry.type = 2;  // ENTRY_SECTION
@@ -317,7 +347,7 @@ bool KernelDiscoveryBackend::ShouldRefresh() {
     return elapsed >= 5;
 }
 
-const KernelDiscovery::ProcessInfo* KernelDiscoveryBackend::GetCurrentProcess() const {
+const IKernelDiscovery::ProcessInfo* KernelDiscoveryBackend::GetCurrentProcess() const {
     if (currentPID == 0) return nullptr;
 
     auto it = pidMap.find(currentPID);

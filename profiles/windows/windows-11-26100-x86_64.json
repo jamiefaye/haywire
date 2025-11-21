@@ -1,0 +1,284 @@
+{
+  "os": "windows",
+  "version": "Windows 11 Build 26200 (25H2)",
+  "build": "26200",
+  "architecture": "x86_64",
+  "verified": true,
+  "notes": [
+    "Offsets from Vergilius Project: https://www.vergiliusproject.com/kernels/x64/windows-11/25h2/",
+    "Verified with Task Manager PIDs and VAD tree walking",
+    "Windows 11 Version 25H2 (OS Build 26200.7171)",
+    "All offsets verified via live memory inspection"
+  ],
+  "structures": {
+    "EPROCESS": {
+      "size": 2112,
+      "description": "Executive Process structure (kernel process object)",
+      "fields": {
+        "Pcb": {
+          "offset": 0,
+          "type": "KPROCESS",
+          "size": 456,
+          "description": "Kernel Process Control Block"
+        },
+        "ProcessLock": {
+          "offset": 456,
+          "type": "EX_PUSH_LOCK",
+          "size": 8
+        },
+        "UniqueProcessId": {
+          "offset": 464,
+          "type": "HANDLE",
+          "size": 8,
+          "description": "Process ID (PID)"
+        },
+        "ActiveProcessLinks": {
+          "offset": 472,
+          "type": "LIST_ENTRY",
+          "size": 16,
+          "description": "Links to PsActiveProcessHead list"
+        },
+        "ImageFileName": {
+          "offset": 824,
+          "type": "CHAR[15]",
+          "size": 15,
+          "description": "Process name (e.g. 'explorer.exe')"
+        },
+        "VadRoot": {
+          "offset": 1368,
+          "type": "RTL_AVL_TREE",
+          "size": 8,
+          "description": "Root of VAD tree (Virtual Address Descriptors)"
+        },
+        "Peb": {
+          "offset": 736,
+          "type": "PPEB",
+          "size": 8,
+          "description": "Process Environment Block pointer"
+        }
+      }
+    },
+    "KPROCESS": {
+      "size": 456,
+      "description": "Kernel Process structure (embedded in EPROCESS)",
+      "fields": {
+        "DirectoryTableBase": {
+          "offset": 40,
+          "type": "ULONG64",
+          "size": 8,
+          "description": "CR3 value / Page Directory Base (PGD)"
+        }
+      }
+    },
+    "MMVAD": {
+      "size": 128,
+      "description": "Memory Manager Virtual Address Descriptor",
+      "fields": {
+        "Core": {
+          "offset": 0,
+          "type": "MMVAD_SHORT",
+          "size": 64
+        },
+        "u2": {
+          "offset": 64,
+          "type": "UNION",
+          "size": 8
+        },
+        "Subsection": {
+          "offset": 72,
+          "type": "PSUBSECTION",
+          "size": 8,
+          "description": "Points to file mapping info"
+        }
+      }
+    },
+    "MMVAD_SHORT": {
+      "size": 64,
+      "description": "Short VAD structure (AVL tree node + range + flags)",
+      "fields": {
+        "VadNode": {
+          "offset": 0,
+          "type": "RTL_BALANCED_NODE",
+          "size": 24,
+          "description": "AVL tree node (parent, left, right)"
+        },
+        "StartingVpn": {
+          "offset": 24,
+          "type": "ULONG",
+          "size": 4,
+          "description": "Starting Virtual Page Number (address >> 12)"
+        },
+        "EndingVpn": {
+          "offset": 28,
+          "type": "ULONG",
+          "size": 4,
+          "description": "Ending Virtual Page Number (address >> 12)"
+        },
+        "VadFlags": {
+          "offset": 48,
+          "type": "MMVAD_FLAGS",
+          "size": 4,
+          "description": "Protection, commit, private/shared, etc."
+        }
+      }
+    },
+    "RTL_BALANCED_NODE": {
+      "size": 24,
+      "description": "AVL tree node",
+      "fields": {
+        "Left": {
+          "offset": 0,
+          "type": "PRTL_BALANCED_NODE",
+          "size": 8
+        },
+        "Right": {
+          "offset": 8,
+          "type": "PRTL_BALANCED_NODE",
+          "size": 8
+        },
+        "ParentValue": {
+          "offset": 16,
+          "type": "ULONG_PTR",
+          "size": 8,
+          "description": "Parent pointer with balance bits"
+        }
+      }
+    },
+    "PEB": {
+      "size": 1936,
+      "description": "Process Environment Block (user-mode structure)",
+      "fields": {
+        "Ldr": {
+          "offset": 24,
+          "type": "PPEB_LDR_DATA",
+          "size": 8,
+          "description": "Loader data (contains module lists)"
+        }
+      }
+    },
+    "PEB_LDR_DATA": {
+      "size": 88,
+      "description": "Loader data containing module lists",
+      "fields": {
+        "InLoadOrderModuleList": {
+          "offset": 16,
+          "type": "LIST_ENTRY",
+          "size": 16,
+          "description": "Modules in load order (first entry is .exe)"
+        },
+        "InMemoryOrderModuleList": {
+          "offset": 32,
+          "type": "LIST_ENTRY",
+          "size": 16,
+          "description": "Modules in memory order"
+        },
+        "InInitializationOrderModuleList": {
+          "offset": 48,
+          "type": "LIST_ENTRY",
+          "size": 16,
+          "description": "Modules in initialization order"
+        }
+      }
+    },
+    "LDR_DATA_TABLE_ENTRY": {
+      "size": 304,
+      "description": "Module information entry",
+      "fields": {
+        "InLoadOrderLinks": {
+          "offset": 0,
+          "type": "LIST_ENTRY",
+          "size": 16,
+          "description": "Links in load order list"
+        },
+        "InMemoryOrderLinks": {
+          "offset": 16,
+          "type": "LIST_ENTRY",
+          "size": 16,
+          "description": "Links in memory order list"
+        },
+        "InInitializationOrderLinks": {
+          "offset": 32,
+          "type": "LIST_ENTRY",
+          "size": 16,
+          "description": "Links in initialization order list"
+        },
+        "DllBase": {
+          "offset": 48,
+          "type": "PVOID",
+          "size": 8,
+          "description": "Base address of loaded module"
+        },
+        "SizeOfImage": {
+          "offset": 64,
+          "type": "ULONG",
+          "size": 4,
+          "description": "Size of module in bytes"
+        },
+        "FullDllName": {
+          "offset": 72,
+          "type": "UNICODE_STRING",
+          "size": 16,
+          "description": "Full path (e.g. C:\\Windows\\System32\\ntdll.dll)"
+        },
+        "BaseDllName": {
+          "offset": 88,
+          "type": "UNICODE_STRING",
+          "size": 16,
+          "description": "Base name only (e.g. ntdll.dll)"
+        }
+      }
+    },
+    "UNICODE_STRING": {
+      "size": 16,
+      "description": "Unicode string structure",
+      "fields": {
+        "Length": {
+          "offset": 0,
+          "type": "USHORT",
+          "size": 2,
+          "description": "Length in bytes (not characters)"
+        },
+        "MaximumLength": {
+          "offset": 2,
+          "type": "USHORT",
+          "size": 2,
+          "description": "Buffer size"
+        },
+        "Buffer": {
+          "offset": 8,
+          "type": "PWCH",
+          "size": 8,
+          "description": "Pointer to UTF-16LE string"
+        }
+      }
+    }
+  },
+  "symbols": {
+    "PsActiveProcessHead": {
+      "description": "Head of doubly-linked process list",
+      "note": "Must be found via pattern scanning or kernel symbols"
+    }
+  },
+  "page_table": {
+    "description": "x86_64 4-level paging (same as Linux)",
+    "levels": [
+      {"name": "PML4", "bits": 9, "shift": 39},
+      {"name": "PDPT", "bits": 9, "shift": 30},
+      {"name": "PD", "bits": 9, "shift": 21},
+      {"name": "PT", "bits": 9, "shift": 12}
+    ],
+    "page_size": 4096,
+    "pte_format": {
+      "Present": {"bit": 0},
+      "Write": {"bit": 1},
+      "User": {"bit": 2},
+      "WriteThrough": {"bit": 3},
+      "CacheDisable": {"bit": 4},
+      "Accessed": {"bit": 5},
+      "Dirty": {"bit": 6},
+      "LargePage": {"bit": 7},
+      "Global": {"bit": 8},
+      "NoExecute": {"bit": 63}
+    }
+  }
+}

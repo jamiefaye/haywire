@@ -134,6 +134,7 @@ add_executable(haywire
     src/memory_file_reader.cpp
     # beacon files completely removed - using memory_file_reader instead
     src/kernel_discovery_backend.cpp
+    src/kernel_discovery_factory.cpp
     # Page database and memory view system
     src/page_database.cpp
     src/memory_view.cpp
@@ -180,6 +181,9 @@ if(CAPSTONE_FOUND)
     target_link_directories(haywire PRIVATE ${CAPSTONE_LIBRARY_DIRS})
     target_link_libraries(haywire PRIVATE ${CAPSTONE_LIBRARIES})
 endif()
+
+# Enable AVX2 for change_detector.cpp
+set_source_files_properties(src/change_detector.cpp PROPERTIES COMPILE_FLAGS "-mavx2")
 
 # Auto-sign on macOS for debugging privileges
 if(APPLE)

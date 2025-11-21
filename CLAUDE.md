@@ -6,37 +6,54 @@ Haywire is a VM memory introspection tool that bypasses QEMU's memory isolation 
 
 **Current Status**: Both C++ and web implementations are actively maintained. C++ version provides native performance with live change detection and heat map visualization. Web version offers cross-platform support and easier deployment.
 
-**Platform Support**:
-- QEMU/KVM on x86_64 Linux (native performance via KVM)
-- QEMU on Intel macOS (native performance via HVF)
-- QEMU on Intel Windows via WSL2+KVM (native performance, recommended)
-- QEMU on Intel Windows via WHPX (buggy with Linux guests, not recommended)
-- QEMU on ARM64 macOS (current dev environment)
-- VMware/VirtualBox support requires snapshot-based introspection (not live)
-- **VirtualBox with "secret range" patch**: Live memory access possible with ~150 lines of code (backup plan)
-
 ## Key Technical Context
 
-### Memory Protection Discovery
-- QEMU intentionally separates guest RAM from kernel structures
-- Kernel page tables and task_structs are allocated beyond memory-backend-file boundaries
-- This is a security feature, not a bug - it prevents casual host-level kernel inspection
-- We bypass this using QMP commands with cpu_physical_memory_read()
+### Memory Access: The Truth About memory-backend-file
+
+**CRITICAL UNDERSTANDING** (discovered 2025-11-17 after 3 platform iterations):
+
+The memory-backend-file contains **ALL guest RAM**, including kernel structures like page tables and VAD nodes. Previous documentation incorrectly stated these were "outside" the file - this was wrong!
+
+**How QEMU Maps RAM to the File:**
+
+QEMU's memory-backend-file backs the entire guest RAM, but guest physical addresses may be non-contiguous due to architectural features (PCI holes, RAM base offsets). You need the correct mapping formula:
+
+#### ARM64 (Linux):
+```
+Guest RAM starts at: 0x40000000 (not 0x0)
+file_offset = guest_pa - 0x40000000
+```
+
+Example: Kernel structure at PA 0x1b4dbf000 (6.8GB) → File offset 0x174dbf000 (5.8GB) ✓
+
+#### x86_64 (Windows/Linux):
+```
+RAM split around PCI MMIO hole (2GB-4GB):
+  0x00000000 - 0x7FFFFFFF   (0-2GB)   → file[0x00000000 - 0x7FFFFFFF]
+  0x100000000 - 0x27FFFFFFF (4GB-10GB) → file[0x80000000 - 0x1FFFFFFFF]
+
+Mapping formula:
+if (guest_pa < 0x80000000)
+    file_offset = guest_pa
+else if (guest_pa >= 0x100000000)
+    file_offset = guest_pa - 0x80000000  // Subtract 2GB PCI hole
+```
+
+Example: Page table at PA 0x25f000000 (9.75GB) → File offset 0x1df000000 (7.47GB) ✓
+
+**Verified empirically**: Data read from file matches QMP `xp` command exactly.
 
 ### Memory Access Methods
+
 - **Primary**: Memory-mapped file with MAP_SHARED (`/tmp/haywire-vm-mem`)
+  - Contains ALL guest RAM after applying platform-specific offset mapping
   - Provides instant access to live QEMU memory updates
   - Critical: Must use MAP_SHARED, not MAP_PRIVATE (which creates static snapshot)
-  - Used for display, change detection, and all performance-critical paths
-- **Secondary**: QMP commands for kernel structures outside RAM bounds
-  - Only needed for memory beyond memory-backend-file boundaries
-  - Used sparingly due to performance overhead
+  - Used for ALL memory access (kernel structures, user pages, everything)
 
-### Important Memory Addresses (ARM64 Ubuntu)
-- Guest RAM: 0x40000000 to configured size (2GB/4GB/6GB)
-- Kernel structures with highmem=on: ~0x1b4dbf000 (6.8GB)
-- Kernel structures with highmem=off: ~0xb11bf000 (2.77GB)
-- Both are outside memory-backend-file scope
+- **QMP fallback**: Only for addresses outside actual guest RAM
+  - Should rarely be needed in practice
+  - Code should try mmap first via `ReadMemory()`, not `ReadMemoryViaQMP()` directly
 
 ## Project Structure
 
@@ -792,125 +809,3 @@ Enhanced swapper_pgd discovery to work without QMP using functional validation:
 - Automatically recovers from stale cached values
 - QMP results can be cross-validated
 
-
-
-## Recent Progress (October 26, 2025)
-
-### QEMU Intel Acceleration - Critical Discovery
-
-**Problem:** User reported QEMU "does a bad job of running on Intel stuff" - VMs were extremely slow and hanging.
-
-**Root Cause:** Missing `-accel` flag! QEMU defaults to TCG (software emulation) which is 10-100x slower.
-
-**Solution:** Use hardware acceleration on Intel platforms:
-- **Intel macOS**: `qemu-system-x86_64 -accel hvf -cpu host` (Hypervisor.framework)
-- **Intel Linux**: `qemu-system-x86_64 -accel kvm -cpu host` (KVM)
-- **Intel Windows**: `qemu-system-x86_64 -accel whpx -cpu host` (Windows Hypervisor Platform)
-
-**Key Insight:** QEMU works GREAT on Intel with proper acceleration! The slowness was configuration, not a QEMU limitation.
-
-**Why Not VMware/VirtualBox?**
-- VMware Fusion/Workstation: No live memory access, only snapshots
-- VirtualBox: Only snapshot-based introspection (.sav files)
-- QEMU is the ONLY hypervisor with memory-backend-file for live introspection
-
-**Created:**
-- `scripts/launch_ubuntu_x86_64_macos.sh` - Intel macOS with HVF
-- `scripts/launch_ubuntu_x86_64_linux.sh` - Intel Linux with KVM
-- `scripts/launch_ubuntu_x86_64_windows.bat` - Intel Windows with WHPX
-- `docs/qemu_intel_acceleration.md` - Comprehensive acceleration guide
-- `docs/intel_deployment.md` - Quick reference for Intel platforms
-
-**Next Steps:**
-- Test on Intel hardware with HVF/KVM/WHPX
-- Create x86_64 kernel profiles (different offsets than ARM64)
-- Validate identical workflow across all platforms
-
-### VirtualBox "Secret Range" Patch - Backup Plan
-
-**Discovered:** VirtualBox allocates guest RAM in 2MB chunks with **no intrusive metadata**.
-
-**Key Finding:** VirtualBox's `GMMCHUNK` metadata is stored separately from the actual 2MB chunk. Each chunk is pure guest RAM - exactly 2,097,152 bytes with no headers or pointers.
-
-**Elegant Solution:** "Secret Range" patch redirects chunk allocation to pre-mapped shared memory file:
-1. Pre-allocate mmap'd file at `/dev/shm/vbox-vm-mem` (4GB for 4GB VM)
-2. Patch `rtR0MemObjLinuxAllocPagesFromShared()` to allocate from this region
-3. Chunks laid out sequentially: 0x0, 0x200000, 0x400000, ...
-4. Zero copy - guest writes appear instantly in file (MAP_SHARED)
-5. Haywire sees identical layout to QEMU's memory-backend-file
-
-**Complexity:** ~150 lines of code, 2-3 weeks effort
-
-**Status:** Documented as fallback if WSL2+KVM doesn't work out
-
-**Why it's clever:** 
-- No background sync thread needed (unlike original copy-based approach)
-- Zero overhead (same physical pages)
-- Byte-for-byte identical to QEMU's layout
-
-**Documentation:** `docs/virtualbox_secret_range_patch.md`
-
-## Recent Progress (October 31, 2025)
-
-### VirtualBox "Secret Range" Implementation Plan
-
-Created comprehensive implementation plan for adding live memory access to VirtualBox on both macOS and Windows platforms.
-
-**Approach:**
-- Redirect VirtualBox's 2MB chunk allocator to pre-allocated shared memory file
-- Works because VirtualBox chunks contain pure guest RAM with no intrusive metadata
-- Identical to QEMU's memory-backend-file from Haywire's perspective
-
-**Key Components:**
-
-1. **Shared Memory Backend** (`src/VBox/VMM/VMMR3/PGM.cpp`):
-   - POSIX version: Uses `shm_open()` + `mmap()` with MAP_SHARED
-   - Windows version: Uses `CreateFileMapping()` + `MapViewOfFile()`
-   - Optional huge pages (2MB) for zero fragmentation
-   - Simple bump allocator (sequential chunk allocation)
-
-2. **Kernel Allocator Redirect**:
-   - Linux: `src/VBox/Runtime/r0drv/linux/memobj-r0drv-linux.c`
-   - macOS: `src/VBox/Runtime/r0drv/darwin/memobj-r0drv-darwin.cpp`
-   - Windows: `src/VBox/Runtime/r0drv/nt/memobj-r0drv-nt.cpp`
-   - Intercept 2MB chunk requests before kernel allocator
-   - Fall back to normal allocation if shared memory exhausted
-
-3. **Memory Paths**:
-   - Linux: `/dev/shm/vbox-vm-mem`
-   - macOS: `/tmp/vbox-vm-mem` (via shm_open)
-   - Windows: `Global\vbox-vm-mem` (via CreateFileMapping)
-
-**Implementation Phases:**
-1. VirtualBox setup on both platforms
-2. Locate and modify source files
-3. Add shared memory backend (userspace)
-4. Redirect kernel allocator
-5. Build VirtualBox from source
-6. Test with Ubuntu VM
-7. Validate with Haywire
-
-**Testing Checklist:**
-- Shared memory file created with correct size (VM RAM size)
-- VirtualBox logs show chunk allocations from shared memory
-- VM boots and runs normally
-- Haywire can discover swapper_pgd and processes
-- Memory contents match guest RAM
-
-**Benefits:**
-- Zero-copy live memory access (MAP_SHARED)
-- Works with existing VirtualBox VMs
-- No background sync overhead
-- Byte-for-byte identical to QEMU layout
-
-**Trade-offs:**
-- Custom fork to maintain (~150 lines of code)
-- Must reapply patches to new VirtualBox versions
-- Not likely to be accepted upstream (niche use case)
-- Alternative: QEMU with proper acceleration is simpler
-
-**Status:** Complete implementation plan with platform-specific code ready to apply
-
-**Documentation:**
-- `docs/virtualbox_implementation_plan.md` - Detailed implementation guide
-- `docs/virtualbox_secret_range_patch.md` - Conceptual design

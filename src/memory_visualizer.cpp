@@ -1416,20 +1416,32 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
         // Physical mode - use memory mapper to get actual RAM range
         sliderUnit = 65536;  // 64K units
 
-        // Get RAM region from memory mapper
-        uint64_t ramBase = 0x40000000;  // Default ARM64 RAM base
-        uint64_t ramSize = 6ULL * 1024 * 1024 * 1024;  // Default 6GB
+        // Get RAM region from memory mapper or memory file size
+        uint64_t ramBase = 0;  // Default x86-64 RAM base
+        uint64_t ramSize = 8ULL * 1024 * 1024 * 1024;  // Default 8GB
 
         if (memoryMapper && !memoryMapper->GetRegions().empty()) {
             const auto& regions = memoryMapper->GetRegions();
             ramBase = regions[0].gpa_start;
             ramSize = regions[0].size;
+        } else if (memSize > 0) {
+            // Use actual memory file size (accounts for x86-64 PCI hole)
+            ramBase = 0;  // x86-64 starts at PA 0
+            ramSize = memSize;  // File size (8GB for Windows)
         }
 
-        // Slider represents file offsets (0 to ramSize)
-        // viewport.baseAddress is physical address (ramBase to ramBase+ramSize)
-        maxAddress = ramSize;  // File size, not physical address
-        currentPos = viewport.baseAddress - ramBase;  // Convert PA to file offset
+        // For x86-64 with PCI hole: slider covers 0-10GB physical space
+        // File layout: 0-2GB (PA 0-2GB), 2-8GB (PA 4-10GB)
+        // Slider represents PHYSICAL addresses (0 to 10GB for x86-64)
+        if (ramBase == 0 && ramSize == 8ULL * 1024 * 1024 * 1024) {
+            // x86-64 mode: slider covers full physical range including PCI hole
+            maxAddress = 10ULL * 1024 * 1024 * 1024;  // 10GB physical (0-2GB + 4-10GB)
+            currentPos = viewport.baseAddress;  // Already a physical address
+        } else {
+            // ARM64 mode or other: slider represents file offsets
+            maxAddress = ramSize;  // File size
+            currentPos = viewport.baseAddress - ramBase;  // Convert PA to file offset
+        }
     }
     
     // Vertical slider
@@ -3237,7 +3249,7 @@ void MemoryVisualizer::HandleInput() {
                 std::cerr << "VIEWPORT CLAMPED TO 0 (was trying " << newAddress << ")" << std::endl;
                 newAddress = 0;
             }
-            if (newAddress > 0x200000000ULL) newAddress = 0x200000000ULL;  // Cap at 8GB
+            if (newAddress > 0x300000000ULL) newAddress = 0x300000000ULL;  // Cap at 12GB
 
             // Align to stride boundary to prevent horizontal jiggling
             uint64_t strideBytes = viewport.stride * viewport.format.bytesPerPixel;
@@ -4065,8 +4077,8 @@ uint64_t MemoryVisualizer::ScanForNonZeroPage(bool forward) {
     }
 
     // Physical address mode - use QemuConnection like the display code does
-    // We'll scan up to 8GB of physical memory
-    const uint64_t maxAddress = 8ULL * 1024 * 1024 * 1024;  // 8GB limit
+    // We'll scan up to 12GB of physical memory (expanded for Windows page tables/VAD nodes)
+    const uint64_t maxAddress = 12ULL * 1024 * 1024 * 1024;  // 12GB limit
 
     // Start from next/previous page relative to current position
     uint64_t currentPage = (viewport.baseAddress / pageSize) * pageSize;

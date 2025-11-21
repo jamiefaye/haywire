@@ -13,8 +13,9 @@ struct KernelProfile {
     std::string name;
     std::string kernel_version;
     std::string architecture;
+    std::string os;  // "linux" or "windows"
 
-    // task_struct offsets
+    // Linux: task_struct offsets
     size_t task_pid = 888;
     size_t task_tgid = 892;
     size_t task_comm = 1144;
@@ -22,17 +23,33 @@ struct KernelProfile {
     size_t task_tasks = 1664;
     size_t task_size = 9088;
 
-    // mm_struct offsets
+    // Linux: mm_struct offsets
     size_t mm_pgd = 0x68;
     size_t mm_mt = 0x40;
     size_t mm_users = 0x74;
 
-    // vm_area_struct offsets
+    // Linux: vm_area_struct offsets
     size_t vma_start = 0x00;
     size_t vma_end = 0x08;
     size_t vma_next = 0x10;
     size_t vma_flags = 0x20;
     size_t vma_file = 0x80;
+
+    // Windows: EPROCESS offsets
+    size_t eprocess_unique_process_id = 1088;
+    size_t eprocess_active_process_links = 1096;
+    size_t eprocess_image_file_name = 1448;
+    size_t eprocess_vad_root = 1560;
+    size_t eprocess_peb = 1608;
+    size_t eprocess_size = 2816;
+
+    // Windows: KPROCESS offsets (within EPROCESS)
+    size_t kprocess_directory_table_base = 40;
+
+    // Windows: MMVAD offsets
+    size_t mmvad_short_starting_vpn = 24;
+    size_t mmvad_short_ending_vpn = 28;
+    size_t mmvad_short_vad_flags = 48;
 
     bool verified = false;
 };
@@ -54,28 +71,49 @@ public:
         // Simple JSON parsing - look for specific keys
         profile.name = ExtractString(content, "\"name\":");
         profile.kernel_version = ExtractString(content, "\"kernel_version\":");
+        profile.os = ExtractString(content, "\"os\":");
         profile.architecture = ExtractString(content, "\"architecture\":");
         profile.verified = (content.find("\"verified\": true") != std::string::npos);
 
-        // Extract offsets
-        profile.task_pid = ExtractOffset(content, "\"pid\":", "\"offset\":");
-        profile.task_tgid = ExtractOffset(content, "\"tgid\":", "\"offset\":");
-        profile.task_comm = ExtractOffset(content, "\"comm\":", "\"offset\":");
-        profile.task_mm = ExtractOffset(content, "\"mm\":", "\"offset\":");
-        profile.task_tasks = ExtractOffset(content, "\"tasks\":", "\"offset\":");
-        profile.task_size = ExtractInt(content, "\"task_struct\":", "\"size\":");
+        // Determine OS type
+        bool isWindows = (profile.os == "windows");
 
-        profile.mm_pgd = ExtractOffset(content, "\"pgd\":", "\"offset\":");
-        profile.mm_mt = ExtractOffset(content, "\"mm_mt\":", "\"offset\":");
-        profile.mm_users = ExtractOffset(content, "\"mm_users\":", "\"offset\":");
+        if (isWindows) {
+            // Extract Windows offsets
+            profile.eprocess_unique_process_id = ExtractOffset(content, "\"UniqueProcessId\":", "\"offset\":");
+            profile.eprocess_active_process_links = ExtractOffset(content, "\"ActiveProcessLinks\":", "\"offset\":");
+            profile.eprocess_image_file_name = ExtractOffset(content, "\"ImageFileName\":", "\"offset\":");
+            profile.eprocess_vad_root = ExtractOffset(content, "\"VadRoot\":", "\"offset\":");
+            profile.eprocess_peb = ExtractOffset(content, "\"Peb\":", "\"offset\":");
+            profile.eprocess_size = ExtractInt(content, "\"EPROCESS\":", "\"size\":");
 
-        profile.vma_start = ExtractOffset(content, "\"vm_start\":", "\"offset\":");
-        profile.vma_end = ExtractOffset(content, "\"vm_end\":", "\"offset\":");
-        profile.vma_next = ExtractOffset(content, "\"vm_next\":", "\"offset\":");
-        profile.vma_flags = ExtractOffset(content, "\"vm_flags\":", "\"offset\":");
-        profile.vma_file = ExtractOffset(content, "\"vm_file\":", "\"offset\":");
+            profile.kprocess_directory_table_base = ExtractOffset(content, "\"DirectoryTableBase\":", "\"offset\":");
+
+            profile.mmvad_short_starting_vpn = ExtractOffset(content, "\"StartingVpn\":", "\"offset\":");
+            profile.mmvad_short_ending_vpn = ExtractOffset(content, "\"EndingVpn\":", "\"offset\":");
+            profile.mmvad_short_vad_flags = ExtractOffset(content, "\"VadFlags\":", "\"offset\":");
+        } else {
+            // Extract Linux offsets
+            profile.task_pid = ExtractOffset(content, "\"pid\":", "\"offset\":");
+            profile.task_tgid = ExtractOffset(content, "\"tgid\":", "\"offset\":");
+            profile.task_comm = ExtractOffset(content, "\"comm\":", "\"offset\":");
+            profile.task_mm = ExtractOffset(content, "\"mm\":", "\"offset\":");
+            profile.task_tasks = ExtractOffset(content, "\"tasks\":", "\"offset\":");
+            profile.task_size = ExtractInt(content, "\"task_struct\":", "\"size\":");
+
+            profile.mm_pgd = ExtractOffset(content, "\"pgd\":", "\"offset\":");
+            profile.mm_mt = ExtractOffset(content, "\"mm_mt\":", "\"offset\":");
+            profile.mm_users = ExtractOffset(content, "\"mm_users\":", "\"offset\":");
+
+            profile.vma_start = ExtractOffset(content, "\"vm_start\":", "\"offset\":");
+            profile.vma_end = ExtractOffset(content, "\"vm_end\":", "\"offset\":");
+            profile.vma_next = ExtractOffset(content, "\"vm_next\":", "\"offset\":");
+            profile.vma_flags = ExtractOffset(content, "\"vm_flags\":", "\"offset\":");
+            profile.vma_file = ExtractOffset(content, "\"vm_file\":", "\"offset\":");
+        }
 
         std::cout << "Loaded kernel profile: " << profile.name << std::endl;
+        std::cout << "  OS: " << profile.os << std::endl;
         std::cout << "  Kernel: " << profile.kernel_version << " (" << profile.architecture << ")" << std::endl;
         std::cout << "  Verified: " << (profile.verified ? "yes" : "no") << std::endl;
 

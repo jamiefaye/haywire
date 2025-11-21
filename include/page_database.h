@@ -208,11 +208,31 @@ private:
     // Helper methods
     size_t ScanSingleProcess(const ProcessInfo& proc, KernelDiscoveryBackend* backend);
     size_t PhysToIndex(uint64_t physAddr) const {
-        return (physAddr - ramBase) / 4096;
+        // x86-64 PCI hole aware conversion
+        // PA 0x0-0x7FFFFFFF (0-2GB) → Index 0-524287
+        // PA 0x100000000-0x27FFFFFFF (4-10GB) → Index 524288-2097151
+        if (physAddr < 0x80000000ULL) {
+            // 0-2GB: direct mapping
+            return physAddr / 4096;
+        } else if (physAddr >= 0x100000000ULL && physAddr < 0x280000000ULL) {
+            // 4-10GB: subtract 2GB PCI hole
+            return (physAddr - 0x80000000ULL) / 4096;
+        } else {
+            // Out of RAM bounds (in PCI hole or beyond RAM)
+            return SIZE_MAX;
+        }
     }
 
     uint64_t IndexToPhys(size_t index) const {
-        return ramBase + (index * 4096);
+        // Reverse of PhysToIndex
+        constexpr size_t LOW_MEM_PAGES = 0x80000000ULL / 4096;  // 524288 pages (2GB)
+        if (index < LOW_MEM_PAGES) {
+            // Index 0-524287 → PA 0x0-0x7FFFFFFF (0-2GB)
+            return index * 4096;
+        } else {
+            // Index 524288+ → PA 0x100000000+ (4GB+)
+            return (index * 4096) + 0x80000000ULL;
+        }
     }
 
     uint64_t MakeVirtualKey(uint32_t pid, uint64_t virtualAddr) const {

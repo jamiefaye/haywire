@@ -61,7 +61,7 @@ std::string MemoryMapper::QueryMonitor(const std::string& host, int port, const 
     return response;
 }
 
-bool MemoryMapper::ParseMtreeOutput(const std::string& output) {
+bool MemoryMapper::ParseMtreeOutput(const std::string& output, int arch_hint) {
     regions_.clear();
     
     std::cout << "MemoryMapper: Parsing mtree output (" << output.length() << " bytes)" << std::endl;
@@ -165,19 +165,45 @@ bool MemoryMapper::ParseMtreeOutput(const std::string& output) {
         }
     }
     
-    // If still no regions found, fall back to hardcoded ARM64 default
+    // If still no regions found, fall back to architecture-specific defaults
     if (regions_.empty()) {
         std::cout << "MemoryMapper: WARNING: No RAM regions found in mtree output" << std::endl;
-        std::cout << "MemoryMapper: Falling back to ARM64 default (0x40000000)" << std::endl;
-        
-        // Assume 4GB RAM at 0x40000000 (ARM64 default)
+
         MemoryRegion region;
-        region.gpa_start = 0x40000000;
-        region.gpa_end = 0x13FFFFFFF;  // 4GB
-        region.size = 0x100000000;
-        region.name = "default-ram";
-        region.file_offset = 0;
-        
+
+        if (arch_hint == 1) {
+            // x86_64 (Windows) - RAM split by PCI hole at 2-4GB
+            std::cout << "MemoryMapper: Falling back to x86_64 default with PCI hole" << std::endl;
+
+            // Region 1: 0-2GB (below PCI hole)
+            MemoryRegion region1;
+            region1.gpa_start = 0x0;
+            region1.gpa_end = 0x7FFFFFFF;  // 2GB - 1
+            region1.size = 0x80000000;     // 2GB
+            region1.name = "ram-below-4g";
+            region1.file_offset = 0x0;
+            regions_.push_back(region1);
+
+            // Region 2: 4-10GB (above PCI hole)
+            MemoryRegion region2;
+            region2.gpa_start = 0x100000000;   // 4GB
+            region2.gpa_end = 0x27FFFFFFF;     // 10GB - 1
+            region2.size = 0x180000000;        // 6GB
+            region2.name = "ram-above-4g";
+            region2.file_offset = 0x80000000;  // Starts at 2GB in file
+            regions_.push_back(region2);
+
+            return true;  // Early return since we added regions
+        } else {
+            // ARM64 (Linux) or auto - RAM at 0x40000000, 4GB
+            std::cout << "MemoryMapper: Falling back to ARM64 default (0x40000000)" << std::endl;
+            region.gpa_start = 0x40000000;
+            region.gpa_end = 0x13FFFFFFF;  // 4GB
+            region.size = 0x100000000;
+            region.name = "default-ram";
+            region.file_offset = 0;
+        }
+
         regions_.push_back(region);
     }
     
@@ -185,8 +211,8 @@ bool MemoryMapper::ParseMtreeOutput(const std::string& output) {
     return !regions_.empty();
 }
 
-bool MemoryMapper::DiscoverMemoryMap(const std::string& monitor_host, int monitor_port) {
-    std::cout << "MemoryMapper: Discovering memory map from QEMU monitor at " 
+bool MemoryMapper::DiscoverMemoryMap(const std::string& monitor_host, int monitor_port, int arch_hint) {
+    std::cout << "MemoryMapper: Discovering memory map from QEMU monitor at "
               << monitor_host << ":" << monitor_port << std::endl;
     
     // Query memory tree from QEMU monitor
@@ -194,13 +220,43 @@ bool MemoryMapper::DiscoverMemoryMap(const std::string& monitor_host, int monito
     
     if (output.empty()) {
         // This is normal when monitor is not available - we have good defaults
-        std::cout << "MemoryMapper: Using default ARM64 memory map (monitor unavailable)" << std::endl;
         MemoryRegion region;
-        region.gpa_start = 0x40000000;
-        region.gpa_end = 0x13FFFFFFF;  // 4GB
-        region.size = 0x100000000;
-        region.name = "default-ram";
-        region.file_offset = 0;
+
+        if (arch_hint == 1) {
+            // x86_64 (Windows) - RAM split by PCI hole at 2-4GB
+            std::cout << "MemoryMapper: Using default x86_64 memory map with PCI hole (monitor unavailable)" << std::endl;
+
+            // Region 1: 0-2GB (below PCI hole)
+            MemoryRegion region1;
+            region1.gpa_start = 0x0;
+            region1.gpa_end = 0x7FFFFFFF;
+            region1.size = 0x80000000;
+            region1.name = "ram-below-4g";
+            region1.file_offset = 0x0;
+            regions_.push_back(region1);
+
+            // Region 2: 4-10GB (above PCI hole)
+            MemoryRegion region2;
+            region2.gpa_start = 0x100000000;
+            region2.gpa_end = 0x27FFFFFFF;
+            region2.size = 0x180000000;
+            region2.name = "ram-above-4g";
+            region2.file_offset = 0x80000000;
+            regions_.push_back(region2);
+
+            discovered_ = true;
+            LogRegions();
+            return true;
+        } else {
+            // ARM64 (Linux) or auto - RAM at 0x40000000, 4GB
+            std::cout << "MemoryMapper: Using default ARM64 memory map (monitor unavailable)" << std::endl;
+            region.gpa_start = 0x40000000;
+            region.gpa_end = 0x13FFFFFFF;  // 4GB
+            region.size = 0x100000000;
+            region.name = "default-ram";
+            region.file_offset = 0;
+        }
+
         regions_.push_back(region);
         discovered_ = true;
         return true;
@@ -210,7 +266,7 @@ bool MemoryMapper::DiscoverMemoryMap(const std::string& monitor_host, int monito
     std::cout << "MemoryMapper: Raw mtree output (first 2000 chars):" << std::endl;
     std::cout << output.substr(0, 2000) << std::endl;
     
-    if (ParseMtreeOutput(output)) {
+    if (ParseMtreeOutput(output, arch_hint)) {
         discovered_ = true;
         LogRegions();
         return true;

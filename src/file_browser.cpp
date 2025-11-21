@@ -7,8 +7,10 @@
 #include <cstring>
 #include <set>
 #include <tuple>
+#ifndef _WIN32
 #include <pwd.h>
 #include <unistd.h>
+#endif
 
 namespace Haywire {
 
