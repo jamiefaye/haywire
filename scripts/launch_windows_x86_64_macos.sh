@@ -50,8 +50,8 @@ fi
 # Clean up any existing memory file
 rm -f "$MEMFILE"
 
-# OVMF (UEFI firmware) paths for macOS
-OVMF_CODE="/opt/homebrew/share/qemu/edk2-x86_64-code.fd"
+# OVMF (UEFI firmware) paths - use Linux firmware for compatibility
+OVMF_CODE="$SCRIPT_DIR/../firmware/OVMF_CODE.fd"
 OVMF_VARS="$SCRIPT_DIR/../vms/windows11_VARS.fd"
 
 # Check if OVMF firmware exists
@@ -68,12 +68,19 @@ if [ ! -f "$OVMF_CODE" ]; then
     exit 1
 fi
 
-# Create small VARS file if it doesn't exist (2MB to stay under 8MB combined limit)
+# Copy VARS template if it doesn't exist
+OVMF_VARS_TEMPLATE="$SCRIPT_DIR/../firmware/OVMF_VARS.fd"
 if [ ! -f "$OVMF_VARS" ]; then
-    echo "Creating 2MB OVMF VARS file for UEFI variables..."
+    echo "Creating OVMF VARS file from Linux firmware template..."
     mkdir -p "$(dirname "$OVMF_VARS")"
-    dd if=/dev/zero of="$OVMF_VARS" bs=1m count=2 2>/dev/null
-    echo "OVMF VARS file created (CODE: 3.5MB + VARS: 2MB = 5.5MB < 8MB limit)"
+    if [ -f "$OVMF_VARS_TEMPLATE" ]; then
+        cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
+        echo "OVMF VARS file created (CODE: 3.5MB + VARS: 528KB = ~4MB, well under 8MB limit)"
+    else
+        echo "ERROR: OVMF_VARS template not found at: $OVMF_VARS_TEMPLATE"
+        echo "Make sure firmware files from Linux setup are in firmware/ directory"
+        exit 1
+    fi
 fi
 
 echo "Starting Windows 11 VM with TCG emulation..."
