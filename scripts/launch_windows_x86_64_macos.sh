@@ -106,8 +106,6 @@ qemu-system-x86_64 \
     -device qemu-xhci \
     -device usb-kbd \
     -device usb-tablet \
-    -device intel-hda \
-    -device hda-duplex \
     -drive if=virtio,format=qcow2,file="$DISK_IMAGE" \
     -object memory-backend-file,id=mem,size=$MEMORY,mem-path=$MEMFILE,share=on,prealloc=on \
     -numa node,memdev=mem \
