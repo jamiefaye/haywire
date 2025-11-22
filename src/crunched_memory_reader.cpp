@@ -230,6 +230,12 @@ const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
 
         // Check for cached unmapped page (marked as bad)
         if (entry.flags != 0) {
+            // DEBUG: Log cached unmapped pages
+            static int cachedUnmappedCount = 0;
+            if (++cachedUnmappedCount <= 5) {
+                std::cerr << "CrunchedReader[VA]: flat 0x" << std::hex << flatAddress
+                          << " already marked unmapped in cache" << std::dec << std::endl;
+            }
             return nullptr;  // Previously determined to be unmapped, skip immediately
         }
 
@@ -267,6 +273,14 @@ const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
         }
 
         const uint8_t* ptr = backend->GetDirectPointer(physAddr);
+        if (!ptr) {
+            // DEBUG: Log when backend fails to return pointer (VA mode)
+            static int backendFailCount = 0;
+            if (++backendFailCount <= 10) {
+                std::cerr << "CrunchedReader[VA]: backend returned nullptr for PA 0x"
+                          << std::hex << physAddr << " (flat 0x" << flatAddress << ")" << std::dec << std::endl;
+            }
+        }
         return ptr;
     } else {
         // PA mode or old path: Use AddressSpaceFlattener's PA lookup

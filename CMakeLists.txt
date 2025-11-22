@@ -185,15 +185,15 @@ endif()
 # Enable AVX2 for change_detector.cpp
 set_source_files_properties(src/change_detector.cpp PROPERTIES COMPILE_FLAGS "-mavx2")
 
-# Auto-sign on macOS for debugging privileges
+# Auto-sign on macOS (simple ad-hoc signing)
 if(APPLE)
     add_custom_command(
         TARGET haywire
         POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E echo "Signing with debugging entitlements..."
+        COMMAND ${CMAKE_COMMAND} -E echo "Ad-hoc signing binary..."
         COMMAND codesign --remove-signature $<TARGET_FILE:haywire> 2>/dev/null || true
-        COMMAND codesign --entitlements ${CMAKE_SOURCE_DIR}/haywire.entitlements --force --sign - $<TARGET_FILE:haywire>
-        COMMENT "Signing haywire with debugging entitlements for task_for_pid access"
+        COMMAND codesign --force --sign - $<TARGET_FILE:haywire>
+        COMMENT "Ad-hoc signing haywire binary"
     )
 endif()
 
@@ -206,6 +206,9 @@ endif()
 
 # Copy assets to build directory
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+
+# Copy kernel profiles to build directory (needed for Windows/Linux discovery)
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/profiles DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
 # Test executables moved to test_attempts/ directory
 

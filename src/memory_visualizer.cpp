@@ -1423,24 +1423,35 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
         if (memoryMapper && !memoryMapper->GetRegions().empty()) {
             const auto& regions = memoryMapper->GetRegions();
             ramBase = regions[0].gpa_start;
-            ramSize = regions[0].size;
+
+            // Sum all RAM regions to get total size (handles x86-64 PCI hole)
+            ramSize = 0;
+            for (const auto& region : regions) {
+                ramSize += region.size;
+            }
         } else if (memSize > 0) {
             // Use actual memory file size (accounts for x86-64 PCI hole)
             ramBase = 0;  // x86-64 starts at PA 0
             ramSize = memSize;  // File size (8GB for Windows)
         }
 
-        // For x86-64 with PCI hole: slider covers 0-10GB physical space
-        // File layout: 0-2GB (PA 0-2GB), 2-8GB (PA 4-10GB)
-        // Slider represents PHYSICAL addresses (0 to 10GB for x86-64)
-        if (ramBase == 0 && ramSize == 8ULL * 1024 * 1024 * 1024) {
-            // x86-64 mode: slider covers full physical range including PCI hole
-            maxAddress = 10ULL * 1024 * 1024 * 1024;  // 10GB physical (0-2GB + 4-10GB)
-            currentPos = viewport.baseAddress;  // Already a physical address
+        // Slider always represents FILE OFFSETS (0 to RAM size)
+        // This avoids the PCI hole dead zone and gives better precision
+        maxAddress = ramSize;  // File size (8GB for both x86-64 and ARM64)
+
+        // Convert current physical address to file offset
+        if (memoryMapper && !memoryMapper->GetRegions().empty()) {
+            // Use memory mapper to convert PA→file offset (handles PCI hole correctly)
+            int64_t fileOffset = memoryMapper->TranslateGPAToFileOffset(viewport.baseAddress);
+            if (fileOffset >= 0) {
+                currentPos = fileOffset;
+            } else {
+                // Fallback if conversion fails
+                currentPos = viewport.baseAddress - ramBase;
+            }
         } else {
-            // ARM64 mode or other: slider represents file offsets
-            maxAddress = ramSize;  // File size
-            currentPos = viewport.baseAddress - ramBase;  // Convert PA to file offset
+            // No mapper - assume direct mapping
+            currentPos = viewport.baseAddress - ramBase;
         }
     }
     
@@ -1695,12 +1706,36 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
             strcpy(addressInput, AddressParser::Format(virtualAddr, AddressSpace::VIRTUAL).c_str());
         } else {
             // Physical mode - slider value is file offset, convert to physical address
-            uint64_t ramBase = 0x40000000;
+            uint64_t fileOffset = sliderValue * sliderUnit;
+            uint64_t physAddr = fileOffset;
+
+            // Convert file offset to physical address (handles PCI hole)
             if (memoryMapper && !memoryMapper->GetRegions().empty()) {
-                ramBase = memoryMapper->GetRegions()[0].gpa_start;
+                // Find which region this file offset falls into
+                const auto& regions = memoryMapper->GetRegions();
+                bool found = false;
+                for (const auto& region : regions) {
+                    if (fileOffset >= region.file_offset &&
+                        fileOffset < region.file_offset + region.size) {
+                        // This file offset is in this region
+                        uint64_t offsetIntoRegion = fileOffset - region.file_offset;
+                        physAddr = region.gpa_start + offsetIntoRegion;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    // Fallback: assume direct mapping with RAM base
+                    uint64_t ramBase = regions[0].gpa_start;
+                    physAddr = fileOffset + ramBase;
+                }
+            } else {
+                // No mapper - assume ARM64 default
+                physAddr = fileOffset + 0x40000000;
             }
-            viewport.baseAddress = sliderValue * sliderUnit + ramBase;
-            strcpy(addressInput, AddressParser::Format(viewport.baseAddress, AddressSpace::PHYSICAL).c_str());
+
+            viewport.baseAddress = physAddr;
+            strcpy(addressInput, AddressParser::Format(physAddr, AddressSpace::PHYSICAL).c_str());
         }
         
         needsUpdate = true;
@@ -1754,13 +1789,31 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
                 ImGui::EndTooltip();
             }
         } else {
-            // Physical mode - show address
-            uint64_t ramBase = 0x40000000;
-            if (memoryMapper && !memoryMapper->GetRegions().empty()) {
-                ramBase = memoryMapper->GetRegions()[0].gpa_start;
-            }
+            // Physical mode - show address (file offset → PA conversion)
             uint64_t fileOffset = sliderValue * sliderUnit;
-            uint64_t physAddr = fileOffset + ramBase;
+            uint64_t physAddr = fileOffset;
+
+            // Convert file offset to physical address (handles PCI hole)
+            if (memoryMapper && !memoryMapper->GetRegions().empty()) {
+                const auto& regions = memoryMapper->GetRegions();
+                bool found = false;
+                for (const auto& region : regions) {
+                    if (fileOffset >= region.file_offset &&
+                        fileOffset < region.file_offset + region.size) {
+                        uint64_t offsetIntoRegion = fileOffset - region.file_offset;
+                        physAddr = region.gpa_start + offsetIntoRegion;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    uint64_t ramBase = regions[0].gpa_start;
+                    physAddr = fileOffset + ramBase;
+                }
+            } else {
+                physAddr = fileOffset + 0x40000000;  // ARM64 default
+            }
+
             ImGui::BeginTooltip();
             ImGui::Text("PA: 0x%llx", physAddr);
             ImGui::Text("File Offset: %.1f GB", fileOffset / (1024.0 * 1024.0 * 1024.0));
