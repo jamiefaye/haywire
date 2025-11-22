@@ -260,6 +260,11 @@ public:
         const uint64_t PAGE_SIZE = 4096;
         const uint64_t TASK_STRUCT_SIZE = 9088;  // Exact size from web version
 
+        // Combine all offsets to check (avoid creating vector 1.5M times in loop!)
+        std::vector<uint64_t> offsetsToCheck;
+        for (auto off : SLAB_OFFSETS) offsetsToCheck.push_back(off);
+        for (auto off : PAGE_STRADDLE_OFFSETS) offsetsToCheck.push_back(off);
+
         // Scan entire memory
         uint64_t scannedMB = 0;
         uint32_t lastPid = 0;
@@ -270,11 +275,6 @@ public:
                 std::cout << "  Scanned " << scannedMB << "MB... ("
                           << processes.size() << " processes found)\r" << std::flush;
             }
-
-            // Try both SLAB offsets and PAGE_STRADDLE offsets
-            std::vector<uint64_t> offsetsToCheck;
-            for (auto off : SLAB_OFFSETS) offsetsToCheck.push_back(off);
-            for (auto off : PAGE_STRADDLE_OFFSETS) offsetsToCheck.push_back(off);
 
             for (const auto slabOffset : offsetsToCheck) {
                 uint64_t offset = pageStart + slabOffset;
