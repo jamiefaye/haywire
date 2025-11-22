@@ -183,24 +183,33 @@ void CrunchedMemoryReader::InitializeRenderCache() {
     renderPageCache.clear();
     renderPageCache.resize(numPages);
 
+    size_t pagesWithVA = 0;
     const auto& regions = flattener->GetRegions();
     for (const auto& region : regions) {
-        // For each page in this region, store its VA
-        uint64_t regionPages = (region.FlatSize() + PAGE_SIZE - 1) / PAGE_SIZE;
-        size_t startPageIdx = region.flatStart / PAGE_SIZE;
+        // For each BYTE in this region, we need to cover it with a page in the cache
+        // IMPORTANT: flatStart might not be page-aligned!
+        uint64_t regionStartFlat = region.flatStart;
+        uint64_t regionEndFlat = region.flatEnd;
+        size_t startPageIdx = regionStartFlat / PAGE_SIZE;
+        size_t endPageIdx = (regionEndFlat + PAGE_SIZE - 1) / PAGE_SIZE;  // Round up
 
-        for (size_t i = 0; i < regionPages; i++) {
-            size_t pageIdx = startPageIdx + i;
-            if (pageIdx < numPages) {
-                uint64_t pageVA = region.virtualStart + (i * PAGE_SIZE);
-                renderPageCache[pageIdx].va = pageVA;
-                renderPageCache[pageIdx].pa = 0;  // Will translate lazily
-                renderPageCache[pageIdx].flags = 0;
-            }
+        for (size_t pageIdx = startPageIdx; pageIdx < endPageIdx && pageIdx < numPages; pageIdx++) {
+            // Calculate what VA this flat page corresponds to
+            uint64_t flatPageStart = pageIdx * PAGE_SIZE;
+            // How many bytes into the region is this page?
+            int64_t offsetIntoRegion = flatPageStart - regionStartFlat;
+            if (offsetIntoRegion < 0) offsetIntoRegion = 0;  // Partial first page
+
+            uint64_t pageVA = region.virtualStart + offsetIntoRegion;
+            renderPageCache[pageIdx].va = pageVA;
+            renderPageCache[pageIdx].pa = 0;  // Will translate lazily
+            renderPageCache[pageIdx].flags = 0;
+            pagesWithVA++;
         }
     }
 
-    std::cout << "Rendering page cache: " << numPages << " pages ("
+    std::cout << "Rendering page cache: " << numPages << " pages (" << pagesWithVA << " with VA, "
+              << (numPages - pagesWithVA) << " gaps, "
               << (numPages * sizeof(PageCacheEntry) / (1024.0 * 1024.0)) << " MB)\n";
 }
 
@@ -226,16 +235,22 @@ const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
 
         uint64_t physAddr = entry.pa;
 
-        // Lazy translation: translate on first access
+        // Lazy translation: get PA from flattener's pre-populated cache
         if (physAddr == 0) {
-            // VA is already cached from initialization (O(1) lookup!)
-            uint64_t pageVA = (entry.va / PAGE_SIZE) * PAGE_SIZE;
-            physAddr = translator->TranslateAddress(targetPid, pageVA);
+            // Use AddressSpaceFlattener's PA cache (pre-populated from PTEs)
+            // This is MUCH faster and more accurate than fresh page table walks
+            physAddr = flattener->GetPhysicalAddress(flatAddress & ~(PAGE_SIZE - 1));
 
             // Cache the result - mark unmapped pages with flag
             if (physAddr != 0) {
                 entry.pa = physAddr;
             } else {
+                // DEBUG: Log pages not in PA cache
+                static int unmappedCount = 0;
+                if (++unmappedCount <= 10) {
+                    std::cerr << "CrunchedReader::GetDirectPointer: flat 0x" << std::hex << flatAddress
+                              << " not in PA cache (page not resident)" << std::dec << std::endl;
+                }
                 // Mark as unmapped so we skip it immediately next time
                 entry.flags = 1;
                 return nullptr;

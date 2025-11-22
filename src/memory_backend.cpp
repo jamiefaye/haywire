@@ -195,10 +195,26 @@ bool MemoryBackend::Read(uint64_t gpa, size_t size, std::vector<uint8_t>& buffer
 const uint8_t* MemoryBackend::GetDirectPointer(uint64_t gpa) const {
     // Use MemoryMapper if available, otherwise fall back to hardcoded offset
     int64_t fileOffset;
-    
+
     if (memoryMapper && memoryMapper->GetRegions().size() > 0) {
         fileOffset = memoryMapper->TranslateGPAToFileOffset(gpa);
         if (fileOffset < 0) {
+            // DEBUG: Log why translation failed
+            static int failCount = 0;
+            if (++failCount <= 10) {
+                std::cerr << "MemoryBackend::GetDirectPointer: GPA 0x" << std::hex << gpa
+                          << " not in any region (regions: " << std::dec
+                          << memoryMapper->GetRegions().size() << ")" << std::endl;
+                if (failCount == 1) {
+                    std::cerr << "First few regions:" << std::endl;
+                    const auto& regions = memoryMapper->GetRegions();
+                    for (size_t i = 0; i < std::min(size_t(3), regions.size()); i++) {
+                        std::cerr << "  Region " << i << ": GPA 0x" << std::hex
+                                  << regions[i].gpa_start << "-0x" << regions[i].gpa_end
+                                  << " -> file offset 0x" << regions[i].file_offset << std::dec << std::endl;
+                    }
+                }
+            }
             return nullptr;
         }
     } else {
@@ -209,7 +225,7 @@ const uint8_t* MemoryBackend::GetDirectPointer(uint64_t gpa) const {
             fileOffset = gpa - TEST_RAM_BASE;
         }
     }
-    
+
     if (!mappedData || fileOffset >= mappedSize) {
         return nullptr;
     }
