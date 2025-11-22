@@ -39,7 +39,7 @@ struct BitmapViewer {
         ANCHOR_TO_ADDRESS,    // Stick to memory address (anchor moves as view scrolls)
         ANCHOR_TO_POSITION    // Stick to relative position in view
     };
-    AnchorMode anchorMode = ANCHOR_TO_ADDRESS;
+    AnchorMode anchorMode = ANCHOR_TO_POSITION;
     TypedAddress anchorAddress;  // The memory address the anchor is attached to
     ImVec2 anchorRelativePos = ImVec2(0.5f, 0.5f);  // Relative position (0-1) in view
     
