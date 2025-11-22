@@ -7,10 +7,11 @@
 
 namespace Haywire {
 
-PIDSelector::PIDSelector() 
+PIDSelector::PIDSelector()
     : isVisible(false), selectedPID(0), selectedCamera(1),
       sortColumn(SORT_PID), sortAscending(true),
-      showKernelThreads(false), showOnlyWithDetails(false) {
+      showKernelThreads(false), showOnlyWithDetails(false),
+      isScanning(false) {
     std::memset(filterText, 0, sizeof(filterText));
 }
 
@@ -95,10 +96,26 @@ void PIDSelector::Draw() {
     
     ImGui::SameLine();
     ImGui::Checkbox("Only with details", &showOnlyWithDetails);
-    
+
     ImGui::SameLine();
-    if (ImGui::Button("Refresh")) {
-        RefreshPIDList();
+    if (isScanning) {
+        ImGui::BeginDisabled();
+        ImGui::Button("Scanning...");
+        ImGui::EndDisabled();
+    } else {
+        if (ImGui::Button("Refresh")) {
+            // Trigger full memory scan for processes
+            if (kernelDiscovery) {
+                isScanning = true;
+                std::cout << "Triggering manual process list refresh...\n";
+                kernelDiscovery->RefreshProcessList();
+                RefreshPIDList();
+                isScanning = false;
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Rescan memory for processes (takes ~4 seconds)");
+        }
     }
 
     // Camera selection removed - no longer needed with kernel discovery

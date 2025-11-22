@@ -106,7 +106,10 @@ private:
     // Display options
     bool showKernelThreads;
     bool showOnlyWithDetails;
-    
+
+    // Refresh state
+    bool isScanning;
+
     // Kernel discovery backend
     std::shared_ptr<KernelDiscoveryBackend> kernelDiscovery;
 
