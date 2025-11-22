@@ -82,6 +82,9 @@ void KernelDiscoveryBackend::SetDebugLogging(bool enabled) {
 }
 
 bool KernelDiscoveryBackend::RefreshProcessList() {
+    // CRITICAL: Lock mutex to prevent race with background scanner
+    std::lock_guard<std::mutex> lock(discoveryMutex);
+
     auto startTime = std::chrono::steady_clock::now();
 
     // Discover processes
@@ -127,6 +130,9 @@ bool KernelDiscoveryBackend::GetPIDList(std::vector<uint32_t>& pids) {
 }
 
 bool KernelDiscoveryBackend::GetProcessInfo(uint32_t pid, ProcessInfo& info) {
+    // CRITICAL: Lock mutex to prevent race with RefreshProcessList
+    std::lock_guard<std::mutex> lock(discoveryMutex);
+
     auto it = pidMap.find(pid);
     if (it == pidMap.end()) {
         return false;
@@ -255,6 +261,9 @@ uint64_t KernelDiscoveryBackend::TranslateVA(uint64_t va) {
 }
 
 bool KernelDiscoveryBackend::GetProcessSections(uint32_t pid, std::vector<SectionEntry>& sections) {
+    // CRITICAL: Lock mutex to prevent race with RefreshProcessList
+    std::lock_guard<std::mutex> lock(discoveryMutex);
+
     sections.clear();
 
     auto it = pidMap.find(pid);
@@ -317,6 +326,9 @@ bool KernelDiscoveryBackend::GetProcessSections(uint32_t pid, std::vector<Sectio
 }
 
 bool KernelDiscoveryBackend::GetProcessPTEs(uint32_t pid, std::unordered_map<uint64_t, uint64_t>& ptes) {
+    // CRITICAL: Lock mutex to prevent race with RefreshProcessList
+    std::lock_guard<std::mutex> lock(discoveryMutex);
+
     ptes.clear();
 
     auto it = pidMap.find(pid);

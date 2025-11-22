@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <string>
 #include <chrono>
+#include <mutex>
 
 // Include IKernelDiscovery interface
 #include "ikernel_discovery.h"
@@ -95,6 +96,9 @@ private:
     uint32_t currentPID;
     bool initialized;
     std::chrono::steady_clock::time_point lastRefreshTime;
+
+    // Mutex to protect concurrent access from background threads
+    mutable std::mutex discoveryMutex;
 };
 
 } // namespace Haywire
