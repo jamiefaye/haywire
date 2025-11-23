@@ -21,156 +21,60 @@ CrunchedMemoryReader::~CrunchedMemoryReader() {
 size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t size,
                                                 std::vector<uint8_t>& buffer) {
     MICRO_TIMER_START(timer_ReadCrunchedMemory);
-    static bool firstCall = true;
-    
+
     if (!flattener) {
-        if (firstCall) std::cerr << "CrunchedReader: No flattener!" << std::endl;
         return 0;
     }
-    if (!translator) {
-        if (firstCall) std::cerr << "CrunchedReader: No translator!" << std::endl;
-        return 0;
-    }
-    if (!qemu) {
-        if (firstCall) std::cerr << "CrunchedReader: No QEMU connection!" << std::endl;
-        return 0;
-    }
-    if (targetPid < 0) {
-        if (firstCall) std::cerr << "CrunchedReader: Invalid PID: " << targetPid << std::endl;
-        return 0;
-    }
-    
-    if (firstCall) {
-        std::cerr << "VA Mode: Reading crunched memory for PID " << targetPid
-                  << " using ViewportTranslator" 
-                  << std::endl;
-        std::cerr << "  Flattened address space size: 0x" << std::hex 
-                  << flattener->GetFlatSize() << std::dec << " bytes\n";
-        firstCall = false;
-    }
-    
-    buffer.clear();
-    buffer.reserve(size);
-    
-    // Track translation time
-    static int readCount = 0;
-    readCount++;
-    
-    size_t totalRead = 0;
-    uint64_t currentFlat = flatAddress;
-    int translationsNeeded = 0;
-    
-    while (totalRead < size) {
-        // Find which region we're in
-        const auto* region = flattener->GetRegionForFlat(currentFlat);
-        if (!region) {
-            // Hit unmapped space
-            if (totalRead == 0) {
-                static int noRegionCount = 0;
-                if (++noRegionCount <= 3) {
-                    std::cerr << "CrunchedReader: No region at flat address 0x" 
-                              << std::hex << currentFlat << std::dec 
-                              << " (requested flat 0x" << flatAddress << ")" << std::endl;
-                }
-            }
-            break;
-        }
-        
-        static bool showedRegion = false;
-        if (!showedRegion && totalRead == 0) {
-            std::cerr << "VA Mode: Flat 0x" << std::hex << currentFlat 
-                      << " -> Region [0x" << region->virtualStart 
-                      << "-0x" << region->virtualEnd << "] " 
-                      << region->name << std::dec << std::endl;
-            showedRegion = true;
-        }
-        
-        // Calculate offset within this region
-        uint64_t offsetInRegion = currentFlat - region->flatStart;
-        uint64_t virtualAddr = region->virtualStart + offsetInRegion;
-        
-        // How much can we read from this region?
-        size_t regionSize = region->virtualEnd - region->virtualStart;
-        size_t remainingInRegion = regionSize - offsetInRegion;
-        size_t toRead = std::min(remainingInRegion, size - totalRead);
-        
-        // Read in page-sized chunks for efficiency
-        const size_t pageSize = 4096;
-        size_t regionBytesRead = 0;
-        
-        while (regionBytesRead < toRead) {
-            uint64_t chunkFlatAddr = currentFlat + totalRead + regionBytesRead;
 
-            // Get physical address based on mode
-            uint64_t physAddr = 0;
-            if (translator && targetPid > 0) {
-                // VA mode: Try PA lookup table first (fast path)
-                if (flattener) {
-                    physAddr = flattener->GetPhysicalAddress(chunkFlatAddr);
-                }
+    // Use the SAME logic as main view (GetDirectPointer loop)
+    // Pre-allocate buffer
+    buffer.resize(size);
+    size_t bytesRead = 0;
 
-                // Fallback to translation if lookup failed
-                if (physAddr == 0) {
-                translationsNeeded++;
-                uint64_t chunkVA = virtualAddr + regionBytesRead;
+    // Read in page-aligned chunks using GetDirectPointer
+    // CRITICAL: GetDirectPointer returns pointer valid only to end of current page
+    const size_t pageSize = 4096;
+    for (size_t offset = 0; offset < size; ) {
+        uint64_t currentFlatAddr = flatAddress + offset;
+        size_t offsetInPage = currentFlatAddr % pageSize;
+        size_t bytesLeftInPage = pageSize - offsetInPage;
+        size_t bytesLeftTotal = size - offset;
 
-                // Validate VA before translation to prevent crashes
-                // ARM64 userspace VA max is 0x0001000000000000 (48-bit address space)
-                if (chunkVA < 0x0001000000000000ULL) {
-                    physAddr = translator->TranslateAddress(targetPid, chunkVA);
-                } else {
-                    static int invalidVACount = 0;
-                    if (++invalidVACount <= 3) {
-                        std::cerr << "CrunchedReader: Invalid VA 0x" << std::hex << chunkVA
-                                  << " exceeds userspace limit" << std::dec << std::endl;
+        // Clip to page boundary: can only read to end of current page
+        size_t chunkSize = std::min(bytesLeftInPage, bytesLeftTotal);
+
+        const uint8_t* ptr = GetDirectPointer(currentFlatAddr);
+
+        if (ptr) {
+            // Direct memcpy from mmap'd memory (fast!)
+            // ptr is only valid for chunkSize bytes (to end of page)
+            std::memcpy(buffer.data() + offset, ptr, chunkSize);
+            bytesRead += chunkSize;
+            offset += chunkSize;  // Advance by actual bytes copied
+        } else {
+            // Unmapped page - check if there's a run of unmapped pages
+            size_t bytesRemaining = size - offset;
+            size_t runLength = std::min(pageSize, bytesRemaining);
+
+            // Scan ahead for more unmapped pages (only if we have full pages left)
+            if (bytesRemaining >= pageSize) {
+                size_t remainingPages = (bytesRemaining - pageSize) / pageSize;
+                for (size_t i = 1; i <= remainingPages; i++) {
+                    if (!IsPageKnownUnmapped(flatAddress + offset + i * pageSize)) {
+                        break;  // Hit a mapped page, stop run
                     }
-                }
-                }
-            } else {
-                // PA mode: FlatToVirtual directly gives us the physical address
-                // (flattener's "virtual" addresses ARE physical addresses in PA mode)
-                uint64_t chunkPA = virtualAddr + regionBytesRead;
-                physAddr = chunkPA;
-            }
-
-            // CRITICAL: Clip chunkSize to page boundary
-            // We need to clip based on the VIRTUAL page, not physical
-            // (physAddr might be 0 for unmapped pages, which would give wrong result)
-            uint64_t virtualPageOffset = (virtualAddr + regionBytesRead) % pageSize;
-            size_t bytesLeftInPage = pageSize - virtualPageOffset;
-            size_t bytesNeeded = toRead - regionBytesRead;
-            size_t chunkSize = std::min<size_t>(bytesLeftInPage, bytesNeeded);
-
-            if (physAddr == 0) {
-                // Page not present - fill with zeros but remember it's unmapped
-                buffer.resize(buffer.size() + chunkSize, 0);
-            } else {
-                // Read from physical memory
-                std::vector<uint8_t> tempBuffer;
-
-                if (qemu->ReadMemory(physAddr, chunkSize, tempBuffer)) {
-                    buffer.insert(buffer.end(), tempBuffer.begin(), tempBuffer.end());
-                } else {
-                    // Read failed - fill with zeros
-                    buffer.resize(buffer.size() + chunkSize, 0);
+                    runLength += pageSize;
                 }
             }
 
-            regionBytesRead += chunkSize;
+            // Fill run with zeros
+            std::memset(buffer.data() + offset, 0, runLength);
+            offset += runLength;  // Advance by actual bytes filled
         }
-        
-        totalRead += regionBytesRead;
-        currentFlat += regionBytesRead;
-    }
-    
-    // Log read statistics for first few reads only
-    if (readCount <= 5) {
-        std::cerr << "CrunchedRead #" << readCount << ": " << translationsNeeded
-                  << " translations for " << totalRead << " bytes" << std::endl;
     }
 
     MICRO_TIMER_STOP(timer_ReadCrunchedMemory);
-    return totalRead;
+    return bytesRead;
 }
 
 void CrunchedMemoryReader::InitializeRenderCache() {
