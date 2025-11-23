@@ -79,7 +79,8 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
 
 void CrunchedMemoryReader::InitializeRenderCache() {
     // Only used in VA mode
-    if (!flattener || !translator || targetPid <= 0) {
+    // PID 0 is valid (used for query results), only reject negative PIDs
+    if (!flattener || !translator || targetPid < 0) {
         renderPageCache.clear();
         return;
     }
@@ -127,7 +128,8 @@ const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
     }
 
     // Check if we're in VA mode (have translator and PID)
-    if (translator && targetPid > 0 && !renderPageCache.empty()) {
+    // PID 0 is valid (used for query results)
+    if (translator && targetPid >= 0 && !renderPageCache.empty()) {
         // VA mode: Use rendering page cache (O(1) flat→VA→PA, no binary search!)
         size_t pageIdx = flatAddress / PAGE_SIZE;
         if (pageIdx >= renderPageCache.size()) {
@@ -211,7 +213,8 @@ const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
 
 bool CrunchedMemoryReader::IsPageKnownUnmapped(uint64_t flatAddress) const {
     // Only valid in VA mode with cache
-    if (!translator || targetPid <= 0 || renderPageCache.empty()) {
+    // PID 0 is valid (used for query results)
+    if (!translator || targetPid < 0 || renderPageCache.empty()) {
         return false;
     }
 
@@ -242,8 +245,9 @@ CrunchedMemoryReader::PositionInfo CrunchedMemoryReader::GetPositionInfo(uint64_
     info.virtualAddr = region->virtualStart + offsetInRegion;
     info.regionName = region->name;
     info.isValid = true;
-    
-    if (translator && targetPid > 0) {
+
+    // PID 0 is valid (used for query results)
+    if (translator && targetPid >= 0) {
         info.physicalAddr = translator->TranslateAddress(targetPid, info.virtualAddr);
     } else {
         info.physicalAddr = 0;
