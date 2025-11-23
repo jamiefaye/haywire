@@ -28,6 +28,11 @@
           "size": 16,
           "type": "char[16]"
         },
+        "mm": {
+          "offset": 1744,
+          "size": 8,
+          "type": "struct mm_struct *"
+        },
         "tasks": {
           "offset": 1664,
           "size": 16,
@@ -48,6 +53,11 @@
     "mm_struct": {
       "size": 0,
       "fields": {
+        "pgd": {
+          "offset": 104,
+          "size": 8,
+          "type": "pgd_t *"
+        },
         "mm_mt": {
           "offset": 64,
           "size": 16,
@@ -66,17 +76,28 @@
         "vm_start": {
           "offset": 0,
           "size": 8,
-          "type": "unsigned int"
+          "type": "unsigned long"
         },
         "vm_end": {
           "offset": 8,
           "size": 8,
-          "type": "unsigned int"
+          "type": "unsigned long"
+        },
+        "vm_next": {
+          "offset": 0,
+          "size": 8,
+          "type": "struct vm_area_struct *",
+          "note": "Removed in 6.14.0-36 - kernel uses maple tree only"
         },
         "vm_flags": {
           "offset": 32,
           "size": 8,
           "type": "const vm_flags_t"
+        },
+        "vm_file": {
+          "offset": 128,
+          "size": 8,
+          "type": "struct file *"
         }
       }
     }
