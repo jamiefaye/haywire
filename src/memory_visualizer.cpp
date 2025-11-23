@@ -647,9 +647,13 @@ void MemoryVisualizer::DrawFormulaBar() {
                 uint64_t pa = 0;  // translator->TranslateAddress(targetPid, va);
                 if (pa != 0) {
                     addrDisplay << " p:" << std::hex << pa;
-                    
-                    // Show shared memory offset
-                    addrDisplay << " s:" << std::hex << pa - 0x40000000;
+
+                    // Show shared memory offset (disabled code, but fix for consistency)
+                    uint64_t sharedOffset = pa;
+                    if (addressFlattener) {
+                        sharedOffset = addressFlattener->VirtualToFlat(pa);
+                    }
+                    addrDisplay << " s:" << std::hex << sharedOffset;
                 }
             }
         }
@@ -657,11 +661,20 @@ void MemoryVisualizer::DrawFormulaBar() {
         // Show crunched (flattened) address
         addrDisplay << " c:" << std::hex << currentAddr;
     } else {
-        // In physical mode, show shared memory offset
-        addrDisplay << "s:" << std::hex << currentAddr;
-        
-        // Add physical address (shared + base)
-        uint64_t pa = currentAddr + 0x40000000;
+        // In physical mode
+        // currentAddr from GetAddressAt is a physical address
+        uint64_t pa = currentAddr;
+        uint64_t flatAddr = currentAddr;  // Default if no flattener
+
+        if (addressFlattener) {
+            // Convert physical address to flat (file offset)
+            flatAddr = addressFlattener->VirtualToFlat(pa);
+        }
+
+        // Show shared memory offset (flat/file offset)
+        addrDisplay << "s:" << std::hex << flatAddr;
+
+        // Add physical address
         addrDisplay << " p:" << std::hex << pa;
     }
     
@@ -828,16 +841,13 @@ void MemoryVisualizer::DrawMemoryBitmap() {
         }
         viewSize = std::max(viewSize, (uint64_t)4096);  // Minimum 1 page
 
-        // Convert physical address to file offset for change detector
+        // Convert viewport address to file offset for change detector
         uint64_t fileOffset = viewport.baseAddress;
-        if (!useVirtualAddresses) {
-            // In physical mode, subtract RAM base to get file offset
-            uint64_t ramBase = 0x40000000;
-            if (memoryMapper && !memoryMapper->GetRegions().empty()) {
-                ramBase = memoryMapper->GetRegions()[0].gpa_start;
-            }
-            fileOffset = viewport.baseAddress - ramBase;
+        if (!useVirtualAddresses && addressFlattener) {
+            // In PA mode, convert physical address to flat (which IS the file offset)
+            fileOffset = addressFlattener->VirtualToFlat(viewport.baseAddress);
         }
+        // In VA mode, viewport.baseAddress is already a flat address
 
         // Update visible range for change detector
         if (changeDetector_) {
@@ -847,24 +857,15 @@ void MemoryVisualizer::DrawMemoryBitmap() {
             changeDetector_->SetVisibleRange(visible_start, visible_end);
         }
 
-        // Draw heat map (pass file offset, not physical address)
+        // Draw heat map (pass file offset)
         if (heatMapWidget_->Draw(heatMapWidth, maxHeight, fileOffset, viewSize)) {
-            // User clicked on heat map - clicked_file_offset is either:
-            // - PA mode: file offset (needs ramBase added)
-            // - VA mode: flat address in crunched space (needs flat→VA conversion)
-            uint64_t clicked_file_offset = heatMapWidget_->GetClickedOffset();
-            uint64_t clicked_address = clicked_file_offset;
+            // User clicked on heat map - clicked_file_offset is a flat address
+            uint64_t clicked_flat = heatMapWidget_->GetClickedOffset();
+            uint64_t clicked_address = clicked_flat;
 
-            if (useVirtualAddresses && addressFlattener) {
-                // Convert flat address (crunched space) to virtual address
-                clicked_address = addressFlattener->FlatToVirtual(clicked_file_offset);
-            } else if (!useVirtualAddresses) {
-                // Convert file offset back to physical address
-                uint64_t ramBase = 0x40000000;
-                if (memoryMapper && !memoryMapper->GetRegions().empty()) {
-                    ramBase = memoryMapper->GetRegions()[0].gpa_start;
-                }
-                clicked_address = clicked_file_offset + ramBase;
+            if (addressFlattener) {
+                // Convert flat address to display address (PA in PA mode, VA in VA mode)
+                clicked_address = addressFlattener->FlatToVirtual(clicked_flat);
             }
 
             NavigateToAddress(clicked_address);
@@ -3896,15 +3897,11 @@ void MemoryVisualizer::PerformFullRangeSearch() {
         size_t foundPos = (uint8_t*)found - memBytes;
 
         // Convert file offset to address
-        // In PA mode: file offset 0 corresponds to physical address 0x40000000
-        // In VA mode: we're searching crunched flat space, so offset = flat address
-        uint64_t resultAddress;
-        if (useVirtualAddresses && addressFlattener && targetPid > 0) {
-            // VA mode - offset is flat address
-            resultAddress = foundPos;
-        } else {
-            // PA mode - add RAM base offset
-            resultAddress = foundPos + 0x40000000;
+        // foundPos is a file offset (flat address in both modes)
+        uint64_t resultAddress = foundPos;
+        if (addressFlattener) {
+            // Convert flat address to display address (PA in PA mode, VA in VA mode)
+            resultAddress = addressFlattener->FlatToVirtual(foundPos);
         }
         searchResults.push_back(resultAddress);
         
