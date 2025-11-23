@@ -134,8 +134,10 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
             }
 
             // CRITICAL: Clip chunkSize to page boundary
-            // If physAddr is in middle of page, we can only read to end of that page
-            size_t bytesLeftInPage = pageSize - (physAddr % pageSize);
+            // We need to clip based on the VIRTUAL page, not physical
+            // (physAddr might be 0 for unmapped pages, which would give wrong result)
+            uint64_t virtualPageOffset = (virtualAddr + regionBytesRead) % pageSize;
+            size_t bytesLeftInPage = pageSize - virtualPageOffset;
             size_t bytesNeeded = toRead - regionBytesRead;
             size_t chunkSize = std::min<size_t>(bytesLeftInPage, bytesNeeded);
 
