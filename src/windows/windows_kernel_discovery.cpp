@@ -330,12 +330,13 @@ public:
 
         // Check if VadRoot is valid
         if ((vadroot_va >> 48) != 0xffff) {
-            std::cout << "[WindowsKernelDiscovery] VadRoot is not a kernel VA (empty VAD tree)" << std::endl;
-            return false;  // Not kernel VA - likely empty tree
+            std::cout << "[WindowsKernelDiscovery] PID " << pid << ": VadRoot is not a valid kernel VA (bits 48-63 = 0x"
+                      << std::hex << (vadroot_va >> 48) << std::dec << ") - skipping (likely protected process)" << std::endl;
+            return false;  // Not kernel VA - likely empty tree or protected process
         }
 
         if (vadroot_va == 0xffffffffffffffff || vadroot_va == 0) {
-            std::cout << "[WindowsKernelDiscovery] VadRoot is null/sentinel (empty VAD tree)" << std::endl;
+            std::cout << "[WindowsKernelDiscovery] PID " << pid << ": VadRoot is null/sentinel (empty VAD tree)" << std::endl;
             return false;  // Sentinel/null
         }
 
@@ -1400,12 +1401,29 @@ private:
         uint32_t starting_vpn = *reinterpret_cast<uint32_t*>(vad_data + 24);
         uint32_t ending_vpn = *reinterpret_cast<uint32_t*>(vad_data + 28);
 
+        // DEBUG: Print VPN values for first few VAD nodes to detect offset changes
+        static int vad_debug_count = 0;
+        if (vad_debug_count++ < 5) {
+            fprintf(stderr, "[WalkVAD] VAD at PA 0x%lx: StartingVpn=0x%x EndingVpn=0x%x\n",
+                    vad_pa, starting_vpn, ending_vpn);
+            fprintf(stderr, "[WalkVAD] Raw bytes at +24: %02x %02x %02x %02x, +28: %02x %02x %02x %02x\n",
+                    vad_data[24], vad_data[25], vad_data[26], vad_data[27],
+                    vad_data[28], vad_data[29], vad_data[30], vad_data[31]);
+        }
+
         // Extract VadFlags (offset 48) for protection bits
         uint32_t vad_flags = *reinterpret_cast<uint32_t*>(vad_data + 48);
 
         // Convert VPN to virtual address (VPN = VA >> 12)
         uint64_t start_va = static_cast<uint64_t>(starting_vpn) << 12;
         uint64_t end_va = ((static_cast<uint64_t>(ending_vpn) + 1) << 12) - 1;
+
+        // Validate section size (reject suspiciously small sections)
+        uint64_t section_size = end_va - start_va + 1;
+        if (section_size < 4096) {
+            fprintf(stderr, "[WalkVAD] WARNING: Section at PA 0x%lx is only %llu bytes (StartVPN=0x%x EndVPN=0x%x) - likely wrong offsets!\n",
+                    vad_pa, section_size, starting_vpn, ending_vpn);
+        }
 
         // Add this VAD's region to sections
         MemorySection section;
