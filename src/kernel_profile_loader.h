@@ -120,10 +120,33 @@ public:
         return true;
     }
 
-    // Try to auto-detect profile based on kernel banner from memory
+    // Try to auto-detect profile based on available files and architecture
     static std::string DetectProfile(const std::string& profilesDir) {
-        // Future: scan memory for kernel banner and match against profile detection patterns
-        // For now, return default
+        // Detect architecture
+        std::string arch = "unknown";
+        #if defined(__x86_64__) || defined(_M_X64)
+            arch = "x86_64";
+        #elif defined(__aarch64__) || defined(_M_ARM64)
+            arch = "aarch64";
+        #endif
+
+        // Try to find matching profile - check newer versions first
+        if (arch == "x86_64") {
+            std::string x86Profile = profilesDir + "/ubuntu-6.14.0-35-x86_64.json";
+            std::ifstream test(x86Profile);
+            if (test.good()) {
+                return x86Profile;
+            }
+        }
+
+        // Fallback to ARM64 - try latest version first
+        std::string arm64Profile = profilesDir + "/ubuntu-6.14.0-36-arm64.json";
+        std::ifstream test(arm64Profile);
+        if (test.good()) {
+            return arm64Profile;
+        }
+
+        // Fallback to older version
         return profilesDir + "/ubuntu-6.14.0-34-arm64.json";
     }
 
