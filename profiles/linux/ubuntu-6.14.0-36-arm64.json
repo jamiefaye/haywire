@@ -1,0 +1,89 @@
+{
+  "profile": {
+    "name": "Ubuntu 6.14.0-36 Generic ARM64",
+    "kernel_version": "6.14.0-36-generic",
+    "architecture": "aarch64",
+    "os": "Ubuntu",
+    "os_version": "24.04",
+    "date_created": "2025-11-23",
+    "verified": true,
+    "source": "pahole /sys/kernel/btf/vmlinux"
+  },
+  "offsets": {
+    "task_struct": {
+      "size": 0,
+      "fields": {
+        "pid": {
+          "offset": 1872,
+          "size": 4,
+          "type": "pid_t"
+        },
+        "tgid": {
+          "offset": 1876,
+          "size": 4,
+          "type": "pid_t"
+        },
+        "comm": {
+          "offset": 2416,
+          "size": 16,
+          "type": "char[16]"
+        },
+        "tasks": {
+          "offset": 1664,
+          "size": 16,
+          "type": "struct list_head"
+        },
+        "tasks_next": {
+          "offset": 1664,
+          "size": 8,
+          "type": "struct list_head *"
+        },
+        "tasks_prev": {
+          "offset": 1672,
+          "size": 8,
+          "type": "struct list_head *"
+        }
+      }
+    },
+    "mm_struct": {
+      "size": 0,
+      "fields": {
+        "mm_mt": {
+          "offset": 64,
+          "size": 16,
+          "type": "struct maple_tree"
+        },
+        "mm_users": {
+          "offset": 116,
+          "size": 4,
+          "type": "atomic_t"
+        }
+      }
+    },
+    "vm_area_struct": {
+      "size": 0,
+      "fields": {
+        "vm_start": {
+          "offset": 0,
+          "size": 8,
+          "type": "unsigned int"
+        },
+        "vm_end": {
+          "offset": 8,
+          "size": 8,
+          "type": "unsigned int"
+        },
+        "vm_flags": {
+          "offset": 32,
+          "size": 8,
+          "type": "const vm_flags_t"
+        }
+      }
+    }
+  },
+  "notes": [
+    "Profile created from pahole output",
+    "Verify offsets before using in production",
+    "Run: pahole -C <struct> /sys/kernel/btf/vmlinux to verify"
+  ]
+}
