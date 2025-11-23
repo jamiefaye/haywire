@@ -11,6 +11,9 @@
 
 namespace Haywire {
 
+// Forward declarations
+class MemoryMapper;
+
 // Flattens sparse 64-bit address space into continuous navigable range
 class AddressSpaceFlattener {
 public:
@@ -59,9 +62,12 @@ public:
     AddressSpaceFlattener();
     ~AddressSpaceFlattener();
     
-    // Build flattened map from memory regions
+    // Build flattened map from memory regions (VA mode)
     void BuildFromRegions(const std::vector<GuestMemoryRegion>& regions);
-    
+
+    // Build flattened map from RAM regions (PA mode)
+    void BuildFromRAMRegions(const MemoryMapper* memoryMapper);
+
     // Convert between virtual and flattened addresses
     uint64_t VirtualToFlat(uint64_t virtualAddr) const;
     uint64_t FlatToVirtual(uint64_t flatAddr) const;

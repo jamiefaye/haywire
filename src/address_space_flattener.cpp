@@ -1,6 +1,7 @@
 #include "address_space_flattener.h"
 #include "kernel_viewport_translator.h"
 #include "pte_walker.h"
+#include "memory_mapper.h"
 #include "imgui.h"
 #include <sstream>
 #include <iomanip>
@@ -51,10 +52,62 @@ void AddressSpaceFlattener::BuildFromRegions(const std::vector<GuestMemoryRegion
     
     totalFlatSize = currentFlatPos;
     
-    std::cerr << "Flattened address space: " 
+    std::cerr << "Flattened address space: "
               << regions.size() << " regions, "
               << (totalMappedSize / (1024.0 * 1024.0)) << " MB mapped, "
               << "compression ratio: " << (1.0 / GetCompressionRatio()) << ":1\n";
+}
+
+void AddressSpaceFlattener::BuildFromRAMRegions(const MemoryMapper* memoryMapper) {
+    regions.clear();
+    totalFlatSize = 0;
+    totalMappedSize = 0;
+
+    if (!memoryMapper) {
+        std::cerr << "BuildFromRAMRegions: null memoryMapper\n";
+        return;
+    }
+
+    const auto& ramRegions = memoryMapper->GetRegions();
+    if (ramRegions.empty()) {
+        std::cerr << "BuildFromRAMRegions: no RAM regions\n";
+        return;
+    }
+
+    // Build flattened map from RAM regions
+    // In PA mode, physical addresses are treated as "virtual" addresses
+    // The flattener removes the PCI hole automatically
+    uint64_t currentFlatPos = 0;
+
+    for (const auto& ramRegion : ramRegions) {
+        MappedRegion mapped;
+        mapped.virtualStart = ramRegion.gpa_start;  // Physical address as "virtual"
+        mapped.virtualEnd = ramRegion.gpa_end;
+        mapped.flatStart = currentFlatPos;
+        mapped.flatEnd = currentFlatPos + ramRegion.size;
+        mapped.name = ramRegion.name;
+        mapped.ownershipType = MappedRegion::UNKNOWN;  // No type info for PA regions
+
+        regions.push_back(mapped);
+
+        currentFlatPos += ramRegion.size;
+        totalMappedSize += ramRegion.size;
+    }
+
+    totalFlatSize = currentFlatPos;
+
+    std::cerr << "Flattened PA space: "
+              << regions.size() << " RAM regions, "
+              << (totalMappedSize / (1024.0 * 1024.0)) << " MB mapped\n";
+
+    // Log regions for debugging
+    for (const auto& region : regions) {
+        std::cerr << "  PA 0x" << std::hex << region.virtualStart
+                  << "-0x" << region.virtualEnd
+                  << " → flat 0x" << region.flatStart
+                  << "-0x" << region.flatEnd << std::dec
+                  << " (" << region.name << ")\n";
+    }
 }
 
 uint64_t AddressSpaceFlattener::VirtualToFlat(uint64_t virtualAddr) const {

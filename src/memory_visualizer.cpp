@@ -942,6 +942,20 @@ void MemoryVisualizer::SetMemoryMapper(std::shared_ptr<MemoryMapper> mapper) {
     if (bitmapViewerManager) {
         bitmapViewerManager->SetMemoryMapper(mapper);
     }
+
+    // In PA mode, populate the address flattener with RAM regions
+    // This allows us to use the same rendering pipeline for both PA and VA modes
+    if (mapper && addressFlattener) {
+        addressFlattener->BuildFromRAMRegions(mapper.get());
+
+        // Also setup crunched reader for PA mode
+        if (crunchedReader) {
+            crunchedReader->SetFlattener(addressFlattener.get());
+        }
+
+        std::cerr << "PA mode: populated address flattener with "
+                  << mapper->GetRegions().size() << " RAM regions\n";
+    }
 }
 
 void MemoryVisualizer::SetMemoryDataSource(std::shared_ptr<MemoryDataSource> dataSource) {
@@ -1393,66 +1407,35 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 4));
     
     // All header info moved to DrawFormulaBar
-    // Just calculate slider parameters
-    
-    uint64_t sliderUnit;
-    uint64_t maxAddress;
-    uint64_t currentPos;
-    
-    if (useVirtualAddresses && addressFlattener) {
-        // Crunched mode - slider covers flattened range
-        sliderUnit = 4096;  // Page size for alignment
+    // UNIFIED: Both PA and VA modes use the address flattener
+    uint64_t sliderUnit = 4096;  // Page size for alignment
+    uint64_t maxAddress = 0;
+    uint64_t currentPos = 0;
+
+    if (addressFlattener && addressFlattener->GetFlatSize() > 0) {
+        // Slider covers flattened range (works for both PA and VA modes)
         maxAddress = addressFlattener->GetFlatSize();
-        currentPos = viewport.baseAddress;  // This is flat position in VA mode
-        
-        // Debug: Check if viewport is out of bounds
+
+        // Convert viewport address to flat position
+        if (useVirtualAddresses) {
+            // VA mode: viewport.baseAddress is already a flat address
+            currentPos = viewport.baseAddress;
+        } else {
+            // PA mode: viewport.baseAddress is a physical address, convert to flat
+            currentPos = addressFlattener->VirtualToFlat(viewport.baseAddress);
+        }
+
+        // Clamp to valid range
         if (currentPos > maxAddress && maxAddress > 0) {
-            // Clamp to maximum valid address instead of wrapping
             size_t viewSize = viewport.width * viewport.height * 4;
             currentPos = (maxAddress > viewSize) ? (maxAddress - viewSize) : 0;
-            viewport.baseAddress = currentPos;
+            viewport.baseAddress = addressFlattener->FlatToVirtual(currentPos);
         }
     } else {
-        // Physical mode - use memory mapper to get actual RAM range
-        sliderUnit = 65536;  // 64K units
-
-        // Get RAM region from memory mapper or memory file size
-        uint64_t ramBase = 0;  // Default x86-64 RAM base
-        uint64_t ramSize = 8ULL * 1024 * 1024 * 1024;  // Default 8GB
-
-        if (memoryMapper && !memoryMapper->GetRegions().empty()) {
-            const auto& regions = memoryMapper->GetRegions();
-            ramBase = regions[0].gpa_start;
-
-            // Sum all RAM regions to get total size (handles x86-64 PCI hole)
-            ramSize = 0;
-            for (const auto& region : regions) {
-                ramSize += region.size;
-            }
-        } else if (memSize > 0) {
-            // Use actual memory file size (accounts for x86-64 PCI hole)
-            ramBase = 0;  // x86-64 starts at PA 0
-            ramSize = memSize;  // File size (8GB for Windows)
-        }
-
-        // Slider always represents FILE OFFSETS (0 to RAM size)
-        // This avoids the PCI hole dead zone and gives better precision
-        maxAddress = ramSize;  // File size (8GB for both x86-64 and ARM64)
-
-        // Convert current physical address to file offset
-        if (memoryMapper && !memoryMapper->GetRegions().empty()) {
-            // Use memory mapper to convert PA→file offset (handles PCI hole correctly)
-            int64_t fileOffset = memoryMapper->TranslateGPAToFileOffset(viewport.baseAddress);
-            if (fileOffset >= 0) {
-                currentPos = fileOffset;
-            } else {
-                // Fallback if conversion fails
-                currentPos = viewport.baseAddress - ramBase;
-            }
-        } else {
-            // No mapper - assume direct mapping
-            currentPos = viewport.baseAddress - ramBase;
-        }
+        // Fallback if flattener not initialized
+        sliderUnit = 65536;
+        maxAddress = memSize > 0 ? memSize : (8ULL * 1024 * 1024 * 1024);
+        currentPos = viewport.baseAddress;
     }
     
     // Vertical slider
@@ -1627,60 +1610,50 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
         ImVec2(sliderPos.x + 180, sliderPos.y + sliderHeight),
         IM_COL32(20, 20, 20, 255)  // Very dark background
     );
-    // Draw memory regions with STRONG colors
-    if (useVirtualAddresses && addressFlattener) {
-        // In VA mode, show flattened memory regions
+    // UNIFIED: Draw memory regions from flattener (works for both PA and VA modes)
+    if (addressFlattener && addressFlattener->GetFlatSize() > 0) {
         const auto& regions = addressFlattener->GetRegions();
         for (const auto& region : regions) {
             float startY = sliderPos.y + ((maxSliderValue - region.flatEnd/sliderUnit) / (float)maxSliderValue) * sliderHeight;
             float endY = sliderPos.y + ((maxSliderValue - region.flatStart/sliderUnit) / (float)maxSliderValue) * sliderHeight;
-            
+
             // Color by ownership type (matching status bar)
             uint32_t color;
-            switch (region.ownershipType) {
-                case AddressSpaceFlattener::MappedRegion::EXECUTABLE:
-                    color = IM_COL32(255, 50, 50, 255);  // Red
-                    break;
-                case AddressSpaceFlattener::MappedRegion::SHARED_LIB:
-                    color = IM_COL32(50, 255, 255, 255);  // Cyan
-                    break;
-                case AddressSpaceFlattener::MappedRegion::HEAP:
-                    color = IM_COL32(255, 255, 50, 255);  // Yellow
-                    break;
-                case AddressSpaceFlattener::MappedRegion::STACK:
-                    color = IM_COL32(255, 150, 50, 255);  // Orange
-                    break;
-                case AddressSpaceFlattener::MappedRegion::FILE_BACKED:
-                    color = IM_COL32(50, 255, 50, 255);  // Green
-                    break;
-                case AddressSpaceFlattener::MappedRegion::VDSO:
-                case AddressSpaceFlattener::MappedRegion::VVAR:
-                    color = IM_COL32(255, 50, 255, 255);  // Magenta
-                    break;
-                default:
-                    color = IM_COL32(100, 100, 255, 255);  // Light blue for unknown/anonymous
-                    break;
+            if (useVirtualAddresses) {
+                // VA mode: Rich colors by type
+                switch (region.ownershipType) {
+                    case AddressSpaceFlattener::MappedRegion::EXECUTABLE:
+                        color = IM_COL32(255, 50, 50, 255);  // Red
+                        break;
+                    case AddressSpaceFlattener::MappedRegion::SHARED_LIB:
+                        color = IM_COL32(50, 255, 255, 255);  // Cyan
+                        break;
+                    case AddressSpaceFlattener::MappedRegion::HEAP:
+                        color = IM_COL32(255, 255, 50, 255);  // Yellow
+                        break;
+                    case AddressSpaceFlattener::MappedRegion::STACK:
+                        color = IM_COL32(255, 150, 50, 255);  // Orange
+                        break;
+                    case AddressSpaceFlattener::MappedRegion::FILE_BACKED:
+                        color = IM_COL32(50, 255, 50, 255);  // Green
+                        break;
+                    case AddressSpaceFlattener::MappedRegion::VDSO:
+                    case AddressSpaceFlattener::MappedRegion::VVAR:
+                        color = IM_COL32(255, 50, 255, 255);  // Magenta
+                        break;
+                    default:
+                        color = IM_COL32(100, 100, 255, 255);  // Light blue for unknown/anonymous
+                        break;
+                }
+            } else {
+                // PA mode: Bright orange for all RAM regions
+                color = IM_COL32(255, 140, 0, 255);
             }
-            
+
             drawList->AddRectFilled(
                 ImVec2(sliderPos.x + 1, startY),
                 ImVec2(sliderPos.x + 179, endY),
                 color
-            );
-        }
-    } else if (memoryMapper) {
-        // In PA mode, show physical memory regions - strong orange color
-        auto regions = memoryMapper->GetRegions();
-        for (const auto& region : regions) {
-            // Convert addresses to slider positions (inverted - 0 at bottom)
-            float startY = sliderPos.y + ((maxSliderValue - region.gpa_start/sliderUnit) / (float)maxSliderValue) * sliderHeight;
-            float endY = sliderPos.y + ((maxSliderValue - (region.gpa_start + region.size)/sliderUnit) / (float)maxSliderValue) * sliderHeight;
-            
-            // Bright orange for physical memory
-            drawList->AddRectFilled(
-                ImVec2(sliderPos.x + 1, startY),
-                ImVec2(sliderPos.x + 179, endY),
-                IM_COL32(255, 140, 0, 255)  // Bright orange for physical memory
             );
         }
     }
@@ -1699,67 +1672,53 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
                             &maxSliderValue, &minSliderValue,  // Max at top, 0 at bottom
                             "0x%llx")) {
 
-        if (useVirtualAddresses && addressFlattener) {
-            // VA mode - slider value is crunched/flat offset
-            viewport.baseAddress = sliderValue * sliderUnit;
-            uint64_t virtualAddr = addressFlattener->FlatToVirtual(viewport.baseAddress);
-            strcpy(addressInput, AddressParser::Format(virtualAddr, AddressSpace::VIRTUAL).c_str());
-        } else {
-            // Physical mode - slider value is file offset, convert to physical address
-            uint64_t fileOffset = sliderValue * sliderUnit;
-            uint64_t physAddr = fileOffset;
+        // UNIFIED: Slider value is always flat address
+        uint64_t flatAddr = sliderValue * sliderUnit;
 
-            // Convert file offset to physical address (handles PCI hole)
-            if (memoryMapper && !memoryMapper->GetRegions().empty()) {
-                // Find which region this file offset falls into
-                const auto& regions = memoryMapper->GetRegions();
-                bool found = false;
-                for (const auto& region : regions) {
-                    if (fileOffset >= region.file_offset &&
-                        fileOffset < region.file_offset + region.size) {
-                        // This file offset is in this region
-                        uint64_t offsetIntoRegion = fileOffset - region.file_offset;
-                        physAddr = region.gpa_start + offsetIntoRegion;
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    // Fallback: assume direct mapping with RAM base
-                    uint64_t ramBase = regions[0].gpa_start;
-                    physAddr = fileOffset + ramBase;
-                }
+        if (addressFlattener) {
+            // Convert flat address to display address (PA in PA mode, VA in VA mode)
+            uint64_t displayAddr = addressFlattener->FlatToVirtual(flatAddr);
+
+            if (useVirtualAddresses) {
+                // VA mode: store flat address, display as virtual
+                viewport.baseAddress = flatAddr;
+                strcpy(addressInput, AddressParser::Format(displayAddr, AddressSpace::VIRTUAL).c_str());
             } else {
-                // No mapper - assume ARM64 default
-                physAddr = fileOffset + 0x40000000;
+                // PA mode: store physical address, display as physical
+                viewport.baseAddress = displayAddr;
+                strcpy(addressInput, AddressParser::Format(displayAddr, AddressSpace::PHYSICAL).c_str());
             }
-
-            viewport.baseAddress = physAddr;
-            strcpy(addressInput, AddressParser::Format(physAddr, AddressSpace::PHYSICAL).c_str());
+        } else {
+            // Fallback if no flattener
+            viewport.baseAddress = flatAddr;
+            strcpy(addressInput, AddressParser::Format(flatAddr, AddressSpace::PHYSICAL).c_str());
         }
         
         needsUpdate = true;
     }
     
-    // Show tooltip with region info when dragging
-    if (ImGui::IsItemActive()) {
-        if (useVirtualAddresses && addressFlattener) {
-            uint64_t currentAddr = sliderValue * sliderUnit;
-            uint64_t virtualAddr = addressFlattener->FlatToVirtual(currentAddr);
-            const auto* region = addressFlattener->GetRegionForFlat(currentAddr);
-            
-            if (region) {
-                // Extract just the filename from the path
-                std::string displayName = region->name;
-                size_t lastSlash = displayName.find_last_of("/");
-                if (lastSlash != std::string::npos) {
-                    displayName = displayName.substr(lastSlash + 1);
-                }
-                
-                ImGui::BeginTooltip();
-                ImGui::Text("%s", displayName.c_str());
+    // UNIFIED: Show tooltip with region info when dragging
+    if (ImGui::IsItemActive() && addressFlattener) {
+        uint64_t flatAddr = sliderValue * sliderUnit;
+        uint64_t displayAddr = addressFlattener->FlatToVirtual(flatAddr);
+        const auto* region = addressFlattener->GetRegionForFlat(flatAddr);
 
-                // Show ownership type with color
+        ImGui::BeginTooltip();
+
+        if (region) {
+            // Extract just the filename from the path
+            std::string displayName = region->name;
+            size_t lastSlash = displayName.find_last_of("/");
+            if (lastSlash != std::string::npos) {
+                displayName = displayName.substr(lastSlash + 1);
+            }
+
+            if (!displayName.empty()) {
+                ImGui::Text("%s", displayName.c_str());
+            }
+
+            // Show ownership type with color (only in VA mode)
+            if (useVirtualAddresses) {
                 const char* typeName = region->GetTypeName();
                 ImVec4 typeColor;
                 switch (region->ownershipType) {
@@ -1783,42 +1742,24 @@ void MemoryVisualizer::DrawVerticalAddressSlider() {
                         break;
                 }
                 ImGui::TextColored(typeColor, "Type: %s", typeName);
-
-                ImGui::Text("VA: 0x%llx", virtualAddr);
-                ImGui::Text("Size: %.1f MB", (region->virtualEnd - region->virtualStart) / (1024.0 * 1024.0));
-                ImGui::EndTooltip();
             }
-        } else {
-            // Physical mode - show address (file offset → PA conversion)
-            uint64_t fileOffset = sliderValue * sliderUnit;
-            uint64_t physAddr = fileOffset;
 
-            // Convert file offset to physical address (handles PCI hole)
-            if (memoryMapper && !memoryMapper->GetRegions().empty()) {
-                const auto& regions = memoryMapper->GetRegions();
-                bool found = false;
-                for (const auto& region : regions) {
-                    if (fileOffset >= region.file_offset &&
-                        fileOffset < region.file_offset + region.size) {
-                        uint64_t offsetIntoRegion = fileOffset - region.file_offset;
-                        physAddr = region.gpa_start + offsetIntoRegion;
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    uint64_t ramBase = regions[0].gpa_start;
-                    physAddr = fileOffset + ramBase;
-                }
+            if (useVirtualAddresses) {
+                ImGui::Text("VA: 0x%llx", displayAddr);
             } else {
-                physAddr = fileOffset + 0x40000000;  // ARM64 default
+                ImGui::Text("PA: 0x%llx", displayAddr);
             }
-
-            ImGui::BeginTooltip();
-            ImGui::Text("PA: 0x%llx", physAddr);
-            ImGui::Text("File Offset: %.1f GB", fileOffset / (1024.0 * 1024.0 * 1024.0));
-            ImGui::EndTooltip();
+            ImGui::Text("Size: %.1f MB", (region->virtualEnd - region->virtualStart) / (1024.0 * 1024.0));
+        } else {
+            // No region info
+            if (useVirtualAddresses) {
+                ImGui::Text("VA: 0x%llx", displayAddr);
+            } else {
+                ImGui::Text("PA: 0x%llx", displayAddr);
+            }
         }
+
+        ImGui::EndTooltip();
     }
     
     // Pop the style colors we pushed before the slider

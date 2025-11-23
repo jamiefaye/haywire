@@ -102,14 +102,16 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
             size_t chunkSize = std::min<size_t>(pageSize, toRead - regionBytesRead);
             uint64_t chunkFlatAddr = currentFlat + totalRead + regionBytesRead;
 
-            // Try PA lookup table first (fast path)
+            // Get physical address based on mode
             uint64_t physAddr = 0;
-            if (flattener) {
-                physAddr = flattener->GetPhysicalAddress(chunkFlatAddr);
-            }
+            if (translator && targetPid > 0) {
+                // VA mode: Try PA lookup table first (fast path)
+                if (flattener) {
+                    physAddr = flattener->GetPhysicalAddress(chunkFlatAddr);
+                }
 
-            // Fallback to translation if lookup failed
-            if (physAddr == 0 && translator) {
+                // Fallback to translation if lookup failed
+                if (physAddr == 0) {
                 translationsNeeded++;
                 uint64_t chunkVA = virtualAddr + regionBytesRead;
 
@@ -124,8 +126,14 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
                                   << " exceeds userspace limit" << std::dec << std::endl;
                     }
                 }
+                }
+            } else {
+                // PA mode: FlatToVirtual directly gives us the physical address
+                // (flattener's "virtual" addresses ARE physical addresses in PA mode)
+                uint64_t chunkPA = virtualAddr + regionBytesRead;
+                physAddr = chunkPA;
             }
-            
+
             // Debug: VA->PA translation (disabled for production)
             // static int translationCount = 0;
             // if (++translationCount <= 5) {
@@ -283,8 +291,9 @@ const uint8_t* CrunchedMemoryReader::GetDirectPointer(uint64_t flatAddress) {
         }
         return ptr;
     } else {
-        // PA mode or old path: Use AddressSpaceFlattener's PA lookup
-        uint64_t physAddr = flattener->GetPhysicalAddress(flatAddress);
+        // PA mode: Use AddressSpaceFlattener to map flat→PA
+        // In PA mode, the flattener's "virtual" addresses ARE physical addresses
+        uint64_t physAddr = flattener->FlatToVirtual(flatAddress);
         if (physAddr == 0) {
             return nullptr;  // Not mapped
         }
