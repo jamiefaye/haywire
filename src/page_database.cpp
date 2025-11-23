@@ -217,11 +217,6 @@ void PageDatabase::Initialize(uint64_t ramBase, uint64_t ramSize) {
     this->ramSize = ramSize;
     this->numPages = ramSize / 4096;
 
-    std::cout << "[PageDatabase::Initialize] ramBase=0x" << std::hex << ramBase
-              << " ramSize=0x" << ramSize << std::dec
-              << " (" << (ramSize / (1024.0 * 1024.0 * 1024.0)) << " GB)"
-              << " numPages=" << numPages << "\n";
-
     // Allocate page array
     pages.resize(numPages);
 
@@ -350,20 +345,10 @@ size_t PageDatabase::AttributeProcessPages(const ProcessInfo& proc,
     // section each page belongs to (O(actual_pages)). This is 100-1000x faster for
     // processes with large sparse address spaces.
 
-    size_t physIndexFailed = 0;
-    size_t noMatchingSection = 0;
-    uint64_t minRejectedPA = UINT64_MAX;
-    uint64_t maxRejectedPA = 0;
-    size_t maxRejectedIndex = 0;
-
     for (const auto& [va, pa] : ptes) {
         // PhysToIndex() returns SIZE_MAX for invalid addresses (PCI hole, beyond RAM)
         size_t pageIndex = PhysToIndex(pa);
         if (pageIndex >= pages.size()) {
-            physIndexFailed++;
-            if (pa < minRejectedPA) minRejectedPA = pa;
-            if (pa > maxRejectedPA) maxRejectedPA = pa;
-            if (pageIndex != SIZE_MAX && pageIndex > maxRejectedIndex) maxRejectedIndex = pageIndex;
             continue;
         }
 
@@ -377,7 +362,6 @@ size_t PageDatabase::AttributeProcessPages(const ProcessInfo& proc,
         }
 
         if (!matchingSection) {
-            noMatchingSection++;
             continue;
         }
 
@@ -392,18 +376,6 @@ size_t PageDatabase::AttributeProcessPages(const ProcessInfo& proc,
 
         uint64_t key = MakeVirtualKey(proc.pid, va);
         updates.push_back({pageIndex, meta, key});
-    }
-
-    // DEBUG: Show filtering stats
-    if (proc.pid == 4696) {
-        std::cout << "[AttributeProcessPages] PID " << proc.pid << ": " << ptes.size() << " PTEs\n";
-        std::cout << "[AttributeProcessPages]   PhysToIndex failed: " << physIndexFailed << "\n";
-        if (physIndexFailed > 0) {
-            std::cout << "[AttributeProcessPages]   Rejected PA range: 0x" << std::hex << minRejectedPA
-                      << " - 0x" << maxRejectedPA << std::dec << "\n";
-        }
-        std::cout << "[AttributeProcessPages]   No matching section: " << noMatchingSection << "\n";
-        std::cout << "[AttributeProcessPages]   Created updates: " << updates.size() << "\n";
     }
 
     // Apply all updates with single lock (batch update)
@@ -620,16 +592,6 @@ bool PageDatabase::GetPIDData(uint32_t pid,
 
     std::lock_guard<std::mutex> lock(mutex);
 
-    // DEBUG: Check how many pages have this PID via old method
-    size_t oldMethodCount = 0;
-    for (const auto& page : pages) {
-        if (page.hasProcess(pid)) {
-            oldMethodCount++;
-        }
-    }
-    std::cout << "[PageDB::GetPIDData] PID " << pid << ": Old method finds " << oldMethodCount << " pages with hasProcess()\n";
-    std::cout << "[PageDB::GetPIDData] virtualLookup has " << virtualLookup.size() << " total entries\n";
-
     // Use virtualLookup to get CORRECT VAs for this PID (not the first process's VA!)
     // Each physical page can be mapped at different VAs by different PIDs (shared DLLs)
     struct PageWithVA {
@@ -638,12 +600,10 @@ bool PageDatabase::GetPIDData(uint32_t pid,
     };
     std::vector<PageWithVA> pidPages;
 
-    size_t virtualLookupMatches = 0;
     for (const auto& [key, pageIndex] : virtualLookup) {
         // Extract PID from key: (pid << 32) | (va >> 12)
         uint32_t keyPid = static_cast<uint32_t>(key >> 32);
         if (keyPid != pid) continue;
-        virtualLookupMatches++;
 
         // Extract VA from key (restore the page-aligned address)
         uint64_t virtualAddr = (key & 0xFFFFFFFF) << 12;
@@ -654,9 +614,6 @@ bool PageDatabase::GetPIDData(uint32_t pid,
 
         pidPages.push_back({virtualAddr, page});
     }
-
-    std::cout << "[PageDB::GetPIDData] virtualLookup found " << virtualLookupMatches << " entries for PID " << pid << "\n";
-    std::cout << "[PageDB::GetPIDData] After filtering, have " << pidPages.size() << " pages\n";
 
     if (pidPages.empty()) {
         return false;
