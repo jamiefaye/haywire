@@ -161,6 +161,46 @@ response = json.loads(sock.recv(4096).decode())
 7. **Page alignment critical** - Beacons must be on 4KB boundaries
 8. **Zero page optimization** - memset(0) doesn't allocate physical pages
 
+## Recent Progress (November 23, 2025)
+
+### PageDatabase Multi-Region RAM Fix
+
+**Critical Bug Fixed**: PageDB was initializing with only the first RAM region (2GB on x86-64), causing 99.3% of PTEs to be rejected as out of bounds.
+
+**Problem**:
+- x86-64 guests have RAM split around PCI hole: 0-2GB + 4-10GB (2 regions, 8GB total)
+- PageDB initialization used `GetFirstRAMRegion()` which only returned 0-2GB region
+- Page array allocated only 524,288 entries (2GB worth)
+- Windows process PTEs at 4-10GB physical addresses failed PhysToIndex validation
+- Result: explorer.exe showed 7 sections with 9 PTEs instead of ~700 sections with ~35,000 PTEs
+
+**Solution**:
+- Calculate total RAM by summing all memory regions
+- Initialize PageDB with full 8GB across both regions
+- PhysToIndex already handled PCI hole compression correctly (0-2GB → indices 0-524287, 4-10GB → indices 524288-2097151)
+- Now works for both ARM64 (single region) and x86-64 (multi-region with PCI hole)
+
+**Files Modified**:
+- `src/main.cpp` - Sum all RAM regions instead of using just first region
+- `src/page_database.cpp` - Improved GetPIDData to use virtualLookup for correct per-PID VAs
+
+### Shared Library/DLL Support
+
+**Problem**: Physical pages shared by multiple processes (DLLs, .so files) have one `virtualAddr` but each process maps them at different VAs.
+
+**Solution**: GetPIDData now uses `virtualLookup` map which tracks (PID, VA) → pageIndex, giving each process the correct VA for shared pages.
+
+**Impact**: Both Windows and Linux now correctly display full process memory maps including shared libraries at the correct addresses for each process.
+
+### Windows Testing Progress
+
+Successfully tested with Windows 11 Build 26200.7171 (x86-64):
+- All 122 processes discovered correctly (including dwm.exe, explorer.exe, Firefox)
+- VAD tree walking with recursion protection (depth limit + cycle detection)
+- Process name validation extended to handle space and tilde characters (Firefox thread names like "Utility Process")
+- Full memory maps with ~700 sections per complex process
+- No-network launch script available for testing without Windows updates
+
 ## Recent Progress (August 2025)
 
 ### PID to PGD Mapping Success
