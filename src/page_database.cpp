@@ -217,6 +217,11 @@ void PageDatabase::Initialize(uint64_t ramBase, uint64_t ramSize) {
     this->ramSize = ramSize;
     this->numPages = ramSize / 4096;
 
+    std::cout << "[PageDatabase::Initialize] ramBase=0x" << std::hex << ramBase
+              << " ramSize=0x" << ramSize << std::dec
+              << " (" << (ramSize / (1024.0 * 1024.0 * 1024.0)) << " GB)"
+              << " numPages=" << numPages << "\n";
+
     // Allocate page array
     pages.resize(numPages);
 
@@ -345,10 +350,22 @@ size_t PageDatabase::AttributeProcessPages(const ProcessInfo& proc,
     // section each page belongs to (O(actual_pages)). This is 100-1000x faster for
     // processes with large sparse address spaces.
 
+    size_t physIndexFailed = 0;
+    size_t noMatchingSection = 0;
+    uint64_t minRejectedPA = UINT64_MAX;
+    uint64_t maxRejectedPA = 0;
+    size_t maxRejectedIndex = 0;
+
     for (const auto& [va, pa] : ptes) {
         // PhysToIndex() returns SIZE_MAX for invalid addresses (PCI hole, beyond RAM)
         size_t pageIndex = PhysToIndex(pa);
-        if (pageIndex >= pages.size()) continue;
+        if (pageIndex >= pages.size()) {
+            physIndexFailed++;
+            if (pa < minRejectedPA) minRejectedPA = pa;
+            if (pa > maxRejectedPA) maxRejectedPA = pa;
+            if (pageIndex != SIZE_MAX && pageIndex > maxRejectedIndex) maxRejectedIndex = pageIndex;
+            continue;
+        }
 
         // Find which section this VA belongs to
         const SectionEntry* matchingSection = nullptr;
@@ -359,7 +376,10 @@ size_t PageDatabase::AttributeProcessPages(const ProcessInfo& proc,
             }
         }
 
-        if (!matchingSection) continue;
+        if (!matchingSection) {
+            noMatchingSection++;
+            continue;
+        }
 
         // Build metadata for this page
         PageMetadata meta;
@@ -372,6 +392,18 @@ size_t PageDatabase::AttributeProcessPages(const ProcessInfo& proc,
 
         uint64_t key = MakeVirtualKey(proc.pid, va);
         updates.push_back({pageIndex, meta, key});
+    }
+
+    // DEBUG: Show filtering stats
+    if (proc.pid == 4696) {
+        std::cout << "[AttributeProcessPages] PID " << proc.pid << ": " << ptes.size() << " PTEs\n";
+        std::cout << "[AttributeProcessPages]   PhysToIndex failed: " << physIndexFailed << "\n";
+        if (physIndexFailed > 0) {
+            std::cout << "[AttributeProcessPages]   Rejected PA range: 0x" << std::hex << minRejectedPA
+                      << " - 0x" << maxRejectedPA << std::dec << "\n";
+        }
+        std::cout << "[AttributeProcessPages]   No matching section: " << noMatchingSection << "\n";
+        std::cout << "[AttributeProcessPages]   Created updates: " << updates.size() << "\n";
     }
 
     // Apply all updates with single lock (batch update)
@@ -588,59 +620,89 @@ bool PageDatabase::GetPIDData(uint32_t pid,
 
     std::lock_guard<std::mutex> lock(mutex);
 
-    // Collect all pages for this PID, sorted by virtual address
-    std::vector<const PageMetadata*> pidPages;
+    // DEBUG: Check how many pages have this PID via old method
+    size_t oldMethodCount = 0;
     for (const auto& page : pages) {
-        if (page.hasProcess(pid) && page.virtualAddr != 0) {
-            pidPages.push_back(&page);
+        if (page.hasProcess(pid)) {
+            oldMethodCount++;
         }
     }
+    std::cout << "[PageDB::GetPIDData] PID " << pid << ": Old method finds " << oldMethodCount << " pages with hasProcess()\n";
+    std::cout << "[PageDB::GetPIDData] virtualLookup has " << virtualLookup.size() << " total entries\n";
+
+    // Use virtualLookup to get CORRECT VAs for this PID (not the first process's VA!)
+    // Each physical page can be mapped at different VAs by different PIDs (shared DLLs)
+    struct PageWithVA {
+        uint64_t virtualAddr;
+        const PageMetadata* page;
+    };
+    std::vector<PageWithVA> pidPages;
+
+    size_t virtualLookupMatches = 0;
+    for (const auto& [key, pageIndex] : virtualLookup) {
+        // Extract PID from key: (pid << 32) | (va >> 12)
+        uint32_t keyPid = static_cast<uint32_t>(key >> 32);
+        if (keyPid != pid) continue;
+        virtualLookupMatches++;
+
+        // Extract VA from key (restore the page-aligned address)
+        uint64_t virtualAddr = (key & 0xFFFFFFFF) << 12;
+
+        // Get the page metadata
+        if (pageIndex >= pages.size()) continue;
+        const PageMetadata* page = &pages[pageIndex];
+
+        pidPages.push_back({virtualAddr, page});
+    }
+
+    std::cout << "[PageDB::GetPIDData] virtualLookup found " << virtualLookupMatches << " entries for PID " << pid << "\n";
+    std::cout << "[PageDB::GetPIDData] After filtering, have " << pidPages.size() << " pages\n";
 
     if (pidPages.empty()) {
         return false;
     }
 
-    // Sort by virtual address
+    // Sort by virtual address (now using CORRECT VA for this PID)
     std::sort(pidPages.begin(), pidPages.end(),
-              [](const PageMetadata* a, const PageMetadata* b) {
-                  return a->virtualAddr < b->virtualAddr;
+              [](const PageWithVA& a, const PageWithVA& b) {
+                  return a.virtualAddr < b.virtualAddr;
               });
 
-    // Build PTEs (one entry per page)
-    for (const auto* page : pidPages) {
-        ptes[page->virtualAddr] = page->physicalAddr;
+    // Build PTEs using CORRECT VAs for this PID
+    for (const auto& entry : pidPages) {
+        ptes[entry.virtualAddr] = entry.page->physicalAddr;
     }
 
-    // Coalesce consecutive pages into sections
+    // Coalesce consecutive pages into sections (using CORRECT VAs)
     SectionEntry currentSection;
-    currentSection.va_start = pidPages[0]->virtualAddr;
-    currentSection.va_end = pidPages[0]->virtualAddr + 4096;
-    currentSection.ownership_type = static_cast<uint32_t>(pidPages[0]->ownershipType);
-    currentSection.perms = pidPages[0]->flags;
-    strncpy(currentSection.path, pidPages[0]->filename.c_str(), sizeof(currentSection.path) - 1);
+    currentSection.va_start = pidPages[0].virtualAddr;
+    currentSection.va_end = pidPages[0].virtualAddr + 4096;
+    currentSection.ownership_type = static_cast<uint32_t>(pidPages[0].page->ownershipType);
+    currentSection.perms = pidPages[0].page->flags;
+    strncpy(currentSection.path, pidPages[0].page->filename.c_str(), sizeof(currentSection.path) - 1);
     currentSection.path[sizeof(currentSection.path) - 1] = '\0';
 
     for (size_t i = 1; i < pidPages.size(); i++) {
-        const auto* page = pidPages[i];
+        const auto& entry = pidPages[i];
 
         // Can we merge this page into current section?
-        bool canMerge = (page->virtualAddr == currentSection.va_end &&
-                        page->ownershipType == static_cast<PageMetadata::OwnershipType>(currentSection.ownership_type) &&
-                        page->flags == currentSection.perms &&
-                        page->filename == currentSection.path);
+        bool canMerge = (entry.virtualAddr == currentSection.va_end &&
+                        entry.page->ownershipType == static_cast<PageMetadata::OwnershipType>(currentSection.ownership_type) &&
+                        entry.page->flags == currentSection.perms &&
+                        entry.page->filename == currentSection.path);
 
         if (canMerge) {
             // Extend current section
-            currentSection.va_end = page->virtualAddr + 4096;
+            currentSection.va_end = entry.virtualAddr + 4096;
         } else {
             // Save current section and start new one
             sections.push_back(currentSection);
 
-            currentSection.va_start = page->virtualAddr;
-            currentSection.va_end = page->virtualAddr + 4096;
-            currentSection.ownership_type = static_cast<uint32_t>(page->ownershipType);
-            currentSection.perms = page->flags;
-            strncpy(currentSection.path, page->filename.c_str(), sizeof(currentSection.path) - 1);
+            currentSection.va_start = entry.virtualAddr;
+            currentSection.va_end = entry.virtualAddr + 4096;
+            currentSection.ownership_type = static_cast<uint32_t>(entry.page->ownershipType);
+            currentSection.perms = entry.page->flags;
+            strncpy(currentSection.path, entry.page->filename.c_str(), sizeof(currentSection.path) - 1);
             currentSection.path[sizeof(currentSection.path) - 1] = '\0';
         }
     }

@@ -233,21 +233,31 @@ int main(int argc, char** argv) {
             std::cout << "\nInitializing master page database...\n";
 
             // Get RAM bounds from memory mapper
+            // NOTE: For x86-64 with PCI hole, there are multiple RAM regions
+            // We need TOTAL RAM size for PageDB, not just first region
             uint64_t ramBase = 0x40000000;  // Standard ARM64 QEMU RAM base
-            uint64_t ramSize = 4ULL * 1024 * 1024 * 1024;  // Default to 4GB
+            uint64_t totalRAM = 4ULL * 1024 * 1024 * 1024;  // Default to 4GB
 
-            // Try to get actual RAM size from memory mapper
+            // Calculate total RAM across all regions
             auto* firstRAM = memoryMapper->GetFirstRAMRegion();
             if (firstRAM) {
                 ramBase = firstRAM->gpa_start;
-                ramSize = firstRAM->size;
+
+                // Sum up all RAM regions (handles x86-64 PCI hole)
+                const auto& regions = memoryMapper->GetRegions();
+                totalRAM = 0;
+                for (const auto& region : regions) {
+                    totalRAM += region.size;
+                }
+
                 std::cout << "Detected RAM: base=0x" << std::hex << ramBase
-                          << " size=" << std::dec << (ramSize / (1024*1024*1024)) << "GB\n";
+                          << " total=" << std::dec << (totalRAM / (1024*1024*1024)) << "GB"
+                          << " across " << regions.size() << " regions\n";
             } else {
                 std::cout << "Using default RAM configuration: 4GB at 0x40000000\n";
             }
 
-            pageDatabase->Initialize(ramBase, ramSize);
+            pageDatabase->Initialize(ramBase, totalRAM);
 
             // Start background scanner to populate database progressively
             std::cout << "Starting background page database scanner...\n";
