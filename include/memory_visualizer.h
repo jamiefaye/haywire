@@ -251,6 +251,11 @@ private:
     std::unique_ptr<AddressSpaceFlattener> addressFlattener;
     std::unique_ptr<CrunchedRangeNavigator> crunchedNavigator;
     std::unique_ptr<CrunchedMemoryReader> crunchedReader;
+
+    // Saved flattener state for PA/VA mode switching
+    std::vector<GuestMemoryRegion> savedPARegions;  // RAM regions for PA mode
+    std::vector<GuestMemoryRegion> savedVARegions;  // Process VMAs for VA mode
+    std::unordered_map<uint64_t, uint64_t> savedVAPTEs;  // PTEs for VA mode
     
     // Guest agent for loading memory maps
     GuestAgent* guestAgent;

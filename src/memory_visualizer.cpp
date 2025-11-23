@@ -949,13 +949,24 @@ void MemoryVisualizer::SetMemoryMapper(std::shared_ptr<MemoryMapper> mapper) {
     if (mapper && addressFlattener) {
         addressFlattener->BuildFromRAMRegions(mapper.get());
 
+        // Save PA regions for later restoration when switching modes
+        savedPARegions.clear();
+        for (const auto& ramRegion : mapper->GetRegions()) {
+            GuestMemoryRegion region;
+            region.start = ramRegion.gpa_start;
+            region.end = ramRegion.gpa_end;
+            region.name = ramRegion.name;
+            region.ownershipType = GuestMemoryRegion::UNKNOWN;
+            savedPARegions.push_back(region);
+        }
+
         // Also setup crunched reader for PA mode
         if (crunchedReader) {
             crunchedReader->SetFlattener(addressFlattener.get());
         }
 
         std::cerr << "PA mode: populated address flattener with "
-                  << mapper->GetRegions().size() << " RAM regions\n";
+                  << mapper->GetRegions().size() << " RAM regions (saved for mode switching)\n";
     }
 }
 
@@ -1219,12 +1230,19 @@ void MemoryVisualizer::DrawControls() {
         }
         
         if (useVirtualAddresses) {
-            // Switching to VA mode
-            if (addressFlattener && addressFlattener->GetFlatSize() > 0) {
-                // Get the first valid region's flat start
+            // Switching to VA mode - restore saved VA regions
+            if (addressFlattener && !savedVARegions.empty()) {
+                std::cerr << "Restoring saved VA regions (" << savedVARegions.size() << " regions)\n";
+
+                // Restore the VA memory map
+                LoadMemoryMap(savedVARegions, savedVAPTEs.empty() ? nullptr : &savedVAPTEs);
+
+                // Navigate to first region
                 const auto* firstRegion = addressFlattener->GetRegionForFlat(0);
-                if (!firstRegion) {
-                    // Try to find the first region
+                if (firstRegion) {
+                    viewport.baseAddress = 0;
+                } else {
+                    // Find first valid region
                     for (uint64_t testFlat = 0; testFlat < addressFlattener->GetFlatSize(); testFlat += 4096) {
                         firstRegion = addressFlattener->GetRegionForFlat(testFlat);
                         if (firstRegion) {
@@ -1232,42 +1250,39 @@ void MemoryVisualizer::DrawControls() {
                             break;
                         }
                     }
-                } else {
-                    viewport.baseAddress = 0;
                 }
-                needsUpdate = true;
-                
-                // Update address display to show first VA
+
+                // Update address display
                 uint64_t firstVA = addressFlattener->FlatToVirtual(viewport.baseAddress);
                 strcpy(addressInput, AddressParser::Format(firstVA, AddressSpace::VIRTUAL).c_str());
-                
-                std::cerr << "Switched to VA mode, flat size: " 
-                          << addressFlattener->GetFlatSize() / (1024*1024) << " MB"
-                          << ", starting at flat 0x" << std::hex << viewport.baseAddress << std::dec << std::endl;
-            } else {
-                std::cerr << "VA mode enabled but no memory map loaded" << std::endl;
-            }
-        } else {
-            // Switching back to physical mode
-            // IMPORTANT: Rebuild the flattener with RAM regions (it currently has VA mode VMAs!)
-            if (memoryMapper && addressFlattener) {
-                addressFlattener->BuildFromRAMRegions(memoryMapper.get());
-                std::cerr << "Rebuilt PA mode flattener with "
-                          << memoryMapper->GetRegions().size() << " RAM regions\n";
-            }
 
-            // Get the first RAM region from MemoryMapper if available
-            uint64_t ramBase = 0;
-            if (memoryMapper) {
-                const auto& regions = memoryMapper->GetRegions();
-                if (!regions.empty()) {
-                    ramBase = regions[0].gpa_start;  // Use first region's start
-                }
+                std::cerr << "Switched to VA mode, flat size: "
+                          << addressFlattener->GetFlatSize() / (1024*1024) << " MB\n";
+            } else {
+                std::cerr << "VA mode enabled but no saved VA regions (select a process first)\n";
             }
-            viewport.baseAddress = ramBase;
-            strcpy(addressInput, AddressParser::Format(ramBase, AddressSpace::PHYSICAL).c_str());
             needsUpdate = true;
-            std::cerr << "Switched to physical mode" << std::endl;
+        } else {
+            // Switching back to PA mode - restore saved PA regions
+            if (addressFlattener && !savedPARegions.empty()) {
+                std::cerr << "Restoring saved PA regions (" << savedPARegions.size() << " regions)\n";
+
+                // Rebuild flattener with PA regions
+                addressFlattener->BuildFromRegions(savedPARegions);
+
+                // Navigate to first RAM region
+                uint64_t ramBase = 0;
+                if (!savedPARegions.empty()) {
+                    ramBase = savedPARegions[0].start;
+                }
+                viewport.baseAddress = ramBase;
+                strcpy(addressInput, AddressParser::Format(ramBase, AddressSpace::PHYSICAL).c_str());
+
+                std::cerr << "Switched to PA mode\n";
+            } else {
+                std::cerr << "PA mode enabled but no saved PA regions\n";
+            }
+            needsUpdate = true;
         }
     }
     if (ImGui::IsItemHovered()) {
@@ -3575,6 +3590,15 @@ void MemoryVisualizer::LoadMemoryMap(const std::vector<GuestMemoryRegion>& regio
 
         addressFlattener->BuildFromRegions(regions);
         std::cerr << "Loaded memory map with " << regions.size() << " regions\n";
+
+        // Save VA regions and PTEs for later restoration when switching modes
+        savedVARegions = regions;
+        if (ptes) {
+            savedVAPTEs = *ptes;
+            std::cerr << "Saved " << savedVAPTEs.size() << " PTEs for mode switching\n";
+        } else {
+            savedVAPTEs.clear();
+        }
 
         // Build PA lookup table for fast flat->PA translation
         if (viewportTranslator && targetPid >= 0) {  // Allow PID 0 for query results
