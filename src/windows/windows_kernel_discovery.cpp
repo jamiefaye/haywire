@@ -1352,8 +1352,31 @@ private:
      *
      * @param vad_pa Physical address of MMVAD node
      * @param sections Output vector of memory sections
+     * @param depth Current recursion depth
+     * @param visited Set of visited nodes to detect cycles
      */
-    void WalkVADTree(uint64_t vad_pa, std::vector<MemorySection>& sections) {
+    void WalkVADTree(uint64_t vad_pa, std::vector<MemorySection>& sections,
+                     int depth = 0, std::set<uint64_t>* visited = nullptr) {
+        // Protect against stack overflow - AVL trees shouldn't exceed 64 levels
+        constexpr int MAX_DEPTH = 64;
+        if (depth > MAX_DEPTH) {
+            std::cerr << "[WalkVADTree] Max recursion depth " << MAX_DEPTH
+                      << " exceeded at PA 0x" << std::hex << vad_pa << std::dec << std::endl;
+            return;
+        }
+
+        // Create visited set on first call, check for cycles on subsequent calls
+        std::set<uint64_t> local_visited;
+        if (visited == nullptr) {
+            visited = &local_visited;
+        } else {
+            if (visited->count(vad_pa) > 0) {
+                std::cerr << "[WalkVADTree] Cycle detected - already visited PA 0x"
+                          << std::hex << vad_pa << std::dec << std::endl;
+                return;
+            }
+        }
+        visited->insert(vad_pa);
         // Read MMVAD_SHORT structure (64 bytes minimum)
         // Layout: RTL_BALANCED_NODE (24 bytes) + StartingVpn (4) + EndingVpn (4) + ... + VadFlags (at 48)
         //
@@ -1430,7 +1453,7 @@ private:
             uint64_t left_pa = TranslateVA(left_va, kernelInfo.swapper_pgd);
             std::cerr << "[WalkVADTree] Left child VA=0x" << std::hex << left_va << " → PA=0x" << left_pa << std::dec << std::endl;
             if (left_pa != 0) {
-                WalkVADTree(left_pa, sections);
+                WalkVADTree(left_pa, sections, depth + 1, visited);
             }
         } else if (left_va != 0) {
             std::cerr << "[WalkVADTree] Left VA=0x" << std::hex << left_va << " not a kernel VA (bits 63-48 = 0x" << (left_va >> 48) << ")" << std::dec << std::endl;
@@ -1442,7 +1465,7 @@ private:
             uint64_t right_pa = TranslateVA(right_va, kernelInfo.swapper_pgd);
             std::cerr << "[WalkVADTree] Right child VA=0x" << std::hex << right_va << " → PA=0x" << right_pa << std::dec << std::endl;
             if (right_pa != 0) {
-                WalkVADTree(right_pa, sections);
+                WalkVADTree(right_pa, sections, depth + 1, visited);
             }
         } else if (right_va != 0) {
             std::cerr << "[WalkVADTree] Right VA=0x" << std::hex << right_va << " not a kernel VA (bits 63-48 = 0x" << (right_va >> 48) << ")" << std::dec << std::endl;
