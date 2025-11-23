@@ -102,7 +102,14 @@ public:
             }
         }
 
-        // Fallback to ARM64 if x86_64 not available
+        // Fallback to ARM64 - try latest version first
+        std::string arm64Profile = profilesDir + "/ubuntu-6.14.0-36-arm64.json";
+        std::ifstream test(arm64Profile);
+        if (test.good()) {
+            return arm64Profile;
+        }
+
+        // Fallback to older version
         return profilesDir + "/ubuntu-6.14.0-34-arm64.json";
     }
 
