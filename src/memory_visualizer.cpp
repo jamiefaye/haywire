@@ -1249,6 +1249,13 @@ void MemoryVisualizer::DrawControls() {
             }
         } else {
             // Switching back to physical mode
+            // IMPORTANT: Rebuild the flattener with RAM regions (it currently has VA mode VMAs!)
+            if (memoryMapper && addressFlattener) {
+                addressFlattener->BuildFromRAMRegions(memoryMapper.get());
+                std::cerr << "Rebuilt PA mode flattener with "
+                          << memoryMapper->GetRegions().size() << " RAM regions\n";
+            }
+
             // Get the first RAM region from MemoryMapper if available
             uint64_t ramBase = 0;
             if (memoryMapper) {
