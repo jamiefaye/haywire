@@ -99,7 +99,6 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
         size_t regionBytesRead = 0;
         
         while (regionBytesRead < toRead) {
-            size_t chunkSize = std::min<size_t>(pageSize, toRead - regionBytesRead);
             uint64_t chunkFlatAddr = currentFlat + totalRead + regionBytesRead;
 
             // Get physical address based on mode
@@ -134,17 +133,12 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
                 physAddr = chunkPA;
             }
 
-            // Debug: VA->PA translation (disabled for production)
-            // static int translationCount = 0;
-            // if (++translationCount <= 5) {
-            //     std::cerr << "VA->PA: 0x" << std::hex << chunkVA << " -> ";
-            //     if (physAddr != 0) {
-            //         std::cerr << "0x" << physAddr << std::dec << " (success)" << std::endl;
-            //     } else {
-            //         std::cerr << "not mapped" << std::dec << std::endl;
-            //     }
-            // }
-            
+            // CRITICAL: Clip chunkSize to page boundary
+            // If physAddr is in middle of page, we can only read to end of that page
+            size_t bytesLeftInPage = pageSize - (physAddr % pageSize);
+            size_t bytesNeeded = toRead - regionBytesRead;
+            size_t chunkSize = std::min<size_t>(bytesLeftInPage, bytesNeeded);
+
             if (physAddr == 0) {
                 // Page not present - fill with zeros but remember it's unmapped
                 buffer.resize(buffer.size() + chunkSize, 0);
@@ -159,7 +153,7 @@ size_t CrunchedMemoryReader::ReadCrunchedMemory(uint64_t flatAddress, size_t siz
                     buffer.resize(buffer.size() + chunkSize, 0);
                 }
             }
-            
+
             regionBytesRead += chunkSize;
         }
         
