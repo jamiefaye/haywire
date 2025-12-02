@@ -64,9 +64,9 @@ mkdir -p "$SCRIPT_DIR/../isos"
 rm -f "$MEMFILE"
 
 # Check for OVMF (UEFI firmware) - needed for Windows 11
-OVMF_DIR="$SCRIPT_DIR/../firmware"
+OVMF_DIR="$HOME/haywire-firmware"
 OVMF_CODE="$OVMF_DIR/OVMF_CODE.fd"
-OVMF_VARS="$SCRIPT_DIR/../vms/windows11_VARS.fd"
+OVMF_VARS="$WSL_VM_DIR/windows11_VARS.fd"
 
 # Download OVMF if not present
 if [ ! -f "$OVMF_CODE" ] || [ ! -s "$OVMF_CODE" ]; then
@@ -104,7 +104,7 @@ if [ ! -f "$OVMF_VARS" ]; then
 fi
 
 # Setup TPM 2.0 (required for Windows 11)
-SWTPM_DIR="$SCRIPT_DIR/../vms/swtpm_win11"
+SWTPM_DIR="$WSL_VM_DIR/swtpm_win11"
 mkdir -p "$SWTPM_DIR"
 
 # Check if swtpm is installed
@@ -140,7 +140,7 @@ echo ""
 # Build QEMU command
 QEMU_ARGS=(
     -machine q35
-    -cpu host
+    -cpu host,-vmx,-hypervisor,+invtsc
     -smp $CORES
     -m $MEMORY
 
@@ -166,9 +166,9 @@ QEMU_ARGS=(
     # Boot order - CD first for installation (d=cdrom, c=disk)
     -boot order=d,menu=on
 
-    # Network - DISABLED for easier installation (not needed for Haywire)
-    # -netdev user,id=net0
-    # -device virtio-net-pci,netdev=net0
+    # Network - user mode NAT with Intel e1000 NIC (built-in Windows driver)
+    -netdev user,id=net0
+    -device e1000,netdev=net0
 
     # Graphics - GTK for native window display (via WSLg)
     # Alternatives: -display sdl, or -vnc :1 for VNC
