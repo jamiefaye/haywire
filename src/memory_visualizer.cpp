@@ -1130,34 +1130,6 @@ void MemoryVisualizer::DrawControls() {
     }
     ImGui::PopItemWidth();
 
-    // Zoom control for main viewport
-    ImGui::SameLine();
-    ImGui::Text("Zoom:");
-    ImGui::SameLine();
-    ImGui::PushItemWidth(50);
-    char zoomLabel[16];
-    snprintf(zoomLabel, sizeof(zoomLabel), "%dx", (int)viewport.zoom);
-    if (ImGui::BeginCombo("##ViewZoom", zoomLabel)) {
-        int zoomLevels[] = {1, 2, 3, 4, 6, 8};
-        for (int i = 0; i < sizeof(zoomLevels)/sizeof(zoomLevels[0]); i++) {
-            bool isSelected = ((int)viewport.zoom == zoomLevels[i]);
-            char itemLabel[16];
-            snprintf(itemLabel, sizeof(itemLabel), "%dx", zoomLevels[i]);
-            if (ImGui::Selectable(itemLabel, isSelected)) {
-                viewport.zoom = (float)zoomLevels[i];
-                needsUpdate = true;
-            }
-            if (isSelected) {
-                ImGui::SetItemDefaultFocus();
-            }
-        }
-        ImGui::EndCombo();
-    }
-    ImGui::PopItemWidth();
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Display zoom level (1x = 1 memory pixel per screen pixel)");
-    }
-
     // Hidden for now - hex overlay feature available but not shown in UI
     // ImGui::SameLine();
     // ImGui::Checkbox("Hex", &showHexOverlay);
@@ -1242,39 +1214,6 @@ void MemoryVisualizer::DrawControls() {
     ImGui::Checkbox("Inspector", &showMagnifier);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Show magnifier & search tool (Press 'M' to bring to front, Ctrl+F to search)");
-    }
-
-    // Frame sharing (Syphon on macOS, Spout on Windows)
-    if (FrameSharing::IsAvailable()) {
-        ImGui::SameLine();
-#ifdef __APPLE__
-        const char* shareName = "Syphon";
-#else
-        const char* shareName = "Spout";
-#endif
-        if (ImGui::Checkbox(shareName, &frameSharingEnabled_)) {
-            if (frameSharingEnabled_) {
-                // Initialize frame sharing
-                if (!frameSharing_) {
-                    frameSharing_.reset(FrameSharing::Create());
-                }
-                if (frameSharing_ && !frameSharing_->IsActive()) {
-                    frameSharing_->Initialize("Haywire");
-                }
-            } else {
-                // Stop frame sharing
-                if (frameSharing_ && frameSharing_->IsActive()) {
-                    frameSharing_->Stop();
-                }
-            }
-        }
-        if (ImGui::IsItemHovered()) {
-#ifdef __APPLE__
-            ImGui::SetTooltip("Share frame via Syphon (for use with VJ software, etc.)");
-#else
-            ImGui::SetTooltip("Share frame via Spout (for use with VJ software, etc.)");
-#endif
-        }
     }
 
     // Second row: Column mode, VA/PA translation controls, and process info
@@ -1380,7 +1319,62 @@ void MemoryVisualizer::DrawControls() {
         }
     }
 
-    // Query button - right next to Select
+    // Zoom control - continuous slider with detents
+    ImGui::SameLine();
+    ImGui::Text("Zoom:");
+    ImGui::SameLine();
+    ImGui::PushItemWidth(150);
+    float oldZoom = viewport.zoom;
+    if (ImGui::SliderFloat("##ViewZoom", &viewport.zoom, 0.5f, 8.0f, "%.1fx")) {
+        // Snap to detents when close
+        float detents[] = {0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 8.0f};
+        for (float detent : detents) {
+            if (fabsf(viewport.zoom - detent) < 0.15f) {
+                viewport.zoom = detent;
+                break;
+            }
+        }
+        if (viewport.zoom != oldZoom) {
+            needsUpdate = true;
+        }
+    }
+    ImGui::PopItemWidth();
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Display zoom (drag or Ctrl+click to type)");
+    }
+
+    // Frame sharing (Syphon on macOS, Spout on Windows)
+    if (FrameSharing::IsAvailable()) {
+        ImGui::SameLine();
+#ifdef __APPLE__
+        const char* shareName = "Syphon";
+#else
+        const char* shareName = "Spout";
+#endif
+        if (ImGui::Checkbox(shareName, &frameSharingEnabled_)) {
+            if (frameSharingEnabled_) {
+                if (!frameSharing_) {
+                    frameSharing_.reset(FrameSharing::Create());
+                }
+                if (frameSharing_ && !frameSharing_->IsActive()) {
+                    frameSharing_->Initialize("Haywire");
+                }
+            } else {
+                if (frameSharing_ && frameSharing_->IsActive()) {
+                    frameSharing_->Stop();
+                }
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+#ifdef __APPLE__
+            ImGui::SetTooltip("Share frame via Syphon (for VJ software)");
+#else
+            ImGui::SetTooltip("Share frame via Spout (for VJ software)");
+#endif
+        }
+    }
+
+    // Query button
     ImGui::SameLine();
     if (ImGui::Button("Query...")) {
         if (onQueryButtonClick) {
@@ -3494,10 +3488,44 @@ void MemoryVisualizer::UpdateTexture() {
                     0, GL_RGBA, GL_UNSIGNED_BYTE, pixelBuffer.data());
         glFlush();  // Force GPU to process the texture update
 
-        // Publish frame via Syphon/Spout if enabled
+        // Publish frame via Syphon/Spout if enabled (with zoom applied)
         if (frameSharingEnabled_ && frameSharing_ && frameSharing_->IsActive()) {
-            frameSharing_->PublishTexture(memoryTexture, GL_TEXTURE_2D,
-                                          viewport.width, viewport.height, true);  // flipped=true for correct orientation
+            int zoomedWidth = (int)(viewport.width * viewport.zoom);
+            int zoomedHeight = (int)(viewport.height * viewport.zoom);
+
+            // Resize FBO/texture if needed
+            if (syphonTexture_ == 0 || syphonTextureWidth_ != zoomedWidth || syphonTextureHeight_ != zoomedHeight) {
+                if (syphonFBO_ == 0) glGenFramebuffers(1, &syphonFBO_);
+                if (syphonTexture_ == 0) glGenTextures(1, &syphonTexture_);
+
+                glBindTexture(GL_TEXTURE_2D, syphonTexture_);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, zoomedWidth, zoomedHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+                glBindFramebuffer(GL_FRAMEBUFFER, syphonFBO_);
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, syphonTexture_, 0);
+
+                syphonTextureWidth_ = zoomedWidth;
+                syphonTextureHeight_ = zoomedHeight;
+            }
+
+            // Blit memory texture to zoomed texture
+            GLuint srcFBO;
+            glGenFramebuffers(1, &srcFBO);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFBO);
+            glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, memoryTexture, 0);
+
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, syphonFBO_);
+            glBlitFramebuffer(0, 0, viewport.width, viewport.height,
+                              0, 0, zoomedWidth, zoomedHeight,
+                              GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+            glDeleteFramebuffers(1, &srcFBO);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+            frameSharing_->PublishTexture(syphonTexture_, GL_TEXTURE_2D,
+                                          zoomedWidth, zoomedHeight, true);
         }
     }
 }

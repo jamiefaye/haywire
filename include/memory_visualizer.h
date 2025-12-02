@@ -299,6 +299,10 @@ private:
     // Frame sharing (Syphon/Spout)
     std::unique_ptr<FrameSharing> frameSharing_;
     bool frameSharingEnabled_ = false;
+    GLuint syphonFBO_ = 0;
+    GLuint syphonTexture_ = 0;
+    int syphonTextureWidth_ = 0;
+    int syphonTextureHeight_ = 0;
 };
 
 }
