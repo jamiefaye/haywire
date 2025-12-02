@@ -18,6 +18,20 @@ if(APPLE)
     find_library(IOKIT_LIBRARY IOKit)
     find_library(CORE_VIDEO CoreVideo)
     set(PLATFORM_LIBS ${COCOA_LIBRARY} ${IOKIT_LIBRARY} ${CORE_VIDEO})
+
+    # Optional: Syphon framework for frame sharing
+    find_library(SYPHON_LIBRARY Syphon
+        PATHS /Library/Frameworks ~/Library/Frameworks
+        NO_DEFAULT_PATH)
+    if(SYPHON_LIBRARY)
+        message(STATUS "Found Syphon framework: ${SYPHON_LIBRARY}")
+        set(HAS_SYPHON TRUE)
+        list(APPEND PLATFORM_LIBS ${SYPHON_LIBRARY})
+    else()
+        message(STATUS "Syphon framework not found - frame sharing disabled")
+        message(STATUS "  Install from: https://github.com/Syphon/Syphon-Framework/releases")
+        set(HAS_SYPHON FALSE)
+    endif()
 elseif(UNIX)
     find_package(X11 REQUIRED)
     set(PLATFORM_LIBS ${X11_LIBRARIES} dl)
@@ -151,6 +165,10 @@ add_executable(haywire
     src/qemu_memory_source.cpp
     src/file_browser.cpp
     src/macos_mapped_file_enumerator.cpp
+    # Frame sharing (Syphon/Spout)
+    $<$<PLATFORM_ID:Darwin>:src/frame_sharing_syphon.mm>
+    $<$<PLATFORM_ID:Windows>:src/frame_sharing_spout.cpp>
+    $<$<NOT:$<OR:$<PLATFORM_ID:Darwin>,$<PLATFORM_ID:Windows>>>:src/frame_sharing_null.cpp>
     # Platform abstraction layer
     src/platform/page_walker.cpp
     src/platform/process_walker.cpp
@@ -180,6 +198,18 @@ if(CAPSTONE_FOUND)
     target_include_directories(haywire PRIVATE ${CAPSTONE_INCLUDE_DIRS})
     target_link_directories(haywire PRIVATE ${CAPSTONE_LIBRARY_DIRS})
     target_link_libraries(haywire PRIVATE ${CAPSTONE_LIBRARIES})
+endif()
+
+# Syphon framework include path and rpath (macOS)
+if(HAS_SYPHON)
+    target_compile_definitions(haywire PRIVATE HAS_SYPHON)
+    get_filename_component(SYPHON_DIR ${SYPHON_LIBRARY} DIRECTORY)
+    target_include_directories(haywire PRIVATE "${SYPHON_DIR}")
+    # Add rpath so the binary can find Syphon.framework at runtime
+    set_target_properties(haywire PROPERTIES
+        BUILD_RPATH "${SYPHON_DIR}"
+        INSTALL_RPATH "${SYPHON_DIR}"
+    )
 endif()
 
 # Enable AVX2 for change_detector.cpp

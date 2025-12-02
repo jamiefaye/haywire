@@ -6,6 +6,7 @@
 #include "bitmap_viewer.h"
 #include "address_parser.h"
 #include "memory_mapper.h"
+#include "frame_sharing.h"
 #include <imgui.h>
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
@@ -294,6 +295,10 @@ private:
     // Page Database status
     class PageDatabase* pageDatabase = nullptr;
     bool kernelDiscoveryInitialized = false;
+
+    // Frame sharing (Syphon/Spout)
+    std::unique_ptr<FrameSharing> frameSharing_;
+    bool frameSharingEnabled_ = false;
 };
 
 }
