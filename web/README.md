@@ -2,12 +2,29 @@
 
 Web-based version of Haywire memory introspection tool using Vue 3 and WebAssembly.
 
+> **Direction (June 2026):** The web version is now a **browser-only static viewer**.
+> Point it at a memory dump (or *any* file) and explore it visually — no VM, no install.
+> Live VM introspection, kernel discovery, Syphon output, and the full feature set live in
+> the **native C++ build** instead. See "Scope" below.
+>
+> **Electron is deprecated.** The Electron shell and the QMP WebSocket bridge have been moved
+> to `web/deprecated/` and removed from the toolchain. Anything needing a live VM should use
+> the C++ build.
+
+## Scope
+
+- **Web (this app):** open a static dump or arbitrary file → PA-mode pixel visualization,
+  pixel formats, column mode, mini viewers. Runs in any browser via a plain file picker.
+  Kernel-discovery / VA-mode "analytical smarts" are a nice-to-have here, not a requirement —
+  PA-mode raw visualization needs no kernel discovery at all.
+- **Native C++ build (`../src`):** the live powerhouse — live VM via mmap, heat-map patrol,
+  kernel discovery, VA↔PA translation, Capstone disassembly, Syphon/Spout output.
+
 ## Architecture
 
 - **Vue 3** - UI framework
 - **WebAssembly** - Reuses the C++ `memory_renderer.cpp` compiled to WASM for native performance
-- **File System API** - Direct access to memory-mapped file (`/tmp/haywire-vm-mem`)
-- **WebSocket** - Minimal bridge for QMP commands (VA→PA translation)
+- **File access** - Reads a static dump/file (chunked `file.slice()`, works on multi-GB files)
 
 ## Setup
 
@@ -76,9 +93,9 @@ web/
 
 1. **DO NOT modify the hex pixel renderer logic** in `memory_renderer_wasm.cpp`. It's a thin wrapper around the existing C++ code to avoid breaking the complex rendering.
 
-2. **Chrome/Edge required** for File System API support
+2. The dormant `isElectron` / `window.electronAPI` branches still in `App.vue` are harmless no-ops in a browser. They can be stripped in a future cleanup now that Electron is deprecated.
 
-3. **HTTPS required** for security features (File System API, SharedArrayBuffer)
+3. **HTTPS** is still needed for SharedArrayBuffer (WASM threads). A static-dump build using a plain `<input type=file>` picker works in any browser; the File System Access API path (Chrome/Edge only) is only needed for persistent handles.
 
 ## Building for Production
 

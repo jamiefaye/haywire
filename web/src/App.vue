@@ -74,10 +74,8 @@
           <input type="checkbox" v-model="columnMode">
           Column Mode
         </label>
-        <label>
-          <input type="checkbox" v-model="changeDetectionEnabled">
-          Change Detection
-        </label>
+        <!-- Change Detection removed from web build: live re-read isn't reliable in
+             the browser (static-dump viewer). Live change detection lives in the C++ tool. -->
         <label>
           <input type="checkbox" v-model="showCorrelation">
           Auto-Correlation
@@ -1697,7 +1695,7 @@ function updateMagnifyingGlassPosition(x: number, y: number) {
   magnifyingGlassCenterY.value = Math.floor(canvasY)
 }
 
-function updateMiniViewer(id: number, config: any) {
+async function updateMiniViewer(id: number, config: any) {
   const viewer = miniViewers.value.find(v => v.id === id)
   if (viewer) {
     viewer.width = config.width
@@ -1707,6 +1705,9 @@ function updateMiniViewer(id: number, config: any) {
     viewer.columnMode = config.columnMode
     viewer.columnWidth = config.columnWidth
     viewer.columnGap = config.columnGap
+    // Re-read so the buffer matches the (possibly larger) dimensions; otherwise
+    // resizing bigger truncates the view. loadMiniViewerData reads at 4 bpp.
+    await loadMiniViewerData(viewer)
   }
 }
 
@@ -1747,8 +1748,9 @@ async function handleAnchorDrag(id: number, mousePos: { x: number, y: number }) 
 async function loadMiniViewerData(viewer: MiniViewer) {
   if (!isFileOpen.value) return
 
-  const bytesPerPixel = getBytesPerPixel(viewer.format)
-  const memorySize = viewer.width * viewer.height * bytesPerPixel
+  // Read at the max bytes-per-pixel (4) so the viewer can switch to any format
+  // (the select changes format locally without re-reading) without truncation.
+  const memorySize = viewer.width * viewer.height * 4
 
   // Check if we have a dropped file
   if ((window as any).__droppedFileData) {

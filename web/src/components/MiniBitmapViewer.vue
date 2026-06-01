@@ -293,7 +293,9 @@ const { renderMemory } = useWasmRenderer()
 function doRender() {
   if (props.memoryData && canvasRef.value) {
     renderMemory(props.memoryData, canvasRef.value, {
-      sourceOffset: props.offset,
+      // memoryData is read starting at the viewer's target offset (see
+      // loadMiniViewerData in App.vue), so render from the start of the buffer.
+      sourceOffset: 0,
       displayWidth: localWidth.value,
       displayHeight: localHeight.value,
       stride: localWidth.value,
