@@ -212,8 +212,10 @@ if(HAS_SYPHON)
     )
 endif()
 
-# Enable AVX2 for change_detector.cpp
-set_source_files_properties(src/change_detector.cpp PROPERTIES COMPILE_FLAGS "-mavx2")
+# Enable AVX2 for change_detector.cpp (x86_64 only; arm64 uses scalar/NEON path)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    set_source_files_properties(src/change_detector.cpp PROPERTIES COMPILE_FLAGS "-mavx2")
+endif()
 
 # Auto-sign on macOS (simple ad-hoc signing)
 if(APPLE)
