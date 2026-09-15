@@ -4,7 +4,7 @@
 
 Haywire is a VM memory introspection tool that bypasses QEMU's memory isolation to inspect kernel structures and process memory without guest cooperation.
 
-**Current Status**: Both C++ and web implementations are actively maintained. C++ version provides native performance with live change detection and heat map visualization. Web version offers cross-platform support and easier deployment.
+**Current Status**: Two implementations. The **C++ (native)** version is the real-time tier: native mmap performance with live change detection and heat map visualization. The **web (Vue/TypeScript)** version is the cross-platform explorer for memory files and dumps; it does **not** include live change detection or the heat map (those were dropped from the web build in June 2026, when the Electron wrapper was also deprecated). Treat live/temporal features as native-only.
 
 ## Key Technical Context
 

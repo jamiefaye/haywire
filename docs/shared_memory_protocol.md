@@ -1,3 +1,8 @@
+> ⚠️ **OBSOLETE (historical).** This describes the beacon/companion "through
+> channels" design, which was removed in September 2025. Haywire no longer runs
+> any guest-side agent — all discovery is done host-side by reading guest RAM
+> directly. Kept for history only.
+
 # Haywire Shared Memory Protocol
 
 ## Overview

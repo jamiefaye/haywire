@@ -85,19 +85,37 @@ ssh vm whoami
 # Should output: ubuntu
 ```
 
-### 6. Deploy Haywire Components
+### 6. Running Haywire (no guest components required)
 
-Once passwordless SSH is working:
+Haywire needs **nothing installed in the guest**. It reads guest RAM directly
+from the host via QEMU's `memory-backend-file` (`/tmp/haywire-vm-mem`) and does
+all process/kernel discovery on the host. The old beacon/companion agent that
+used to be copied into the guest was removed in September 2025 — ignore any
+reference to `beacon_scanner`/`beacon_client`.
+
+Once the VM is running, just launch Haywire on the host:
+```bash
+./build/haywire            # auto-detects guest OS
+./build/haywire --guest-os windows   # force Windows discovery
+```
+
+### 7. Optional: developer tasks over SSH
+
+SSH into the guest is **not** needed to run Haywire — it's only a convenience for
+development. The main use is generating a kernel profile for a new kernel
+version (offsets for `task_struct`, `mm_struct`, etc.):
 
 ```bash
-# Copy files to VM
-scp src/beacon_scanner.cpp vm:/tmp/
-scp src/beacon_client.cpp vm:/tmp/
+# In the guest (SSH or console): BTF is embedded in the running kernel,
+# no source or headers needed.
+sudo apt-get install dwarves
+pahole -C task_struct /sys/kernel/btf/vmlinux > /tmp/p.txt
+pahole -C mm_struct   /sys/kernel/btf/vmlinux >> /tmp/p.txt
 
-# Compile on VM
-ssh vm "cd /tmp && g++ -o beacon_scanner beacon_scanner.cpp"
-ssh vm "cd /tmp && g++ -o beacon_client beacon_client.cpp"
+# On the host: turn pahole output into a profile
+python3 scripts/create_kernel_profile.py < p.txt > profiles/my-kernel.json
 ```
+See `profiles/README.md` for the full profile workflow.
 
 ## Troubleshooting
 

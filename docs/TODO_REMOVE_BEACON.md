@@ -1,3 +1,7 @@
+> ⚠️ **OBSOLETE (historical).** The beacon/companion system was fully removed in
+> September 2025 and replaced by host-side kernel discovery. This cleanup TODO is
+> done; the file is kept only for history. Nothing here reflects the current build.
+
 # TODO: Remove Beacon Dependencies
 
 The beacon/companion system has been replaced by kernel discovery, but many files still have dependencies on the old system. This needs to be cleaned up.
