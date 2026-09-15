@@ -790,8 +790,17 @@ private:
             if (bytesRead <= 0) continue;
 
             // Scan for PID=4 at the correct offset
-            // EPROCESS structures are pool-allocated and 16-byte aligned
-            for (size_t i = 0; i + profile.eprocess_size < bytesRead; i += 16) {
+            // EPROCESS structures are pool-allocated and 16-byte aligned.
+            // Guard against a profile whose eprocess_size is 0 or too small to
+            // cover the fields we dereference below - otherwise the reads walk
+            // off the end of the chunk buffer.
+            size_t recordSpan = profile.eprocess_size;
+            size_t minSpan = profile.eprocess_unique_process_id + sizeof(uint32_t);
+            minSpan = std::max(minSpan, profile.eprocess_image_file_name + 16);
+            minSpan = std::max(minSpan, profile.kprocess_directory_table_base + sizeof(uint64_t));
+            if (recordSpan < minSpan) recordSpan = minSpan;
+
+            for (size_t i = 0; i + recordSpan <= bytesRead; i += 16) {
                 // Check PID at offset
                 uint32_t pid = *reinterpret_cast<const uint32_t*>(buffer.data() + i + profile.eprocess_unique_process_id);
                 if (pid != 4) continue;

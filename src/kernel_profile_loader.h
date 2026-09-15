@@ -173,8 +173,10 @@ private:
         size_t pos = json.find(key, sectionPos);
         if (pos == std::string::npos) return 0;
 
-        pos = json.find(":", pos + key.length());
-        if (pos == std::string::npos) return 0;
+        // key already includes the trailing ':', so advance past it directly.
+        // (Doing another find(":") here lands on the NEXT field's colon and
+        // parses its value instead - which returned 0 for "size" fields.)
+        pos += key.length();
 
         // Skip whitespace
         while (pos < json.length() && (json[pos] == ':' || json[pos] == ' ' || json[pos] == '\t')) pos++;
