@@ -47,6 +47,7 @@ brew install cmake glfw capstone
 # Ubuntu/Debian
 sudo apt-get install build-essential cmake libglfw3-dev libgl1-mesa-dev libcapstone-dev
 
+git submodule update --init lib/imgui   # ImGui is a submodule; skip qemu-src
 cmake -B build && cmake --build build
 ```
 
