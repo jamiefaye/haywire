@@ -88,6 +88,7 @@ Example: Page table at PA 0x25f000000 (9.75GB) → File offset 0x1df000000 (7.47
 - `docs/address_notation.md` - Address notation system (CURRENT)
 - `docs/vm_setup_guide.md` - VM setup instructions (CURRENT)
 - `docs/build_qemu.md` - Building modified QEMU (CURRENT)
+- `docs/new_host_porting.md` - New-host checklist; Intel Mac/HVF Windows 11 pitfalls and debugging techniques (CURRENT, 2026-09-30)
 - Other docs may be obsolete - verify before use
 
 ## Common Tasks

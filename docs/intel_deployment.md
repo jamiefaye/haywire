@@ -13,6 +13,9 @@ qemu-system-x86_64 -accel hvf -cpu host ...
 - Uses **Hypervisor.framework** (Apple's native hypervisor)
 - NATIVE performance, no emulation
 - Script: `scripts/launch_ubuntu_x86_64_macos.sh`
+- ⚠️ **Windows 11 guests must not use `-cpu host` here** (bugchecks with
+  IRQL_NOT_LESS_OR_EQUAL under QEMU 11.1), and need specific display/TPM/firmware
+  settings. See `docs/new_host_porting.md` and `scripts/launch_windows_x86_64_macos.sh`.
 
 ### Intel Linux
 ```bash

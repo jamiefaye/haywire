@@ -37,15 +37,38 @@ else
     echo "Using custom QEMU build with VA->PA translation support"
 fi
 
+# UEFI firmware ships with qemu: Homebrew's is under /opt/homebrew on Apple
+# Silicon, /usr/local on Intel; MacPorts' (used on Intel, where Homebrew no
+# longer builds qemu) is under /opt/local
+BREW_PREFIX="$(brew --prefix 2>/dev/null)"
+for p in "$BREW_PREFIX" /opt/homebrew /usr/local /opt/local; do
+    if [ -n "$p" ] && [ -f "$p/share/qemu/edk2-aarch64-code.fd" ]; then
+        BIOS="$p/share/qemu/edk2-aarch64-code.fd"
+        break
+    fi
+done
+if [ -z "$BIOS" ]; then
+    echo "ERROR: edk2-aarch64-code.fd not found (install qemu via Homebrew, or MacPorts on Intel)"
+    exit 1
+fi
+
+# HVF can only run an ARM64 guest on an ARM64 host; Intel Macs need TCG.
+# Check hw.optional.arm64 rather than uname -m, which says x86_64 under Rosetta.
+if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
+    ACCEL_ARGS=(-accel hvf -cpu host)
+else
+    echo "Intel host: using TCG emulation (slow)"
+    ACCEL_ARGS=(-accel tcg,thread=multi -cpu max)
+fi
+
 $QEMU_BIN \
     -M virt,highmem=on \
-    -accel hvf \
-    -cpu host \
+    "${ACCEL_ARGS[@]}" \
     -m $MEMSIZE \
     -object memory-backend-file,id=mem,size=$MEMSIZE,mem-path=$MEMFILE,share=on,prealloc=on \
     -numa node,memdev=mem \
     -smp 4 \
-    -bios /opt/homebrew/share/qemu/edk2-aarch64-code.fd \
+    -bios "$BIOS" \
     -device virtio-gpu-pci \
     -display default,show-cursor=on \
     -device qemu-xhci \

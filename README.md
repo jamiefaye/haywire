@@ -88,6 +88,7 @@ Start with `docs/vm_setup_guide.md`. Current technical references:
 - `docs/rendering_pipeline.md` — the rendering pipeline and column mode
 - `docs/address_notation.md` — the address-notation system
 - `docs/build_qemu.md` — building the modified QEMU
+- `docs/new_host_porting.md` — checklist and known pitfalls when moving to a new host (Intel Mac/HVF, Homebrew, VM images)
 
 Other files under `docs/` are research notes and may be historical — some are
 banner-marked obsolete. Verify against the code before relying on them.

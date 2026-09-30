@@ -103,3 +103,6 @@ web/node_modules/
 *.mov
 *.mkv
 test_attempts/media/*.ts
+
+# VM disk images and firmware vars (large, host-local)
+/vms/
