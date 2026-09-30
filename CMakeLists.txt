@@ -244,8 +244,11 @@ if(APPLE)
     )
 endif()
 
-# Copy assets to build directory
-file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+# Copy assets to build directory (optional; the folder is empty and git
+# does not track empty directories, so a fresh clone may not have it)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/assets)
+    file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+endif()
 
 # Copy kernel profiles to build directory (needed for Windows/Linux discovery)
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/profiles DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
